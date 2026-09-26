@@ -558,7 +558,7 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
     Cookie 长度 ${cookie.length} 字符，预览前 80 字符：</p>
     <div class="tips" style="word-break:break-all">${esc(cookie.slice(0, 80))}…</div>
     <label>填入方式</label>
-    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 新建账号</option>' : ''}</select>
+    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">已有账号：${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 新建账号</option>' : ''}</select>
     <div id="ckm-new" class="${list.length ? 'hidden' : ''}">
       <label>备注名</label><input id="ckm-name" value="${esc(s.name)}">
       <div id="ckm-fields"></div>
