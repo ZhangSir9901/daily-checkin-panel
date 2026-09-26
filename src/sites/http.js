@@ -18,7 +18,7 @@ export const httpTask = {
     { key: 'expect_status', label: '期望状态码', type: 'text', required: false, placeholder: '200（默认）' },
     { key: 'expect_contains', label: '响应应包含', type: 'text', required: false, placeholder: '如 "success"，留空则只校验状态码' },
   ],
-  tips: '把浏览器/抓包工具中签到请求的 URL、Cookie、参数照搬过来即可。响应判定失败时，运行日志会记录原因，方便调试。',
+  tips: '新网站接入：在电脑浏览器人工登录并完成一次签到 → F12 网络面板右键签到请求「复制为 cURL」→ 添加账号时粘贴并点「从 cURL 导入」（Cookie 自动带入），保存后点「执行」验证。也可以点「自动探测」让面板自动寻找候选接口。Cookie 失效时执行日志会提示，重新录制一次即可。',
 
   async run(creds) {
     const url = (creds.url || '').trim();

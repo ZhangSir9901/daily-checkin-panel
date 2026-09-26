@@ -6,6 +6,7 @@ import { hashPassword, verifyPassword, encryptJSON, decryptJSON, randomHex } fro
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
+import { probeSignEndpoints } from './probe.js';
 
 const SESSION_TTL_MS = 7 * 864e5;
 
@@ -175,6 +176,20 @@ async function handleApi(req, env, url) {
   if (path === '/api/run-all' && method === 'POST') {
     const r = await runAll(env, { manual: true });
     return json({ ok: true, ...r });
+  }
+
+  // 签到接口自动探测：输入网站首页，自动寻找候选签到接口
+  if (path === '/api/probe' && method === 'POST') {
+    const { url, cookie } = await readBody(req);
+    if (!url || !/^https?:\/\//i.test(String(url).trim())) {
+      return json({ error: '请填写 http(s) 开头的网站地址' }, 400);
+    }
+    try {
+      const r = await probeSignEndpoints({ url: String(url).trim(), cookie: String(cookie || '') });
+      return json({ ok: true, ...r });
+    } catch (e) {
+      return json({ error: '探测失败：' + String((e && e.message) || e) }, 502);
+    }
   }
 
   // 运行日志

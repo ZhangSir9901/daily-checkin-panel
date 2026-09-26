@@ -162,6 +162,22 @@
     <select id="f-site"></select>
     <div id="f-tips" class="tips hidden"></div>
     <div id="f-fields"></div>
+    <!-- 自定义 HTTP 的快捷录入：cURL 导入 / 自动探测 -->
+    <div id="f-quick" class="hidden">
+      <div class="tips">
+        快捷录入：在电脑浏览器人工登录该网站并完成一次签到 → F12 网络面板找到签到请求 → 右键「复制为 cURL」→ 粘贴到下面 → 点「从 cURL 导入」（Cookie 会自动带入，无需手动复制）。<br>
+        也可以输入网站首页地址，点「自动探测」让面板自动寻找候选签到接口，点候选结果即可填入。
+      </div>
+      <label>cURL 命令</label>
+      <textarea id="f-curl" placeholder="curl 'https://...' -H 'Cookie: ...' ..."></textarea>
+      <div class="row"><button class="ghost sm" id="btn-curl-import" type="button">从 cURL 导入</button></div>
+      <label style="margin-top:6px">或输入网站首页地址自动探测</label>
+      <div class="row">
+        <input id="f-probe-url" type="text" placeholder="https://example.com" style="flex:1;margin:4px 0">
+        <button class="ghost sm" id="btn-probe" type="button">自动探测</button>
+      </div>
+      <div id="probe-result"></div>
+    </div>
     <div class="row" style="justify-content:flex-end;margin-top:12px;">
       <button class="ghost" id="btn-cancel">取消</button>
       <button id="btn-save">保存</button>
@@ -171,6 +187,7 @@
 
 <div id="toast"></div>
 
+<script src="/curl-import.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let SITES = [];
@@ -328,7 +345,62 @@ function renderFields(siteId, creds = {}) {
   else { tips.classList.add('hidden'); }
   const desc = s ? `<div class="muted" style="margin-bottom:10px">${esc(s.desc)}</div>` : '';
   $('f-fields').insertAdjacentHTML('afterbegin', desc);
+  // 自定义 HTTP 显示快捷录入区
+  const q = $('f-quick');
+  q.classList.toggle('hidden', siteId !== 'http');
+  if (siteId !== 'http') { $('f-curl').value = ''; $('f-probe-url').value = ''; $('probe-result').innerHTML = ''; }
 }
+
+function setField(key, val) {
+  const el = document.querySelector('#f-fields [data-k="' + key + '"]');
+  if (el) el.value = val;
+}
+function getField(key) {
+  const el = document.querySelector('#f-fields [data-k="' + key + '"]');
+  return el ? el.value : '';
+}
+
+// ---------- 自定义 HTTP：cURL 导入 / 自动探测 ----------
+$('btn-curl-import').onclick = () => {
+  try {
+    const p = parseCurl($('f-curl').value);
+    setField('url', p.url);
+    setField('method', p.method);
+    setField('headers', JSON.stringify(p.headers, null, 2));
+    setField('body', p.body || '');
+    toast('已从 cURL 填入，检查后点保存');
+  } catch (e) { toast('解析失败：' + e.message); }
+};
+
+$('btn-probe').onclick = async () => {
+  const url = $('f-probe-url').value.trim();
+  if (!url) return toast('请先输入网站首页地址');
+  const box = $('probe-result');
+  box.innerHTML = '<div class="muted">探测中…</div>';
+  let cookie = '';
+  try {
+    const h = JSON.parse(getField('headers') || '{}');
+    cookie = h.Cookie || h.cookie || '';
+  } catch { /* headers 未填则不带 Cookie */ }
+  try {
+    const r = await api('/api/probe', 'POST', { url, cookie });
+    if (!r.candidates.length) {
+      box.innerHTML = '<div class="muted">没有找到候选接口，建议改用上面的 cURL 导入方式。</div>';
+      return;
+    }
+    box.innerHTML = '<div class="muted" style="margin:8px 0">找到 ' + r.candidates.length + ' 个候选（点一条填入请求地址）：</div>' +
+      r.candidates.map((c, i) =>
+        `<button class="ghost sm" data-probe="${i}" style="display:block;width:100%;text-align:left;margin-bottom:6px;white-space:normal;word-break:break-all">[${esc(c.source)}] ${esc(c.label)}<br><span class="muted">${esc(c.url)}</span></button>`
+      ).join('');
+    box.querySelectorAll('[data-probe]').forEach((b) => (b.onclick = () => {
+      const c = r.candidates[Number(b.dataset.probe)];
+      setField('url', c.url);
+      if (c.body) { setField('method', 'POST'); setField('body', c.body); }
+      else setField('method', 'GET');
+      toast('已填入候选接口，保存后点「执行」验证');
+    }));
+  } catch (e) { box.innerHTML = '<div class="muted">探测失败：' + esc(e.message) + '</div>'; }
+};
 
 async function openModal(id) {
   $('f-site').innerHTML = SITES.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
