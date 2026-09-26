@@ -53,6 +53,8 @@
   .seg button.active { background:var(--accent); color:#fff; }
   .step-card { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px; background:#141c2e; }
   a.bookmarklet { display:inline-block; padding:10px 18px; border:1px dashed var(--accent); border-radius:8px; color:var(--accent); text-decoration:none; font-size:14px; margin:4px 8px 4px 0; }
+  .ck-tab.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ck-panel textarea { width:100%; box-sizing:border-box; margin:4px 0; }
 </style>
 </head>
 <body>
@@ -109,17 +111,56 @@
         </table></div>
       </div>
       <div class="card">
-        <h2>一键取 Cookie</h2>
-        <p class="muted">选一个站点生成「小书签」→ 拖到浏览器书签栏 → 在目标网站（已登录页面）点一下，Cookie 自动传回面板：该站点有账号就直接填入，没有就新建一个。</p>
+        <h2>获取 Cookie（多种方式）</h2>
+        <p class="muted">先选站点，再选一种方式拿到 Cookie：有账号就直接填入，没有就新建一个。</p>
         <div class="row">
           <select id="ck-account" style="flex:1;margin:4px 0"></select>
-          <button class="ghost sm" id="btn-gen-bm" type="button">生成小书签</button>
         </div>
-        <div id="bm-box" class="hidden" style="margin-top:10px">
-          <p class="muted">把这个链接拖到书签栏（手机浏览器可新建书签，把网址改成下面的代码）：</p>
-          <a href="#" class="bookmarklet" id="bm-link">📋 取Cookie填入面板</a>
-          <button class="ghost sm" id="btn-copy-bm" type="button">复制代码</button>
-          <div class="tips">在目标网站登录状态下点击书签，会自动打开面板并弹出 Cookie 填入确认框。HttpOnly 类型的 Cookie 浏览器不允许 JS 读取，这类站点仍需手动复制粘贴。</div>
+        <div class="row" style="margin:8px 0">
+          <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
+          <button class="ghost sm ck-tab" data-t="paste" type="button">📋 直接粘贴</button>
+          <button class="ghost sm ck-tab" data-t="curl" type="button">🌀 cURL 命令</button>
+          <button class="ghost sm ck-tab" data-t="headers" type="button">🧾 请求头</button>
+          <button class="ghost sm ck-tab" data-t="json" type="button">🧩 JSON 导入</button>
+          <button class="ghost sm ck-tab" data-t="txt" type="button">📄 cookie.txt</button>
+        </div>
+        <div id="ck-panel-bm" class="ck-panel">
+          <div class="row">
+            <button class="ghost sm" id="btn-gen-bm" type="button">生成小书签</button>
+          </div>
+          <div id="bm-box" class="hidden" style="margin-top:10px">
+            <p class="muted">把这个链接拖到书签栏（手机浏览器可新建书签，把网址改成下面的代码）：</p>
+            <a href="#" class="bookmarklet" id="bm-link">📋 取Cookie填入面板</a>
+            <button class="ghost sm" id="btn-copy-bm" type="button">复制代码</button>
+            <div class="tips">在目标网站登录状态下点击书签，会自动打开面板并弹出 Cookie 填入确认框。HttpOnly 类型的 Cookie 浏览器不允许 JS 读取，这类站点仍需手动复制粘贴。</div>
+          </div>
+        </div>
+        <div id="ck-panel-paste" class="ck-panel hidden">
+          <textarea id="ck-paste" rows="3" placeholder="粘贴 Cookie 字符串，如：a=1; b=2"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-paste" type="button">解析并预览</button></div>
+        </div>
+        <div id="ck-panel-curl" class="ck-panel hidden">
+          <textarea id="ck-curl" rows="3" placeholder="粘贴浏览器「复制为 cURL」得到的命令"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-curl" type="button">解析并预览</button></div>
+          <div class="tips">从 cURL 里自动提取 Cookie；如果还带了 User-Agent（如吾爱破解必填 UA），新建账号时会自动填入。</div>
+        </div>
+        <div id="ck-panel-headers" class="ck-panel hidden">
+          <textarea id="ck-headers" rows="3" placeholder="粘贴开发者工具里复制的请求头文本（含 Cookie: 开头的一行）"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-headers" type="button">解析并预览</button></div>
+        </div>
+        <div id="ck-panel-json" class="ck-panel hidden">
+          <textarea id="ck-json" rows="3" placeholder="粘贴 Cookie-Editor / EditThisCookie 插件导出的 JSON"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-json" type="button">解析并预览</button></div>
+        </div>
+        <div id="ck-panel-txt" class="ck-panel hidden">
+          <textarea id="ck-txt" rows="3" placeholder="粘贴 Netscape 格式的 cookie.txt 内容"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-txt" type="button">解析并预览</button></div>
+        </div>
+        <div id="ck-preview" class="hidden" style="margin-top:10px">
+          <div class="tips" style="word-break:break-all" id="ck-preview-text"></div>
+          <div class="row" style="margin-top:8px">
+            <button class="sm" id="btn-ck-apply" type="button">填入账号…</button>
+          </div>
         </div>
       </div>
     </section>
@@ -233,6 +274,7 @@
 <div id="toast"></div>
 
 <script src="/curl-import.js"></script>
+<script src="/cookie-tools.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 let SITES = [];
@@ -379,32 +421,79 @@ $('btn-copy-bm').onclick = async () => {
   catch (e) { toast('复制失败，请手动拖拽链接到书签栏'); }
 };
 
+// ---------- 多方式取 Cookie：tab 切换 + 解析预览 ----------
+let CK_PENDING = null; // { cookie, extra:{userAgent}, label }
+
+document.querySelectorAll('.ck-tab').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('.ck-panel').forEach((p) => p.classList.add('hidden'));
+    $('ck-panel-' + b.dataset.t).classList.remove('hidden');
+    document.querySelectorAll('.ck-tab').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+  };
+});
+
+function ckPreview(cookie, extra, label) {
+  CK_PENDING = { cookie, extra: extra || {}, label: label || '' };
+  $('ck-preview-text').innerHTML = `解析成功${label ? `（${esc(label)}）` : ''}：共 ${cookie.length} 字符，预览前 80 字符：<br>${esc(cookie.slice(0, 80))}…`
+    + (extra && extra.userAgent ? `<br>同时提取到 User-Agent：${esc(extra.userAgent.slice(0, 60))}…` : '');
+  $('ck-preview').classList.remove('hidden');
+}
+
+function ckParseFail(e) {
+  CK_PENDING = null;
+  $('ck-preview').classList.add('hidden');
+  toast('解析失败：' + (e && e.message ? e.message : e));
+}
+
+$('btn-parse-paste').onclick = () => {
+  try { ckPreview(parseCookieHeader($('ck-paste').value), null, '直接粘贴'); }
+  catch (e) { ckParseFail(e); }
+};
+$('btn-parse-headers').onclick = () => {
+  try { ckPreview(extractCookieFromHeaders($('ck-headers').value), null, '请求头'); }
+  catch (e) { ckParseFail(e); }
+};
+$('btn-parse-json').onclick = () => {
+  try { ckPreview(parseCookieEditorJson($('ck-json').value), null, 'JSON 导入'); }
+  catch (e) { ckParseFail(e); }
+};
+$('btn-parse-txt').onclick = () => {
+  try { ckPreview(parseNetscapeCookies($('ck-txt').value), null, 'cookie.txt'); }
+  catch (e) { ckParseFail(e); }
+};
+$('btn-parse-curl').onclick = () => {
+  try {
+    const r = extractCookieFromCurl($('ck-curl').value);
+    ckPreview(r.cookie, { userAgent: r.userAgent }, 'cURL 命令');
+  } catch (e) { ckParseFail(e); }
+};
+$('btn-ck-apply').onclick = () => {
+  if (!CK_PENDING) return toast('请先解析出 Cookie');
+  const siteId = $('ck-account').value;
+  if (!siteId) return toast('请先选择站点');
+  openCookieApplyDialog(siteId, CK_PENDING.cookie, '', CK_PENDING.extra);
+};
+
 function b64urlDecode(s) {
   s = s.replace(/-/g, '+').replace(/_/g, '/');
   while (s.length % 4) s += '=';
   return decodeURIComponent(escape(atob(s)));
 }
 
-function renderCkNewFields(bg, s) {
+function renderCkNewFields(bg, s, extra) {
   const box = bg.querySelector('#ckm-fields');
   box.innerHTML = (s.fields || []).filter((f) => f.key !== 'cookie').map((f) => {
     const req = f.required ? ' *' : '';
+    const pre = (extra && f.key === 'user_agent' && extra.userAgent) ? extra.userAgent : '';
     if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${f.key}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
-    if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}"></textarea>`;
-    return `<label>${esc(f.label)}${req}</label><input data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">`;
+    if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${esc(pre)}</textarea>`;
+    return `<label>${esc(f.label)}${req}</label><input data-k="${f.key}" placeholder="${esc(f.placeholder || '')}" value="${esc(pre)}">`;
   }).join('');
 }
 
-// 小书签跳回面板时（#ck=...）：填入已有账号，或直接新建账号
-async function checkCookieHash() {
-  const m = location.hash.match(/#ck=([A-Za-z0-9\-_]+)/);
-  if (!m) return;
-  history.replaceState(null, '', location.pathname);
-  let d;
-  try { d = JSON.parse(b64urlDecode(m[1])); } catch (e) { return toast('Cookie 数据解析失败'); }
-  if (!d || !d.cookie) return toast('没有读取到 Cookie');
-  // 兼容旧版小书签（按账号生成）
-  const siteId = d.site || (d.account && (ACCTS.find((a) => String(a.id) === String(d.account)) || {}).site) || '';
+// 填入 Cookie 确认框：已有账号就选一个填入，没有就直接新建。extra 可带 userAgent（cURL 提取到时新建账号自动填入）
+async function openCookieApplyDialog(siteId, cookie, domain, extra) {
   const s = SITES.find((x) => x.id === siteId);
   if (!s) return toast('未知的站点，请重新生成小书签');
   const canCookie = s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie');
@@ -415,9 +504,9 @@ async function checkCookieHash() {
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal"><h2>一键填入 Cookie</h2>
-    <p class="muted">来自站点：<b>${esc(d.domain || '')}</b>（${esc(s.name)}）<br>
-    Cookie 长度 ${d.cookie.length} 字符，预览前 80 字符：</p>
-    <div class="tips" style="word-break:break-all">${esc(d.cookie.slice(0, 80))}…</div>
+    <p class="muted">来自站点：<b>${esc(domain || '')}</b>（${esc(s.name)}）<br>
+    Cookie 长度 ${cookie.length} 字符，预览前 80 字符：</p>
+    <div class="tips" style="word-break:break-all">${esc(cookie.slice(0, 80))}…</div>
     <label>填入方式</label>
     <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 新建账号</option>' : ''}</select>
     <div id="ckm-new" class="${list.length ? 'hidden' : ''}">
@@ -429,7 +518,7 @@ async function checkCookieHash() {
       <button id="ckm-ok">填入并保存</button>
     </div></div>`;
   document.body.appendChild(bg);
-  renderCkNewFields(bg, s);
+  renderCkNewFields(bg, s, extra);
   const modeSel = bg.querySelector('#ckm-mode');
   modeSel.onchange = () => bg.querySelector('#ckm-new').classList.toggle('hidden', modeSel.value !== '__new');
   bg.querySelector('#ckm-cancel').onclick = () => bg.remove();
@@ -437,26 +526,39 @@ async function checkCookieHash() {
     try {
       if (modeSel.value === '__new') {
         const name = (bg.querySelector('#ckm-name').value || '').trim() || s.name;
-        const creds = { cookie: d.cookie };
+        const creds = { cookie };
         bg.querySelectorAll('#ckm-fields [data-k]').forEach((el) => { creds[el.dataset.k] = el.value; });
         await api('/api/accounts', 'POST', { name, site: s.id, creds });
         bg.remove(); toast('账号已创建并填入 Cookie'); loadAccounts();
       } else {
         const { account } = await api('/api/accounts/' + modeSel.value);
-        const creds = account.creds || {};
-        if ((s.fields || []).some((f) => f.key === 'cookie') || creds.cookie !== undefined) {
-          creds.cookie = d.cookie;
+        const accCreds = account.creds || {};
+        if ((s.fields || []).some((f) => f.key === 'cookie') || accCreds.cookie !== undefined) {
+          accCreds.cookie = cookie;
         } else if (account.site === 'http') {
           let h = {};
-          try { h = JSON.parse(creds.headers || '{}'); } catch { /* 忽略 */ }
-          h.Cookie = d.cookie;
-          creds.headers = JSON.stringify(h, null, 2);
+          try { h = JSON.parse(accCreds.headers || '{}'); } catch { /* 忽略 */ }
+          h.Cookie = cookie;
+          accCreds.headers = JSON.stringify(h, null, 2);
         } else { toast('该账号类型不支持填入 Cookie'); return; }
-        await api('/api/accounts/' + modeSel.value, 'PUT', { creds });
+        await api('/api/accounts/' + modeSel.value, 'PUT', { creds: accCreds });
         bg.remove(); toast('Cookie 已更新到账号'); loadAccounts();
       }
     } catch (e) { toast('保存失败：' + e.message); }
   };
+}
+
+// 小书签跳回面板时（#ck=...）
+async function checkCookieHash() {
+  const m = location.hash.match(/#ck=([A-Za-z0-9\-_]+)/);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname);
+  let d;
+  try { d = JSON.parse(b64urlDecode(m[1])); } catch (e) { return toast('Cookie 数据解析失败'); }
+  if (!d || !d.cookie) return toast('没有读取到 Cookie');
+  // 兼容旧版小书签（按账号生成）
+  const siteId = d.site || (d.account && (ACCTS.find((a) => String(a.id) === String(d.account)) || {}).site) || '';
+  openCookieApplyDialog(siteId, d.cookie, d.domain || '');
 }
 
 async function initMain() {
