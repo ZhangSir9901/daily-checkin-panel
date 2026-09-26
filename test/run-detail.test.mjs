@@ -1,0 +1,130 @@
+// 运行日志 detail（网站原始回馈）测试：node test/run-detail.test.mjs
+import assert from 'node:assert/strict';
+import { ensureSchema } from '../src/db.js';
+import { encryptJSON } from '../src/crypto.js';
+import { runAccount } from '../src/runner.js';
+import { nodeseek } from '../src/sites/nodeseek.js';
+
+let n = 0;
+const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
+
+// ---- 极简 D1 fake：只记录 SQL，模拟老库（runs 表没有 detail 列）----
+function fakeDbNoDetail() {
+  const sqls = [];
+  const db = {
+    sqls,
+    prepare(sql) {
+      sqls.push(sql);
+      const stmt = {
+        bind() { return stmt; },
+        async run() { return {}; },
+        async all() {
+          if (/PRAGMA table_info\(runs\)/i.test(sql)) {
+            return { results: [{ name: 'id' }, { name: 'account_id' }, { name: 'message' }] };
+          }
+          if (/PRAGMA table_info/i.test(sql)) return { results: [{ name: 'id' }] };
+          return { results: [] };
+        },
+        async first() { return null; },
+      };
+      return stmt;
+    },
+    async batch(stmts) { return []; },
+  };
+  return db;
+}
+
+await t('迁移 v3：老库 runs 缺 detail 列时自动补上', async () => {
+  const db = fakeDbNoDetail();
+  await ensureSchema(db);
+  const alters = db.sqls.filter((s) => /ALTER TABLE runs ADD COLUMN detail/i.test(s));
+  assert.equal(alters.length, 1, '应执行一次补列，实际：' + JSON.stringify(db.sqls.filter((s) => /ALTER/i.test(s))));
+});
+
+await t('迁移幂等：已有 detail 列不再补', async () => {
+  const db = fakeDbNoDetail();
+  const origPrepare = db.prepare.bind(db);
+  db.prepare = (sql) => {
+    if (/PRAGMA table_info\(runs\)/i.test(sql)) {
+      const stmt = origPrepare(sql);
+      stmt.all = async () => ({ results: [{ name: 'id' }, { name: 'detail' }] });
+      return stmt;
+    }
+    return origPrepare(sql);
+  };
+  await ensureSchema(db);
+  const alters = db.sqls.filter((s) => /ALTER TABLE runs ADD COLUMN detail/i.test(s));
+  assert.equal(alters.length, 0);
+});
+
+// ---- runner：detail 写入 runs ----
+function fakeDbRunner() {
+  const inserted = [];
+  return {
+    inserted,
+    prepare(sql) {
+      const stmt = {
+        _args: [],
+        bind(...args) { stmt._args = args; return stmt; },
+        async run() {
+          if (/INSERT INTO runs/i.test(sql)) inserted.push({ sql, args: stmt._args });
+          return {};
+        },
+        async all() { return { results: [] }; },
+        async first() { return null; },
+      };
+      return stmt;
+    },
+    async batch() { return []; },
+  };
+}
+
+await t('runner：站点返回的 detail 写入 runs', async () => {
+  // 用站点注册表里的 nodeseek（mock fetch 返回成功 JSON）
+  const { getSite } = await import('../src/sites/index.js');
+  assert.ok(getSite('nodeseek'), 'nodeseek 站点应已注册');
+
+  const db = fakeDbRunner();
+  const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
+  const credsEnc = await encryptJSON(env, db, { cookie: 'a=1', random: '试试手气（随机）' });
+  const account = { id: 7, site: 'nodeseek', name: 'NS测试', creds: credsEnc, meta: '{}', enabled: 1 };
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    status: 200,
+    text: async () => JSON.stringify({ success: true, message: '获得 3 个鸡腿' }),
+  });
+  try {
+    const r = await runAccount(env, account);
+    assert.equal(r.status, 'ok');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+  assert.equal(db.inserted.length, 1);
+  const args = db.inserted[0].args;
+  // INSERT 列顺序：account_id, site, name, status, message, detail, duration_ms, created_at
+  assert.match(args[5] || '', /网站返回.*鸡腿/, 'detail 列应存入网站原始回馈，实际：' + JSON.stringify(args[5]));
+  assert.ok(/detail/.test(db.inserted[0].sql), 'INSERT 应包含 detail 列');
+});
+
+await t('runner：抛错时 e.detail 也写入 runs', async () => {
+  const db = fakeDbRunner();
+  const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
+  const credsEnc = await encryptJSON(env, db, { cookie: 'a=1' });
+  const account = { id: 8, site: 'nodeseek', name: 'NS测试2', creds: credsEnc, meta: '{}', enabled: 1 };
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    status: 200,
+    text: async () => JSON.stringify({ success: false, message: '参数错误' }),
+  });
+  try {
+    const r = await runAccount(env, account);
+    assert.equal(r.status, 'fail');
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+  const args = db.inserted[0].args;
+  assert.match(args[5] || '', /网站返回/, '失败时 detail 也应写入');
+});
+
+console.log(`\n${n} 组通过`);

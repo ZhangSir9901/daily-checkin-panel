@@ -12,6 +12,7 @@ export async function runAccount(env, account) {
   const t0 = Date.now();
   let status = 'ok';
   let message = '';
+  let detail = ''; // 网站原始回馈（站点模块可返回 detail），日志页展示
   let meta = {};
   try {
     meta = JSON.parse(account.meta || '{}');
@@ -24,16 +25,18 @@ export async function runAccount(env, account) {
     const res = await site.run(creds, { env, db, account, meta });
     status = res.ok ? 'ok' : 'fail';
     message = String(res.message || '').slice(0, 800);
+    detail = String(res.detail || '').slice(0, 800);
   } catch (e) {
     status = 'fail';
     message = String((e && e.message) || e).slice(0, 800);
+    detail = String((e && e.detail) || '').slice(0, 800);
   }
 
   const duration = Date.now() - t0;
   const now = Date.now();
   await db
-    .prepare('INSERT INTO runs(account_id, site, name, status, message, duration_ms, created_at) VALUES(?,?,?,?,?,?,?)')
-    .bind(account.id, account.site, account.name, status, message, duration, now)
+    .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
+    .bind(account.id, account.site, account.name, status, message, detail, duration, now)
     .run();
   await db
     .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')

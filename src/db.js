@@ -19,6 +19,8 @@ const MIGRATIONS = [
   async (db) => ensureColumn(db, 'accounts', 'meta', `TEXT NOT NULL DEFAULT '{}'`),
   // v2：runs 按账号过滤的索引（日志页筛选加速）
   async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_runs_account ON runs(account_id, created_at DESC)').run(),
+  // v3：runs.detail（网站原始回馈，日志页"网站回馈"展示用）
+  async (db) => ensureColumn(db, 'runs', 'detail', 'TEXT'),
 ];
 
 export async function ensureSchema(db) {
@@ -47,6 +49,7 @@ export async function ensureSchema(db) {
       name TEXT,
       status TEXT,
       message TEXT,
+      detail TEXT,
       duration_ms INTEGER,
       created_at INTEGER NOT NULL
     )`,

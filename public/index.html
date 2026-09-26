@@ -992,7 +992,7 @@ async function loadLogs() {
       <td><b>${esc(r.name)}</b> <span class="badge site">${esc(siteName(r.site))}</span></td>
       <td>${r.status === 'ok' ? '<span class="badge ok">成功</span>' : '<span class="badge fail">失败</span>'}</td>
       <td class="muted" style="white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
-      <td class="msg">${esc(r.message || '')}</td>
+      <td class="msg">${esc(r.message || '')}${r.detail ? `<br><span class="muted">网站回馈：${esc(r.detail)}</span>` : ''}</td>
     </tr>`).join('');
 }
 $('btn-refresh-logs').onclick = loadLogs;

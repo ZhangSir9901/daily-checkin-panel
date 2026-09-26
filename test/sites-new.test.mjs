@@ -195,4 +195,29 @@ await t('nodeseek：非 JSON 非 CF 页面报错带页面片段', async () => {
   await assert.rejects(nodeseek.run({ cookie: 'a=1' }, {}), /页面片段.*Service Busy/);
 });
 
+await t('nodeseek：成功时返回网站原始回馈 detail', async () => {
+  const body = JSON.stringify({ success: true, message: '获得 5 个鸡腿', data: { rank: 123 } });
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), body }]);
+  const r = await nodeseek.run({ cookie: 'a=1' }, {});
+  assert.equal(r.ok, true);
+  assert.match(r.detail || '', /网站返回/);
+  assert.match(r.detail || '', /鸡腿/);
+});
+
+await t('nodeseek：今日已签到算成功并带回馈', async () => {
+  const body = JSON.stringify({ success: false, message: '今日已签到' });
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), body }]);
+  const r = await nodeseek.run({ cookie: 'a=1' }, {});
+  assert.equal(r.ok, true);
+  assert.match(r.message, /今日已签到/);
+});
+
+await t('nodeseek：失败时错误带 detail', async () => {
+  const body = JSON.stringify({ success: false, message: '参数错误' });
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), body }]);
+  const err = await nodeseek.run({ cookie: 'a=1' }, {}).catch((e) => e);
+  assert.match(err.message, /签到失败/);
+  assert.match(err.detail || '', /网站返回.*参数错误/);
+});
+
 console.log(`\n${n} 组通过`);

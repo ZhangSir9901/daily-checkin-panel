@@ -66,19 +66,23 @@ export const nodeseek = {
 
     const msg = String(j.message || '');
     const okFlag = j.success === true || (j.data && j.data.success === true);
+    // 网站原始回馈：存入日志 detail，面板日志页"网站回馈"展示
+    const detail = `网站返回：${text.slice(0, 300)}`;
 
     // 成功：返回 message 带"鸡腿"或 success 为 true
     if (okFlag || msg.includes('鸡腿')) {
-      return { ok: true, message: `签到成功：${msg || '领取成功'}` };
+      return { ok: true, message: `签到成功：${msg || '领取成功'}`, detail };
     }
-    // 已签到
-    if (msg.includes('已完成签到') || msg.includes('已经签到')) {
-      return { ok: true, message: '今日已签到，无需重复' };
+    // 已签到：一天只能签一次，网站说已签到属于正常情况，不算失败
+    if (msg.includes('已签到') || msg.includes('已完成签到') || msg.includes('已经签到')) {
+      return { ok: true, message: `今日已签到，无需重复（${msg}）`, detail };
     }
     // 会话无效：HTTP 500 + {"message":"USER NOT FOUND","status":404}
     if (j.status === 404 || msg.includes('USER NOT FOUND')) {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
     }
-    throw new Error('签到失败：' + (msg || `HTTP ${res.status}`));
+    const err = new Error('签到失败：' + (msg || `HTTP ${res.status}`));
+    err.detail = detail;
+    throw err;
   },
 };
