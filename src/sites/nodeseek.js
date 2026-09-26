@@ -27,8 +27,15 @@ export const nodeseek = {
   ],
   tips: '电脑浏览器打开 www.nodeseek.com 并登录 → F12 打开开发者工具 → 刷新页面 → 点任意请求 → 复制 Request Headers 里的 Cookie 粘贴到这里。手机可用抓包工具（如 ProxyPin）抓取。Cookie 失效时面板会报错，重新复制一次即可。',
 
-  async run(creds) {
-    const random = creds.random !== '固定 5 鸡腿';
+  // 站点独立开关：账号列表页直接切换，无需进编辑
+  toggles: [
+    { key: 'random', label: '签到模式', onLabel: '试试手气', offLabel: '固定5鸡腿', default: true },
+  ],
+
+  async run(creds, ctx) {
+    // 开关存于 accounts.meta.toggles；兼容老数据的 creds.random 字段
+    const t = ctx && ctx.meta && ctx.meta.toggles ? ctx.meta.toggles.random : undefined;
+    const random = t == null ? creds.random !== '固定 5 鸡腿' : !!t;
     const headers = {
       'User-Agent': UA,
       Accept: 'application/json',

@@ -21,5 +21,6 @@ export function siteMeta() {
     desc: s.desc,
     fields: s.fields,
     tips: s.tips || '',
+    toggles: s.toggles || [],
   }));
 }

@@ -10,10 +10,10 @@ compatibility_date = "2024-01-01"
 directory = "./public"
 not_found_handling = "single-page-application"
 
-# 每天 UTC 00:00 触发 = 北京时间每天 08:00
-# 想改时间可自行调整（注意 Cloudflare Cron 使用 UTC）
+# 每小时触发一次，Worker 内按「签到时间设置」（默认北京时间 08:00）判断是否执行
+# 时间在面板网页「设置」里修改，无需重新部署
 [[triggers.crons]]
-crons = ["0 0 * * *"]
+crons = ["0 * * * *"]
 
 [[d1_databases]]
 binding = "DB"

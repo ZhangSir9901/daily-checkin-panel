@@ -7,6 +7,8 @@ import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
+import { shouldRun, validHour, validTz } from './schedule.js';
+import { runHttpSteps } from './sites/http.js';
 
 const SESSION_TTL_MS = 7 * 864e5;
 
@@ -101,10 +103,10 @@ async function handleApi(req, env, url) {
 
   if (path === '/api/sites' && method === 'GET') return json({ sites: siteMeta() });
 
-  // 账号列表（不含凭据）
+  // 账号列表（不含凭据，含 meta 以便前端渲染站点独立开关）
   if (path === '/api/accounts' && method === 'GET') {
     const { results } = await env.DB.prepare(
-      'SELECT id, name, site, enabled, last_status, last_msg, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
+      'SELECT id, name, site, enabled, meta, last_status, last_msg, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
     ).all();
     return json({ accounts: results || [] });
   }
@@ -172,6 +174,53 @@ async function handleApi(req, env, url) {
     }
   }
 
+  // 站点独立开关（如 NodeSeek 随机/固定签到）：切换后存入 accounts.meta.toggles
+  const mToggle = path.match(/^\/api\/accounts\/(\d+)\/toggle$/);
+  if (mToggle && method === 'POST') {
+    const id = Number(mToggle[1]);
+    const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    const site = getSite(acc.site);
+    const { key, value } = await readBody(req);
+    const def = site && site.toggles ? site.toggles.find((t) => t.key === key) : null;
+    if (!def) return json({ error: '该站点不支持此开关' }, 400);
+    let meta = {};
+    try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+    meta.toggles = meta.toggles || {};
+    meta.toggles[key] = !!value;
+    await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
+      .bind(JSON.stringify(meta), Date.now(), id).run();
+    return json({ ok: true, value: !!value });
+  }
+
+  // 签到时间设置：每天几点（整点，0-23）+ 时区
+  if (path === '/api/schedule' && method === 'GET') {
+    const time = (await getSetting(env.DB, 'schedule_time')) || '08';
+    const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
+    return json({ time, tz });
+  }
+  if (path === '/api/schedule' && method === 'PUT') {
+    const { time, tz } = await readBody(req);
+    const h = validHour(time);
+    const z = validTz(tz);
+    if (!h) return json({ error: '时间必须是 0-23 的整点小时' }, 400);
+    if (!z) return json({ error: '时区无效' }, 400);
+    await setSetting(env.DB, 'schedule_time', h);
+    await setSetting(env.DB, 'schedule_tz', z);
+    return json({ ok: true, time: h, tz: z });
+  }
+
+  // 多步录制：不保存，直接试运行 steps（用于编辑时验证）
+  if (path === '/api/http-test' && method === 'POST') {
+    const { steps } = await readBody(req);
+    try {
+      const r = await runHttpSteps(Array.isArray(steps) ? steps : []);
+      return json({ ok: true, ...r });
+    } catch (e) {
+      return json({ ok: false, error: String((e && e.message) || e) });
+    }
+  }
+
   // 手动执行全部启用的账号
   if (path === '/api/run-all' && method === 'POST') {
     const r = await runAll(env, { manual: true });
@@ -235,10 +284,23 @@ export default {
     }
   },
 
-  // Cron 触发：每天自动签到
+  // Cron 触发：每小时触发一次，按「签到时间设置」判断是否到达整点才执行
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
-      runAll(env, { manual: false }).catch((e) => console.error('[cron]', e))
+      (async () => {
+        try {
+          await ensureSchema(env.DB);
+          const time = (await getSetting(env.DB, 'schedule_time')) || '08';
+          const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
+          const lastKey = await getSetting(env.DB, 'sched_last_key');
+          const { run, key } = shouldRun(new Date(), time, tz, lastKey);
+          if (!run) return;
+          await setSetting(env.DB, 'sched_last_key', key);
+          await runAll(env, { manual: false });
+        } catch (e) {
+          console.error('[cron]', e);
+        }
+      })().catch((e) => console.error('[cron]', e))
     );
   },
 };
