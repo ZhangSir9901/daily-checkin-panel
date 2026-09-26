@@ -1,6 +1,6 @@
-# 签到面板（Cloudflare Workers 原生）
+# 每日签到面板
 
-一个跑在 Cloudflare 上的签到面板：**网页登录管理后台 + D1 存账号 + Cron 每天自动签到 + 推送通知**。零依赖，单 Worker 部署。
+一个跑在 Cloudflare 上的每日自动签到面板（Cloudflare Workers 原生）：**网页登录管理后台 + D1 存账号 + Cron 每天自动签到 + 推送通知**。零依赖，单 Worker 部署。
 
 ## 功能
 
@@ -63,7 +63,7 @@
 
 ```bash
 npx wrangler login
-npx wrangler d1 create checkin-panel
+npx wrangler d1 create daily-checkin-panel
 ```
 
 把返回的 `database_id` 填入 `wrangler.toml`（替换 `REPLACE_WITH_YOUR_D1_DATABASE_ID`）。
@@ -138,7 +138,7 @@ export const bilibili = {
 ## 项目结构
 
 ```
-cf-checkin-panel/
+daily-checkin-panel/
 ├── wrangler.toml        # Worker 配置、Cron、D1 绑定
 ├── src/
 │   ├── index.js         # 路由 + API + Cron 入口

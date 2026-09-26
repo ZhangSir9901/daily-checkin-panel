@@ -1,7 +1,7 @@
 # cf-checkin-panel
 # Cloudflare Workers 原生签到面板：Web 管理后台 + D1 存储 + Cron 每日自动签到
 
-name = "cf-checkin-panel"
+name = "daily-checkin-panel"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
@@ -17,7 +17,7 @@ crons = ["0 0 * * *"]
 
 [[d1_databases]]
 binding = "DB"
-database_name = "checkin-panel"
-# 部署前先执行：npx wrangler d1 create checkin-panel
+database_name = "daily-checkin-panel"
+# 部署前先执行：npx wrangler d1 create daily-checkin-panel
 # 把返回的 database_id 填到下面
 database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
