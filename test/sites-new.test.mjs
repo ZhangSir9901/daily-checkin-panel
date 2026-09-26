@@ -19,6 +19,7 @@ function mockFetch(routes) {
     const bytes = te.encode(r.body || '');
     return {
       status: r.status || 200,
+      url: r.finalUrl || String(url),
       headers: { get: (k) => (r.headers && (r.headers[k.toLowerCase()] ?? r.headers[k])) ?? null },
       text: async () => r.body || '',
       arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
@@ -190,9 +191,20 @@ await t('nodeseek：CF 验证页报错带人机验证提示', async () => {
   await assert.rejects(nodeseek.run({ cookie: 'a=1' }, {}), /人机验证/);
 });
 
-await t('nodeseek：非 JSON 非 CF 页面报错带页面片段', async () => {
+await t('nodeseek：非 JSON 非 CF 页面短报错，详情进 detail', async () => {
   mockFetch([{ match: (u) => u.includes('/api/attendance'), status: 200, body: '<html><body>Service Busy</body></html>' }]);
-  await assert.rejects(nodeseek.run({ cookie: 'a=1' }, {}), /页面片段.*Service Busy/);
+  const err = await nodeseek.run({ cookie: 'a=1' }, {}).catch((e) => e);
+  assert.match(err.message, /网站返回异常/);
+  assert.ok(err.message.length < 30, '报错应为一句话短判，实际：' + err.message);
+  assert.match(err.detail || '', /页面片段.*Service Busy/);
+});
+
+await t('nodeseek：被跳到首页判为登录信息未被识别', async () => {
+  const html = '<html><body><a href="/signIn.html" class="login-btn">登录</a><a class="btn-signin">立即登录</a></body></html>';
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), status: 200, body: html, finalUrl: 'https://www.nodeseek.com/' }]);
+  const err = await nodeseek.run({ cookie: 'a=1' }, {}).catch((e) => e);
+  assert.match(err.message, /没认出登录信息/);
+  assert.match(err.detail || '', /最终地址 https:\/\/www\.nodeseek\.com\//);
 });
 
 await t('nodeseek：成功时返回网站原始回馈 detail', async () => {

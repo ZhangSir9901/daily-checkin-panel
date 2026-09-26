@@ -45,23 +45,39 @@ export const nodeseek = {
       Cookie: String(creds.cookie || '').trim(),
     };
 
-    const res = await fetch(`https://www.nodeseek.com/api/attendance?random=${random}`, {
+    const apiUrl = `https://www.nodeseek.com/api/attendance?random=${random}`;
+    const res = await fetch(apiUrl, {
       method: 'POST',
       headers,
       body: '{}',
     });
 
     const text = await res.text();
+    const finalUrl = res.url || apiUrl;
+    // 接口被 302 跳到首页/登录页：网站没认出登录信息（Cookie 无效或缺会话）
+    const bounced = !finalUrl.includes('/api/attendance');
+
     let j = null;
     try {
       j = JSON.parse(text);
-    } catch {
-      // 非 JSON：大概率是 Cloudflare 验证页/拦截页。带上页面片段便于从日志里直接判断。
-      const snippet = text.replace(/\s+/g, ' ').slice(0, 150);
+    } catch { /* 非 JSON，下面按页面类型判断 */ }
+
+    const fail = (shortMsg, detail) => {
+      const err = new Error(shortMsg);
+      err.detail = detail;
+      throw err;
+    };
+
+    if (!j) {
+      const snippet = text.replace(/\s+/g, ' ').slice(0, 120);
+      const detail = `网站返回：最终地址 ${finalUrl}，非 JSON。页面片段：${snippet}`;
       if (/challenge-platform|cf-chl|just a moment|__cf_chl/i.test(text)) {
-        throw new Error(`签到失败：被 NodeSeek 的 Cloudflare 人机验证拦截（HTTP ${res.status}），机房 IP 被要求验证，稍后重试`);
+        fail('网站人机验证拦截，稍后重试', detail);
       }
-      throw new Error(`签到失败：站点返回非 JSON 数据（HTTP ${res.status}），稍后重试。页面片段：${snippet}`);
+      if (bounced || /signIn\.html|立即登录/.test(text)) {
+        fail('网站没认出登录信息，请重新获取 Cookie', detail);
+      }
+      fail('网站返回异常，稍后重试', detail);
     }
 
     const msg = String(j.message || '');
@@ -69,20 +85,18 @@ export const nodeseek = {
     // 网站原始回馈：存入日志 detail，面板日志页"网站回馈"展示
     const detail = `网站返回：${text.slice(0, 300)}`;
 
-    // 成功：返回 message 带"鸡腿"或 success 为 true
+    // 成功
     if (okFlag || msg.includes('鸡腿')) {
-      return { ok: true, message: `签到成功：${msg || '领取成功'}`, detail };
+      return { ok: true, message: `签到成功：${msg.slice(0, 60) || '领取成功'}`, detail };
     }
-    // 已签到：一天只能签一次，网站说已签到属于正常情况，不算失败
-    if (msg.includes('已签到') || msg.includes('已完成签到') || msg.includes('已经签到')) {
-      return { ok: true, message: `今日已签到，无需重复（${msg}）`, detail };
+    // 已签到：一天只能签一次，属正常情况
+    if (msg.includes('已签到') || msg.includes('已经签到') || msg.includes('已完成签到')) {
+      return { ok: true, message: '今日已签到，不能重复签到', detail };
     }
     // 会话无效：HTTP 500 + {"message":"USER NOT FOUND","status":404}
     if (j.status === 404 || msg.includes('USER NOT FOUND')) {
-      throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
+      fail('登录已失效，请重新获取 Cookie', detail);
     }
-    const err = new Error('签到失败：' + (msg || `HTTP ${res.status}`));
-    err.detail = detail;
-    throw err;
+    fail(msg ? `签到失败：${msg.slice(0, 60)}` : '签到失败，稍后重试', detail);
   },
 };
