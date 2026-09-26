@@ -7,8 +7,12 @@ import { cloud189 } from './cloud189.js';
 import { httpTask } from './http.js';
 import { nodeseek } from './nodeseek.js';
 import { akile } from './akile.js';
+import { v2ex } from './v2ex.js';
+import { misign } from './misign.js';
+import { kanxue } from './kanxue.js';
+import { wuaipojie } from './wuaipojie.js';
 
-export const SITES = [quark, cloud189, nodeseek, akile, httpTask];
+export const SITES = [quark, cloud189, nodeseek, akile, v2ex, misign, kanxue, wuaipojie, httpTask];
 
 export function getSite(id) {
   return SITES.find((s) => s.id === id);

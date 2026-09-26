@@ -127,13 +127,27 @@
     <section id="tab-logs" class="hidden">
       <div class="card">
         <div class="row" style="justify-content:space-between;margin-bottom:12px;">
-          <h2 style="margin:0">运行日志（最近 100 条）</h2>
-          <button class="ghost sm" id="btn-refresh-logs">刷新</button>
+          <h2 style="margin:0">运行日志</h2>
+          <div class="row">
+            <button class="ghost sm" id="btn-refresh-logs">刷新</button>
+            <button class="danger sm" id="btn-clear-logs">清空</button>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:4px">
+          <select id="log-filter-account" style="flex:2;margin:4px 0"><option value="">全部账号</option></select>
+          <select id="log-filter-status" style="flex:1;margin:4px 0">
+            <option value="">全部结果</option><option value="ok">成功</option><option value="fail">失败</option>
+          </select>
+          <select id="log-filter-limit" style="flex:1;margin:4px 0">
+            <option value="50">50 条</option><option value="100" selected>100 条</option>
+            <option value="200">200 条</option><option value="500">500 条</option>
+          </select>
         </div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>时间</th><th>账号</th><th>结果</th><th>详情</th></tr></thead>
-          <tbody id="logs-body"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+          <thead><tr><th>时间</th><th>账号</th><th>结果</th><th>耗时</th><th>详情</th></tr></thead>
+          <tbody id="logs-body"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
         </table></div>
+        <p class="muted" style="margin-top:8px">日志保留最近 500 条，定时/手动执行自动写入。清空只删除日志，账号和登录信息不受影响。</p>
       </div>
     </section>
 
@@ -288,7 +302,7 @@ document.querySelectorAll('.tabs button').forEach((b) => {
     b.classList.add('active');
     for (const t of ['accounts', 'logs', 'settings']) $('tab-' + t).classList.add('hidden');
     $('tab-' + b.dataset.tab).classList.remove('hidden');
-    if (b.dataset.tab === 'logs') loadLogs();
+    if (b.dataset.tab === 'logs') { refreshLogAccountFilter(); loadLogs(); }
     if (b.dataset.tab === 'settings') loadSettings();
   };
 });
@@ -487,6 +501,7 @@ async function loadAccounts() {
     toast('已删除'); loadAccounts();
   }));
   refreshCkSelect();
+  refreshLogAccountFilter();
 }
 
 $('btn-run-all').onclick = async (e) => {
@@ -763,19 +778,44 @@ $('btn-save').onclick = async () => {
 };
 
 // ---------- 日志 ----------
+function refreshLogAccountFilter() {
+  const sel = $('log-filter-account');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部账号</option>' + ACCTS.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('');
+  if ([...sel.options].some((o) => o.value === cur)) sel.value = cur;
+}
+
 async function loadLogs() {
-  const { runs } = await api('/api/runs?limit=100');
+  const aid = $('log-filter-account').value;
+  const st = $('log-filter-status').value;
+  const limit = $('log-filter-limit').value;
+  const q = new URLSearchParams({ limit });
+  if (aid) q.set('account_id', aid);
+  if (st) q.set('status', st);
+  const { runs } = await api('/api/runs?' + q.toString());
   const tb = $('logs-body');
-  if (!runs.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">暂无运行记录。</td></tr>'; return; }
+  if (!runs.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">暂无符合条件的记录。</td></tr>'; return; }
   tb.innerHTML = runs.map((r) => `
     <tr>
       <td class="muted" style="white-space:nowrap">${fmtTime(r.created_at)}</td>
       <td><b>${esc(r.name)}</b> <span class="badge site">${esc(siteName(r.site))}</span></td>
       <td>${r.status === 'ok' ? '<span class="badge ok">成功</span>' : '<span class="badge fail">失败</span>'}</td>
+      <td class="muted" style="white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
       <td class="msg">${esc(r.message || '')}</td>
     </tr>`).join('');
 }
 $('btn-refresh-logs').onclick = loadLogs;
+$('btn-clear-logs').onclick = async () => {
+  const aid = $('log-filter-account').value;
+  const aname = aid ? ACCTS.find((a) => String(a.id) === String(aid)) : null;
+  if (!confirm(aid ? `确定清空「${aname ? aname.name : aid}」的运行日志吗？` : '确定清空全部运行日志吗？（账号和登录信息不受影响）')) return;
+  try {
+    await api('/api/runs' + (aid ? '?account_id=' + aid : ''), 'DELETE');
+    toast('日志已清空'); loadLogs();
+  } catch (e) { toast(e.message); }
+};
+['log-filter-account', 'log-filter-status', 'log-filter-limit'].forEach((id) => { $(id).onchange = loadLogs; });
 
 // ---------- 设置 ----------
 async function loadSettings() {

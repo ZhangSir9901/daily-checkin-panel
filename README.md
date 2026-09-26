@@ -22,7 +22,12 @@
 | 夸克网盘 | 每日签到领空间 | 抓包获取 `kps` / `sign` / `vcode` |
 | 天翼云盘 | 账号密码登录后签到 | 手机号 + 密码（登录态自动缓存 5 天） |
 | NodeSeek | 论坛每日签到领鸡腿（支持试试手气） | 浏览器登录后复制 Cookie（登录有人机验证，无法用账号密码自动登录） |
-| 自定义 HTTP | 万能模块 | 请求 URL/方法/头/体 + 成功判定规则 |
+| AkileCloud | 每日签到领 AK币 | 邮箱 + 密码（自动登录） |
+| V2EX | 每日登录奖励 | 浏览器登录后复制 Cookie |
+| Discuz 每日签到 | 通用模块：k_misign 插件论坛（如阅次元） | 论坛地址 + 浏览器登录后复制 Cookie |
+| 看雪论坛 | 每日签到 | 浏览器登录后复制 Cookie（csrf_token 自动获取） |
+| 吾爱破解 | 论坛每日签到（Discuz 任务） | 浏览器过安全验证后复制完整 Cookie（含 wzws_cid），UA 须与浏览器一致 |
+| 自定义 HTTP | 万能模块（单次请求 / 多步录制） | 请求 URL/方法/头/体 + 成功判定规则 |
 
 > 夸克接口：`drive-m.quark.cn/1/clouddrive/capacity/growth/{info,sign}`（`kps`/`sign`/`vcode` 约 2 个月有效，过期后重新抓包更新即可）。
 > 天翼登录流程参考 [wes-lin/cloud189-sdk](https://github.com/wes-lin/cloud189-sdk)（MIT），用 WebCrypto 实现 RSA 加密。
@@ -69,6 +74,21 @@
 3. 在目标网站（已登录页面）点击该书签，Cookie 自动传回面板并弹出确认框填入
 
 > 注意：浏览器安全限制下，普通网页不能直接读取任意站点的 Cookie（同源策略），HttpOnly 类型的 Cookie JS 也读不到。小书签是在你当前打开的网站页面上运行的，所以能拿到该站点的 Cookie；这类仍需手动复制粘贴。
+
+### 吾爱破解 Cookie 获取方法（重要）
+
+1. 电脑浏览器打开 www.52pojie.cn，先完成滑块/安全验证并登录
+2. F12 → 网络 → 点任意请求 → 复制 Request Headers 里的完整 Cookie（必须含 `wzws_cid`，有时还有 `wzws_sid`）
+3. 面板里添加「吾爱破解」账号，粘贴 Cookie，并填写抓包浏览器的完整 User-Agent（必须一致，否则会被 WAF 拦截）
+4. 若面板报错「遇到安全验证」，说明 Cookie 里的验证过期：用浏览器重新访问一次 52pojie.cn 过验证，再复制新的 Cookie 更新
+
+页面为 GBK 编码，模块会自动处理；签到走 Discuz 每日任务接口，无需 formhash。
+
+## 数据安全：升级不丢数据
+
+- 面板代码更新（git push → Cloudflare 自动重新部署）只替换 Worker 脚本，D1 数据库独立存储，账号和登录信息不受影响。
+- 表结构变更走版本化迁移（`src/db.js` 的 `MIGRATIONS`，按 `schema_version` 顺序幂等执行）：老库缺列会自动 `ALTER TABLE` 补上，不会删表重建。
+- 运行日志保留最近 500 条，可在「日志」页按账号/结果筛选、清空（清空只删日志，不动账号）。
 
 ## 部署步骤
 

@@ -243,9 +243,24 @@ async function handleApi(req, env, url) {
 
   // 运行日志
   if (path === '/api/runs' && method === 'GET') {
-    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 500);
-    const { results } = await env.DB.prepare('SELECT * FROM runs ORDER BY id DESC LIMIT ?').bind(limit).all();
+    const limit = Math.min(Math.max(parseInt(url.searchParams.get('limit') || '100', 10) || 100, 1), 500);
+    const accountId = parseInt(url.searchParams.get('account_id') || '0', 10) || 0;
+    const status = url.searchParams.get('status') || '';
+    const conds = [];
+    const args = [];
+    if (accountId) { conds.push('account_id = ?'); args.push(accountId); }
+    if (status === 'ok' || status === 'fail') { conds.push('status = ?'); args.push(status); }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    const { results } = await env.DB.prepare(`SELECT * FROM runs ${where} ORDER BY id DESC LIMIT ?`).bind(...args, limit).all();
     return json({ runs: results || [] });
+  }
+
+  // 清空日志（只删 runs，不动 accounts：账号和登录信息不受影响）
+  if (path === '/api/runs' && method === 'DELETE') {
+    const accountId = parseInt(url.searchParams.get('account_id') || '0', 10) || 0;
+    if (accountId) await env.DB.prepare('DELETE FROM runs WHERE account_id = ?').bind(accountId).run();
+    else await env.DB.prepare('DELETE FROM runs').run();
+    return json({ ok: true });
   }
 
   // 通知设置
