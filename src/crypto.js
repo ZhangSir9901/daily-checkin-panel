@@ -28,12 +28,13 @@ export function randomHex(n) {
 export async function hashPassword(password) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey('raw', te.encode(password), 'PBKDF2', false, ['deriveBits']);
+  // 注意：Cloudflare Workers 的 WebCrypto 最高只支持 100000 次迭代
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 120000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
     key,
     256
   );
-  return `pbkdf2$120000$${b64encode(salt)}$${b64encode(bits)}`;
+  return `pbkdf2$100000$${b64encode(salt)}$${b64encode(bits)}`;
 }
 
 export async function verifyPassword(password, stored) {
