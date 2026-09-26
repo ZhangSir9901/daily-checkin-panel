@@ -245,6 +245,15 @@
     <label>站点</label>
     <select id="f-site"></select>
     <div id="f-tips" class="tips hidden"></div>
+    <!-- Akile：取 token 小书签（登录接口拦截程序化登录，改用 token 签到） -->
+    <div id="f-akile" class="hidden">
+      <div class="tips">
+        取 token 步骤：① 在浏览器登录 <b>akile.ai</b> → ② 点下面按钮复制小书签代码，新建一个书签粘贴进去 →
+        ③ 在 akile.ai 页面点该书签，token 会自动复制 → ④ 粘贴到下方输入框保存。<br>
+        token 临近过期时面板会自动续期；续期失败会提示重新获取。
+      </div>
+      <button type="button" class="sm" id="btn-akile-bm">复制取 token 小书签</button>
+    </div>
     <div id="f-fields"></div>
     <!-- 自定义 HTTP：单次请求 / 多步录制 切换 -->
     <div id="f-http-mode" class="hidden">
@@ -420,6 +429,19 @@ $('btn-gen-bm').onclick = () => {
   link.dataset.code = code;
   $('bm-box').classList.remove('hidden');
   toast('小书签已生成，拖到书签栏使用');
+};
+
+// Akile 取 token 小书签：在 akile.ai 页面点书签，自动复制 localStorage 的 akile-token
+const AKILE_BM = "javascript:(function(){try{"
+  + "var t=localStorage.getItem('akile-token');"
+  + "if(!t){alert('请先在 akile.ai 登录');return;}"
+  + "var d=document.createElement('textarea');d.value=t;document.body.appendChild(d);d.select();"
+  + "try{document.execCommand('copy');alert('akile-token 已复制，去面板粘贴保存');}"
+  + "catch(e){prompt('复制 token 粘贴到面板',t);}"
+  + "d.remove();}catch(e){alert('失败：'+e.message);}})();";
+$('btn-akile-bm').onclick = async () => {
+  try { await navigator.clipboard.writeText(AKILE_BM); toast('小书签代码已复制，新建书签粘贴到网址栏'); }
+  catch (e) { prompt('复制小书签代码，新建书签粘贴到网址栏', AKILE_BM); }
 };
 
 $('btn-copy-bm').onclick = async () => {
@@ -745,6 +767,8 @@ function renderFields(siteId, creds = {}) {
   // 自定义 HTTP：单次请求 / 多步录制
   const isHttp = siteId === 'http';
   $('f-http-mode').classList.toggle('hidden', !isHttp);
+  // Akile：显示取 token 小书签
+  $('f-akile').classList.toggle('hidden', siteId !== 'akile');
   if (isHttp) {
     if (creds.steps && creds.steps.length) {
       HTTP_MODE = 'steps';

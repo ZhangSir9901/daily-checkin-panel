@@ -1,86 +1,115 @@
 // akile 模块测试：node test/akile.test.mjs（纯 mock，不依赖网络）
+// token 方式：签到直接用 Authorization 头；临期/失效自动 refreshToken 并回写 D1
 import assert from 'node:assert/strict';
-import { akile } from '../src/sites/akile.js';
+import { akile, jwtExp } from '../src/sites/akile.js';
 
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
 
-// mock fetch：按 URL 返回预设响应
+// mock fetch：按 URL 返回预设响应；支持按顺序返回多个响应
 function mockFetch(routes) {
+  const calls = [];
   globalThis.fetch = async (url, init = {}) => {
+    calls.push({ url: String(url), init });
+    globalThis.__calls = calls;
     for (const [match, resp] of routes) {
       if (String(url).includes(match)) {
-        // 记录请求以便断言
-        globalThis.__lastReq = { url: String(url), init };
-        return { status: 200, json: async () => resp, text: async () => JSON.stringify(resp) };
+        const body = typeof resp === 'function' ? resp(calls.length) : resp;
+        const status = body && body.__http ? body.__http : 200;
+        return { status, json: async () => body, text: async () => JSON.stringify(body) };
       }
     }
     throw new Error('unexpected url: ' + url);
   };
 }
 
-const TOKEN = 'tok_abc123';
-const loginOk = { status_code: 0, status_msg: '登录成功', data: { userId: 8318, token: TOKEN } };
+// 构造一个 exp 为 now+delta 秒的假 JWT（签名部分随意，jwtExp 只读 payload）
+function fakeJwt(expDeltaSec) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  return `${b64({ alg: 'HS256' })}.${b64({ exp: Math.floor(Date.now() / 1000) + expDeltaSec })}.sig`;
+}
+const LONG_TOKEN = fakeJwt(30 * 86400); // 30 天后过期：不触发主动刷新
+const SOON_TOKEN = fakeJwt(3600);       // 1 小时后过期：触发主动刷新
+const NEW_TOKEN = fakeJwt(30 * 86400);
 
-await t('登录+签到成功', async () => {
-  mockFetch([
-    ['/v1/user/login', loginOk],
-    ['/v1/user/Checkin', { status_code: 0, status_msg: '签到成功', data: { amount: 8 } }],
-  ]);
-  const r = await akile.run({ email: 'a@b.c', password: 'pw' });
+const checkinOk = { status_code: 0, status_msg: '签到成功', data: { amount: 8 } };
+const checkinDup = { status_code: 1, status_msg: '今日已签到' };
+const authErr = { status_code: 401, status_msg: 'token已过期' };
+const refreshOk = (tok) => ({ status_code: 0, status_msg: 'ok', data: { token: tok } });
+
+// 伪造 ctx：验证 saveToken 的 D1 回写
+function fakeCtx() {
+  const writes = [];
+  const FIXED_KEY = Buffer.alloc(32, 7).toString('base64');
+  const db = {
+    prepare: (sql) => ({
+      bind: (...args) => ({ run: async () => { writes.push({ sql, args }); return {}; } }),
+      first: async () => ({ value: FIXED_KEY }),
+    }),
+  };
+  return { ctx: { env: {}, db, account: { id: 'acc1' } }, writes };
+}
+
+await t('签到成功（token 直接带在 Authorization 头）', async () => {
+  mockFetch([['/v1/user/Checkin', checkinOk]]);
+  const r = await akile.run({ token: LONG_TOKEN });
   assert.equal(r.ok, true);
   assert.match(r.message, /8/);
-  // 鉴权头为纯 token（无 Bearer 前缀）
-  assert.equal(globalThis.__lastReq.init.headers.Authorization, TOKEN);
-  assert.equal(globalThis.__lastReq.init.method, 'GET');
+  const req = globalThis.__calls[0];
+  assert.equal(req.init.headers.Authorization, LONG_TOKEN);
+  assert.ok(!String(req.init.headers.Authorization).toLowerCase().startsWith('bearer'));
 });
 
-await t('登录请求为 POST JSON 且带邮箱密码', async () => {
-  let loginReq;
-  globalThis.fetch = async (url, init = {}) => {
-    if (String(url).includes('/v1/user/login')) {
-      loginReq = { url: String(url), init };
-      return { status: 200, json: async () => loginOk, text: async () => '{}' };
-    }
-    return { status: 200, json: async () => ({ status_code: 0, status_msg: 'ok', data: null }), text: async () => '{}' };
-  };
-  await akile.run({ email: 'a@b.c', password: 'pw' });
-  assert.equal(loginReq.init.method, 'POST');
-  assert.match(loginReq.init.headers['Content-Type'], /application\/json/);
-  assert.deepEqual(JSON.parse(loginReq.init.body), { email: 'a@b.c', password: 'pw' });
-});
-
-await t('今日已签到视为成功', async () => {
-  mockFetch([
-    ['/v1/user/login', loginOk],
-    ['/v1/user/Checkin', { status_code: 1, status_msg: '今日已签到', data: null }],
-  ]);
-  const r = await akile.run({ email: 'a@b.c', password: 'pw' });
+await t('重复签到判为成功', async () => {
+  mockFetch([['/v1/user/Checkin', checkinDup]]);
+  const r = await akile.run({ token: LONG_TOKEN });
   assert.equal(r.ok, true);
   assert.match(r.message, /已签到/);
 });
 
-await t('登录失败抛错', async () => {
-  mockFetch([['/v1/user/login', { status_code: 1001, status_msg: '邮箱或密码错误', data: null }]]);
-  await assert.rejects(() => akile.run({ email: 'a@b.c', password: 'bad' }), /邮箱或密码错误/);
+await t('缺 token 报错提示获取方式', async () => {
+  await assert.rejects(akile.run({ token: '' }), /akile-token/);
 });
 
-await t('签到失败抛错', async () => {
+await t('临近过期：先刷新再签到，并回写 D1', async () => {
   mockFetch([
-    ['/v1/user/login', loginOk],
-    ['/v1/user/Checkin', { status_code: 500, status_msg: '系统繁忙', data: null }],
+    ['/v1/user/refreshToken', refreshOk(NEW_TOKEN)],
+    ['/v1/user/Checkin', checkinOk],
   ]);
-  await assert.rejects(() => akile.run({ email: 'a@b.c', password: 'pw' }), /系统繁忙/);
+  const { ctx, writes } = fakeCtx();
+  const r = await akile.run({ token: SOON_TOKEN }, ctx);
+  assert.equal(r.ok, true);
+  // 第一个请求应是 refreshToken
+  assert.ok(globalThis.__calls[0].url.includes('refreshToken'));
+  // D1 回写了新 token
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /UPDATE accounts/);
 });
 
-await t('缺凭据抛错', async () => {
-  await assert.rejects(() => akile.run({ email: '', password: '' }), /请填写/);
+await t('签到时 token 失效：刷新后重试成功', async () => {
+  let c = 0;
+  mockFetch([
+    ['/v1/user/refreshToken', refreshOk(NEW_TOKEN)],
+    ['/v1/user/Checkin', () => (++c === 1 ? authErr : checkinOk)],
+  ]);
+  const { ctx, writes } = fakeCtx();
+  const r = await akile.run({ token: LONG_TOKEN }, ctx);
+  assert.equal(r.ok, true);
+  assert.equal(writes.length, 1);
 });
 
-await t('站点元信息完整', async () => {
-  assert.equal(akile.id, 'akile');
-  assert.ok(akile.fields.find((f) => f.key === 'email' && f.required));
-  assert.ok(akile.fields.find((f) => f.key === 'password' && f.type === 'password'));
+await t('刷新也失败：提示重新获取 token', async () => {
+  mockFetch([
+    ['/v1/user/refreshToken', { status_code: 401, status_msg: '无效token' }],
+    ['/v1/user/Checkin', authErr],
+  ]);
+  await assert.rejects(akile.run({ token: LONG_TOKEN }), /重新.*akile-token/);
 });
 
-console.log(`\n${n} 组通过`);
+await t('jwtExp 解析', async () => {
+  assert.ok(jwtExp(fakeJwt(86400)) > Date.now() / 1000);
+  assert.equal(jwtExp('not-a-jwt'), 0);
+  assert.equal(jwtExp(''), 0);
+});
+
+console.log(`\n${n} passed`);
