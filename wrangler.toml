@@ -18,6 +18,5 @@ crons = ["0 * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "daily-checkin-panel"
-# 部署前先执行：npx wrangler d1 create daily-checkin-panel
-# 把返回的 database_id 填到下面
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+# 由 Cloudflare 仪表盘创建的 D1 数据库（daily-checkin-panel），填入其 database_id
+database_id = "23a3455d-69d7-49ec-a71f-4440dff9957c"
