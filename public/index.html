@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>签到面板</title>
+<style>
+  :root { --bg:#0f1420; --card:#182032; --line:#26314a; --text:#e8edf7; --muted:#8b98b3; --accent:#4f8cff; --ok:#34c77b; --fail:#f2555a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:960px; margin:0 auto; padding:20px 16px 60px; }
+  .hidden { display:none !important; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; margin-bottom:16px; }
+  h1 { font-size:22px; margin:6px 0 2px; }
+  h2 { font-size:16px; margin:0 0 12px; }
+  .muted { color:var(--muted); font-size:13px; }
+  input, select, textarea { width:100%; background:#0d1322; border:1px solid var(--line); color:var(--text); border-radius:8px; padding:10px 12px; font-size:14px; margin:4px 0 10px; }
+  textarea { min-height:76px; resize:vertical; font-family:monospace; }
+  label { font-size:13px; color:var(--muted); }
+  button { cursor:pointer; border:0; border-radius:8px; padding:10px 16px; font-size:14px; background:var(--accent); color:#fff; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--text); }
+  button.danger { background:transparent; border:1px solid var(--fail); color:var(--fail); }
+  button.sm { padding:6px 10px; font-size:12px; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tabs { display:flex; gap:8px; margin:16px 0; }
+  .tabs button { background:transparent; border:1px solid var(--line); color:var(--muted); }
+  .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:10px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:normal; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:20px; font-size:12px; }
+  .badge.ok { background:rgba(52,199,123,.15); color:var(--ok); }
+  .badge.fail { background:rgba(242,85,90,.15); color:var(--fail); }
+  .badge.site { background:rgba(79,140,255,.15); color:var(--accent); }
+  .badge.off { background:rgba(139,152,179,.15); color:var(--muted); }
+  .switch { position:relative; width:40px; height:22px; background:#2a3550; border-radius:20px; border:0; padding:0; }
+  .switch::after { content:""; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#8b98b3; transition:.15s; }
+  .switch.on { background:var(--ok); }
+  .switch.on::after { left:21px; background:#fff; }
+  .modal-bg { position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; z-index:10; overflow-y:auto; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px; width:100%; max-width:520px; }
+  #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:#222c44; border:1px solid var(--line); padding:10px 18px; border-radius:10px; font-size:14px; z-index:20; display:none; }
+  .tips { background:rgba(79,140,255,.08); border:1px solid rgba(79,140,255,.3); border-radius:8px; padding:10px 12px; font-size:12px; color:#b9c8e8; margin:8px 0 12px; line-height:1.6; }
+  .topbar { display:flex; justify-content:space-between; align-items:center; }
+  .checkline { display:flex; align-items:center; gap:8px; margin:8px 0; font-size:14px; }
+  .checkline input { width:auto; margin:0; }
+  .msg { word-break:break-all; color:var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 初始化：设置管理密码 -->
+  <div id="view-setup" class="view hidden">
+    <div class="card" style="max-width:420px;margin:60px auto;">
+      <h1>签到面板</h1>
+      <p class="muted">首次使用，请设置管理密码（至少 6 位）。</p>
+      <label>管理密码</label>
+      <input id="setup-pwd" type="password" placeholder="设置管理密码">
+      <label>确认密码</label>
+      <input id="setup-pwd2" type="password" placeholder="再输一次">
+      <button id="btn-setup" style="width:100%">完成设置并登录</button>
+    </div>
+  </div>
+
+  <!-- 登录 -->
+  <div id="view-login" class="view hidden">
+    <div class="card" style="max-width:420px;margin:60px auto;">
+      <h1>签到面板</h1>
+      <p class="muted">请输入管理密码登录。</p>
+      <label>管理密码</label>
+      <input id="login-pwd" type="password" placeholder="管理密码">
+      <button id="btn-login" style="width:100%">登录</button>
+    </div>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="view-main" class="view hidden">
+    <div class="topbar">
+      <div><h1>签到面板</h1><div class="muted">每天 08:00（北京时间）自动签到 · 也可手动执行</div></div>
+      <button class="ghost sm" id="btn-logout">退出</button>
+    </div>
+    <div class="tabs">
+      <button data-tab="accounts" class="active">账号</button>
+      <button data-tab="logs">运行日志</button>
+      <button data-tab="settings">设置</button>
+    </div>
+
+    <section id="tab-accounts">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:12px;">
+          <h2 style="margin:0">签到账号</h2>
+          <div class="row">
+            <button class="ghost sm" id="btn-run-all">全部执行</button>
+            <button class="sm" id="btn-add">添加账号</button>
+          </div>
+        </div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>备注</th><th>站点</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
+          <tbody id="accounts-body"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section id="tab-logs" class="hidden">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;margin-bottom:12px;">
+          <h2 style="margin:0">运行日志（最近 100 条）</h2>
+          <button class="ghost sm" id="btn-refresh-logs">刷新</button>
+        </div>
+        <div style="overflow-x:auto"><table>
+          <thead><tr><th>时间</th><th>账号</th><th>结果</th><th>详情</th></tr></thead>
+          <tbody id="logs-body"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="hidden">
+      <div class="card">
+        <h2>推送通知</h2>
+        <p class="muted">每次定时/手动任务结束后推送汇总。留空则不启用该通道。</p>
+        <div class="checkline"><input type="checkbox" id="set-enabled"><label for="set-enabled" style="color:var(--text)">启用推送</label></div>
+        <label>Telegram Bot Token <span id="tg-set" class="muted"></span></label>
+        <input id="set-tg-token" type="password" placeholder="留空表示不修改">
+        <label>Telegram Chat ID</label>
+        <input id="set-tg-chat" type="text" placeholder="数字 ID">
+        <label>Bark Key <span id="bark-set" class="muted"></span></label>
+        <input id="set-bark" type="password" placeholder="留空表示不修改">
+        <label>Bark 服务器（可选）</label>
+        <input id="set-bark-server" type="text" placeholder="https://api.day.app">
+        <label>Webhook URL <span id="wh-set" class="muted"></span></label>
+        <input id="set-webhook" type="password" placeholder="留空表示不修改（POST JSON: {title, body}）">
+        <button id="btn-save-settings">保存推送设置</button>
+      </div>
+      <div class="card">
+        <h2>修改管理密码</h2>
+        <label>原密码</label><input id="pwd-old" type="password">
+        <label>新密码（至少 6 位）</label><input id="pwd-new" type="password">
+        <button id="btn-change-pwd">修改密码</button>
+      </div>
+      <div class="card">
+        <h2>定时说明</h2>
+        <p class="muted" style="line-height:1.8">
+          Cloudflare Cron 使用 UTC 时间，当前配置为 <b>每天 UTC 00:00</b> 触发，即北京时间每天 08:00。<br>
+          如需调整，在 <b>wrangler.toml</b> 的 <b>triggers.crons</b> 中修改后重新部署。<br>
+          建议绑定自定义域名（workers.dev 在国内访问不稳定）。
+        </p>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- 账号编辑弹窗 -->
+<div id="modal-bg" class="modal-bg hidden">
+  <div class="modal">
+    <h2 id="modal-title">添加账号</h2>
+    <input type="hidden" id="f-id">
+    <label>备注名</label>
+    <input id="f-name" type="text" placeholder="如：我的夸克">
+    <label>站点</label>
+    <select id="f-site"></select>
+    <div id="f-tips" class="tips hidden"></div>
+    <div id="f-fields"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px;">
+      <button class="ghost" id="btn-cancel">取消</button>
+      <button id="btn-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let SITES = [];
+
+async function api(path, method = 'GET', data) {
+  const r = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: data ? JSON.stringify(data) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('请求失败 ' + r.status));
+  if (j.error) throw new Error(j.error);
+  return j;
+}
+
+function toast(msg, ms = 2200) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._h);
+  t._h = setTimeout(() => (t.style.display = 'none'), ms);
+}
+
+function fmtTime(ts) {
+  if (!ts) return '-';
+  return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ---------- 视图切换 ----------
+function show(view) {
+  for (const v of ['view-setup', 'view-login', 'view-main']) $(v).classList.add('hidden');
+  $(view).classList.remove('hidden');
+}
+
+async function boot() {
+  const s = await api('/api/status');
+  if (s.setup_needed) show('view-setup');
+  else if (!s.logged_in) show('view-login');
+  else { show('view-main'); await initMain(); }
+}
+
+$('btn-setup').onclick = async () => {
+  const a = $('setup-pwd').value, b = $('setup-pwd2').value;
+  if (a.length < 6) return toast('密码至少 6 位');
+  if (a !== b) return toast('两次输入不一致');
+  try { await api('/api/setup', 'POST', { password: a }); show('view-main'); await initMain(); }
+  catch (e) { toast(e.message); }
+};
+
+$('btn-login').onclick = async () => {
+  try { await api('/api/login', 'POST', { password: $('login-pwd').value }); show('view-main'); await initMain(); }
+  catch (e) { toast(e.message); }
+};
+$('login-pwd').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-login').click(); });
+
+$('btn-logout').onclick = async () => { await api('/api/logout', 'POST'); location.reload(); };
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tabs button').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('.tabs button').forEach((x) => x.classList.remove('active'));
+    b.classList.add('active');
+    for (const t of ['accounts', 'logs', 'settings']) $('tab-' + t).classList.add('hidden');
+    $('tab-' + b.dataset.tab).classList.remove('hidden');
+    if (b.dataset.tab === 'logs') loadLogs();
+    if (b.dataset.tab === 'settings') loadSettings();
+  };
+});
+
+async function initMain() {
+  const { sites } = await api('/api/sites');
+  SITES = sites;
+  await loadAccounts();
+}
+
+// ---------- 账号 ----------
+function siteName(id) {
+  const s = SITES.find((x) => x.id === id);
+  return s ? s.name : id;
+}
+
+async function loadAccounts() {
+  const { accounts } = await api('/api/accounts');
+  const tb = $('accounts-body');
+  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">还没有账号，点击右上角「添加账号」。定时任务每天 08:00（北京时间）自动执行。</td></tr>'; return; }
+  tb.innerHTML = accounts.map((a) => `
+    <tr>
+      <td><b>${esc(a.name)}</b></td>
+      <td><span class="badge site">${esc(siteName(a.site))}</span></td>
+      <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : '<span class="badge off">未运行</span>'}</td>
+      <td class="msg">${esc(a.last_msg || '-')}</td>
+      <td class="muted">${fmtTime(a.last_run_at)}</td>
+      <td><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
+      <td><div class="row">
+        <button class="ghost sm" data-run="${a.id}">执行</button>
+        <button class="ghost sm" data-edit="${a.id}">编辑</button>
+        <button class="danger sm" data-del="${a.id}">删除</button>
+      </div></td>
+    </tr>`).join('');
+
+  tb.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.toggle;
+    const acc = (await api('/api/accounts/' + id)).account;
+    await api('/api/accounts/' + id, 'PUT', { enabled: !acc.enabled });
+    loadAccounts();
+  }));
+  tb.querySelectorAll('[data-run]').forEach((b) => (b.onclick = async () => {
+    b.disabled = true; b.textContent = '执行中…';
+    try {
+      const r = await api('/api/accounts/' + b.dataset.run + '/run', 'POST');
+      toast((r.ok ? '成功：' : '失败：') + (r.result.message || ''));
+    } catch (e) { toast('执行失败：' + e.message); }
+    b.disabled = false; b.textContent = '执行';
+    loadAccounts();
+  }));
+  tb.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => openModal(Number(b.dataset.edit))));
+  tb.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
+    if (!confirm('确定删除该账号吗？')) return;
+    await api('/api/accounts/' + b.dataset.del, 'DELETE');
+    toast('已删除'); loadAccounts();
+  }));
+}
+
+$('btn-run-all').onclick = async (e) => {
+  const b = e.target; b.disabled = true; b.textContent = '执行中…';
+  try {
+    const r = await api('/api/run-all', 'POST');
+    toast(`完成：成功 ${r.ok} 个，失败 ${r.fail} 个`);
+  } catch (err) { toast('执行失败：' + err.message); }
+  b.disabled = false; b.textContent = '全部执行';
+  loadAccounts();
+};
+
+// ---------- 账号弹窗 ----------
+function fieldInput(f, val = '') {
+  const v = esc(val);
+  if (f.type === 'textarea') return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${v}</textarea>`;
+  if (f.type === 'select') {
+    const opts = (f.options || []).map((o) => `<option ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('');
+    return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label><select data-k="${f.key}">${opts}</select>`;
+  }
+  return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label><input data-k="${f.key}" type="${f.type === 'password' ? 'password' : 'text'}" value="${v}" placeholder="${esc(f.placeholder || '')}">`;
+}
+
+function renderFields(siteId, creds = {}) {
+  const s = SITES.find((x) => x.id === siteId);
+  $('f-fields').innerHTML = s ? s.fields.map((f) => fieldInput(f, creds[f.key] || '')).join('') : '';
+  const tips = $('f-tips');
+  if (s && s.tips) { tips.textContent = s.tips; tips.classList.remove('hidden'); }
+  else { tips.classList.add('hidden'); }
+  const desc = s ? `<div class="muted" style="margin-bottom:10px">${esc(s.desc)}</div>` : '';
+  $('f-fields').insertAdjacentHTML('afterbegin', desc);
+}
+
+async function openModal(id) {
+  $('f-site').innerHTML = SITES.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  if (id) {
+    $('modal-title').textContent = '编辑账号';
+    const { account } = await api('/api/accounts/' + id);
+    $('f-id').value = account.id;
+    $('f-name').value = account.name;
+    $('f-site').value = account.site;
+    renderFields(account.site, account.creds);
+  } else {
+    $('modal-title').textContent = '添加账号';
+    $('f-id').value = '';
+    $('f-name').value = '';
+    renderFields($('f-site').value, {});
+  }
+  $('modal-bg').classList.remove('hidden');
+}
+
+$('f-site').onchange = () => renderFields($('f-site').value, {});
+$('btn-add').onclick = () => openModal();
+$('btn-cancel').onclick = () => $('modal-bg').classList.add('hidden');
+$('modal-bg').onclick = (e) => { if (e.target.id === 'modal-bg') $('modal-bg').classList.add('hidden'); };
+
+$('btn-save').onclick = async () => {
+  const id = $('f-id').value;
+  const creds = {};
+  document.querySelectorAll('#f-fields [data-k]').forEach((el) => (creds[el.dataset.k] = el.value.trim()));
+  const payload = { name: $('f-name').value.trim(), site: $('f-site').value, creds };
+  try {
+    if (id) await api('/api/accounts/' + id, 'PUT', payload);
+    else await api('/api/accounts', 'POST', payload);
+    $('modal-bg').classList.add('hidden');
+    toast('已保存'); loadAccounts();
+  } catch (e) { toast(e.message); }
+};
+
+// ---------- 日志 ----------
+async function loadLogs() {
+  const { runs } = await api('/api/runs?limit=100');
+  const tb = $('logs-body');
+  if (!runs.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">暂无运行记录。</td></tr>'; return; }
+  tb.innerHTML = runs.map((r) => `
+    <tr>
+      <td class="muted" style="white-space:nowrap">${fmtTime(r.created_at)}</td>
+      <td><b>${esc(r.name)}</b> <span class="badge site">${esc(siteName(r.site))}</span></td>
+      <td>${r.status === 'ok' ? '<span class="badge ok">成功</span>' : '<span class="badge fail">失败</span>'}</td>
+      <td class="msg">${esc(r.message || '')}</td>
+    </tr>`).join('');
+}
+$('btn-refresh-logs').onclick = loadLogs;
+
+// ---------- 设置 ----------
+async function loadSettings() {
+  const { settings: s } = await api('/api/settings');
+  $('set-enabled').checked = s.enabled === '1';
+  $('set-tg-chat').value = s.telegram_chat_id || '';
+  $('set-bark-server').value = s.bark_server || '';
+  $('tg-set').textContent = s.telegram_bot_token_set ? '（已设置）' : '';
+  $('bark-set').textContent = s.bark_key_set ? '（已设置）' : '';
+  $('wh-set').textContent = s.webhook_url_set ? '（已设置）' : '';
+}
+
+$('btn-save-settings').onclick = async () => {
+  try {
+    await api('/api/settings', 'PUT', {
+      enabled: $('set-enabled').checked,
+      telegram_bot_token: $('set-tg-token').value.trim(),
+      telegram_chat_id: $('set-tg-chat').value.trim(),
+      bark_key: $('set-bark').value.trim(),
+      bark_server: $('set-bark-server').value.trim(),
+      webhook_url: $('set-webhook').value.trim(),
+    });
+    toast('推送设置已保存'); loadSettings();
+  } catch (e) { toast(e.message); }
+};
+
+$('btn-change-pwd').onclick = async () => {
+  try {
+    await api('/api/change-password', 'POST', { old_password: $('pwd-old').value, new_password: $('pwd-new').value });
+    $('pwd-old').value = ''; $('pwd-new').value = '';
+    toast('密码已修改');
+  } catch (e) { toast(e.message); }
+};
+
+boot().catch((e) => toast('加载失败：' + e.message));
+</script>
+</body>
+</html>
