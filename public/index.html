@@ -129,7 +129,7 @@
             <button class="ghost sm" id="btn-gen-bm" type="button">生成小书签</button>
           </div>
           <div id="bm-box" class="hidden" style="margin-top:10px">
-            <p class="muted">把这个链接拖到书签栏（手机浏览器可新建书签，把网址改成下面的代码）：</p>
+            <p class="muted">电脑：把这个链接拖到书签栏；手机：<b>点一下这个链接</b>，按弹出的指引手动添加：</p>
             <a href="#" class="bookmarklet" id="bm-link">📋 取Cookie填入面板</a>
             <button class="ghost sm" id="btn-copy-bm" type="button">复制代码</button>
             <div class="tips">在目标网站登录状态下点击书签，会自动打开面板并弹出 Cookie 填入确认框。HttpOnly 类型的 Cookie 浏览器不允许 JS 读取，这类站点仍需手动复制粘贴。</div>
@@ -417,8 +417,43 @@ $('btn-gen-bm').onclick = () => {
 };
 
 $('btn-copy-bm').onclick = async () => {
-  try { await navigator.clipboard.writeText($('bm-link').dataset.code || ''); toast('代码已复制，粘贴到书签的网址栏'); }
+  const full = 'javascript:' + ($('bm-link').dataset.code || '');
+  try { await navigator.clipboard.writeText(full); toast('代码已复制（含 javascript: 前缀），粘贴到书签的网址栏'); }
   catch (e) { toast('复制失败，请手动拖拽链接到书签栏'); }
+};
+
+// 点小书签链接本身：浏览器不允许网页自动添加书签，所以弹手机添加指引
+$('bm-link').onclick = (e) => {
+  e.preventDefault();
+  const code = 'javascript:' + ($('bm-link').dataset.code || '');
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal"><h2>在手机上添加小书签</h2>
+    <div class="tips">浏览器不允许网页自动往书签里加东西，需要手动加一次（以 Chrome 为例，其他浏览器菜单大同小异）：<br>
+    1️⃣ 点下面的「复制代码」<br>
+    2️⃣ 点浏览器右上角 ⋮ → ☆ 收藏当前页面<br>
+    3️⃣ ⋮ → 书签 → 找到刚收藏的这条 → 长按（或点 ⋯）→ 修改<br>
+    4️⃣ 把「网址」栏清空，粘贴代码，保存<br>
+    5️⃣ 打开目标网站（保持登录状态），在地址栏输入书签名称点一下，Cookie 就传回面板了</div>
+    <textarea id="bmg-code" rows="4" readonly style="width:100%;box-sizing:border-box">${esc(code)}</textarea>
+    <div class="row" style="margin-top:8px">
+      <button class="sm" id="bmg-copy" type="button">复制代码</button>
+      <button class="ghost sm hidden" id="bmg-share" type="button">分享代码</button>
+      <button class="ghost sm" id="bmg-close" type="button" style="margin-left:auto">关闭</button>
+    </div></div>`;
+  document.body.appendChild(bg);
+  const ta = bg.querySelector('#bmg-code');
+  ta.onclick = () => { ta.focus(); ta.select(); };
+  bg.querySelector('#bmg-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(code); toast('已复制'); }
+    catch (e) { ta.select(); toast('请手动长按复制文本框里的代码'); }
+  };
+  const shareBtn = bg.querySelector('#bmg-share');
+  if (navigator.share) {
+    shareBtn.classList.remove('hidden');
+    shareBtn.onclick = () => navigator.share({ title: '取Cookie小书签', text: code }).catch(() => {});
+  }
+  bg.querySelector('#bmg-close').onclick = () => bg.remove();
 };
 
 // ---------- 多方式取 Cookie：tab 切换 + 解析预览 ----------
