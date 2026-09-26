@@ -708,13 +708,28 @@ $('btn-run-all').onclick = async (e) => {
 // ---------- 账号弹窗 ----------
 function fieldInput(f, val = '') {
   const v = esc(val);
-  if (f.type === 'textarea') return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${v}</textarea>`;
+  const label = `<label>${esc(f.label)}${f.required ? ' *' : ''}</label>`;
+  if (f.type === 'textarea') return `${label}<textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${v}</textarea>`;
   if (f.type === 'select') {
     const opts = (f.options || []).map((o) => `<option ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('');
-    return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label><select data-k="${f.key}">${opts}</select>`;
+    return `${label}<select data-k="${f.key}">${opts}</select>`;
   }
-  return `<label>${esc(f.label)}${f.required ? ' *' : ''}</label><input data-k="${f.key}" type="${f.type === 'password' ? 'password' : 'text'}" value="${v}" placeholder="${esc(f.placeholder || '')}">`;
+  if (f.type === 'password') {
+    return `${label}<div style="position:relative"><input data-k="${f.key}" type="password" value="${v}" placeholder="${esc(f.placeholder || '')}" style="width:100%;padding-right:38px;box-sizing:border-box" autocomplete="new-password"><button type="button" class="pw-toggle" title="显示/隐藏密码" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;cursor:pointer;font-size:16px">👁</button></div>`;
+  }
+  return `${label}<input data-k="${f.key}" type="text" value="${v}" placeholder="${esc(f.placeholder || '')}">`;
 }
+
+// 密码显示/隐藏切换（事件委托）
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.pw-toggle');
+  if (!btn) return;
+  const input = btn.parentElement.querySelector('input');
+  if (!input) return;
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  btn.textContent = show ? '🙈' : '👁';
+});
 
 let HTTP_MODE = 'single'; // single | steps
 let HTTP_STEPS = [];

@@ -15,6 +15,13 @@ function okCode(code) {
   return code === 0 || code === 200 || code === '0' || code === '200';
 }
 
+// 诊断用：对实际发送的凭据做 SHA-256（不可逆），用于核对面板发出的内容与用户手头是否一致
+async function credHash(email, password) {
+  const data = new TextEncoder().encode(email + '\n' + password);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export const akile = {
   id: 'akile',
   name: 'AkileCloud',
@@ -51,7 +58,8 @@ export const akile = {
       throw new Error(`登录失败：接口异常（HTTP ${loginRes.status}），稍后重试`);
     }
     if (!okCode(login.status_code)) {
-      throw new Error('登录失败：' + (login.status_msg || `status_code=${login.status_code}`));
+      const h = await credHash(email, password);
+      throw new Error('登录失败：' + (login.status_msg || `status_code=${login.status_code}`) + `（诊断码 ${h.slice(0, 16)}，密码长度 ${password.length}）`);
     }
     const token = login.data && login.data.token;
     if (!token) throw new Error('登录失败：未返回 token');
