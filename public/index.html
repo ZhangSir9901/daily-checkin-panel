@@ -110,7 +110,7 @@
       </div>
       <div class="card">
         <h2>一键取 Cookie</h2>
-        <p class="muted">选一个账号生成「小书签」→ 拖到浏览器书签栏 → 在目标网站（已登录页面）点一下，Cookie 自动传回面板填入。</p>
+        <p class="muted">选一个站点生成「小书签」→ 拖到浏览器书签栏 → 在目标网站（已登录页面）点一下，Cookie 自动传回面板：该站点有账号就直接填入，没有就新建一个。</p>
         <div class="row">
           <select id="ck-account" style="flex:1;margin:4px 0"></select>
           <button class="ghost sm" id="btn-gen-bm" type="button">生成小书签</button>
@@ -333,8 +333,15 @@ $('btn-save-sched').onclick = async () => {
 };
 
 // ---------- 一键取 Cookie（小书签） ----------
-function cookieCapableAccounts() {
+// 按站点生成小书签：解决"添加账号要 Cookie，取 Cookie 又要先有账号"的死循环。
+// 小书签跳回面板后：该站点有账号就选一个填入，没有就直接新建账号。
+function cookieCapableSites() {
+  return SITES.filter((s) => s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie'));
+}
+
+function cookieCapableAccounts(siteId) {
   return ACCTS.filter((a) => {
+    if (siteId && a.site !== siteId) return false;
     const s = SITES.find((x) => x.id === a.site);
     return s && (s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie'));
   });
@@ -343,19 +350,20 @@ function cookieCapableAccounts() {
 function refreshCkSelect() {
   const sel = $('ck-account');
   if (!sel) return;
-  const list = cookieCapableAccounts();
+  const list = cookieCapableSites();
   sel.innerHTML = list.length
-    ? list.map((a) => `<option value="${a.id}">${esc(a.name)}（${esc(siteName(a.site))}）</option>`).join('')
-    : '<option value="">暂无可用账号（先添加 NodeSeek / 自定义 HTTP 账号）</option>';
+    ? list.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')
+    : '<option value="">暂无可用站点</option>';
 }
 
 $('btn-gen-bm').onclick = () => {
-  const id = $('ck-account').value;
-  if (!id) return toast('没有可用账号');
-  const a = ACCTS.find((x) => String(x.id) === String(id));
+  const siteId = $('ck-account').value;
+  if (!siteId) return toast('没有可用站点');
+  const s = SITES.find((x) => x.id === siteId);
+  if (!s) return toast('站点不存在');
   const code = "(function(){try{var c=document.cookie;"
     + "if(!c){alert('当前页面没有可读取的 Cookie（可能为 HttpOnly 类型），请改用面板内粘贴方式');return;}"
-    + "var d={domain:location.hostname,cookie:c,account:" + a.id + ",aname:" + JSON.stringify(a.name) + "};"
+    + "var d={domain:location.hostname,cookie:c,site:" + JSON.stringify(s.id) + ",sname:" + JSON.stringify(s.name) + "};"
     + "var s=btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');"
     + "window.open(" + JSON.stringify(location.origin) + "+'/#ck='+s,'_blank');"
     + "}catch(e){alert('失败：'+e.message);}})();";
@@ -377,7 +385,17 @@ function b64urlDecode(s) {
   return decodeURIComponent(escape(atob(s)));
 }
 
-// 小书签跳回面板时（#ck=...），弹出确认框填入 Cookie
+function renderCkNewFields(bg, s) {
+  const box = bg.querySelector('#ckm-fields');
+  box.innerHTML = (s.fields || []).filter((f) => f.key !== 'cookie').map((f) => {
+    const req = f.required ? ' *' : '';
+    if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${f.key}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
+    if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}"></textarea>`;
+    return `<label>${esc(f.label)}${req}</label><input data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">`;
+  }).join('');
+}
+
+// 小书签跳回面板时（#ck=...）：填入已有账号，或直接新建账号
 async function checkCookieHash() {
   const m = location.hash.match(/#ck=([A-Za-z0-9\-_]+)/);
   if (!m) return;
@@ -385,38 +403,58 @@ async function checkCookieHash() {
   let d;
   try { d = JSON.parse(b64urlDecode(m[1])); } catch (e) { return toast('Cookie 数据解析失败'); }
   if (!d || !d.cookie) return toast('没有读取到 Cookie');
-  const list = cookieCapableAccounts();
-  if (!list.length) return toast('面板里还没有可填 Cookie 的账号');
+  // 兼容旧版小书签（按账号生成）
+  const siteId = d.site || (d.account && (ACCTS.find((a) => String(a.id) === String(d.account)) || {}).site) || '';
+  const s = SITES.find((x) => x.id === siteId);
+  if (!s) return toast('未知的站点，请重新生成小书签');
+  const canCookie = s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie');
+  if (!canCookie) return toast('该站点不支持填入 Cookie');
+  const list = cookieCapableAccounts(s.id);
+  const canCreate = s.id !== 'http'; // 自定义 HTTP 建账号要填 URL 等，不支持一键新建
+  if (!list.length && !canCreate) return toast('面板里还没有可填 Cookie 的账号');
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal"><h2>一键填入 Cookie</h2>
-    <p class="muted">来自站点：<b>${esc(d.domain || '')}</b>${d.aname ? `（账号：${esc(d.aname)}）` : ''}<br>
+    <p class="muted">来自站点：<b>${esc(d.domain || '')}</b>（${esc(s.name)}）<br>
     Cookie 长度 ${d.cookie.length} 字符，预览前 80 字符：</p>
     <div class="tips" style="word-break:break-all">${esc(d.cookie.slice(0, 80))}…</div>
-    <label>填入到账号</label>
-    <select id="ckm-acc">${list.map((a) => `<option value="${a.id}" ${String(a.id) === String(d.account) ? 'selected' : ''}>${esc(a.name)}（${esc(siteName(a.site))}）</option>`).join('')}</select>
+    <label>填入方式</label>
+    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 新建账号</option>' : ''}</select>
+    <div id="ckm-new" class="${list.length ? 'hidden' : ''}">
+      <label>备注名</label><input id="ckm-name" value="${esc(s.name)}">
+      <div id="ckm-fields"></div>
+    </div>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button class="ghost" id="ckm-cancel">取消</button>
       <button id="ckm-ok">填入并保存</button>
     </div></div>`;
   document.body.appendChild(bg);
+  renderCkNewFields(bg, s);
+  const modeSel = bg.querySelector('#ckm-mode');
+  modeSel.onchange = () => bg.querySelector('#ckm-new').classList.toggle('hidden', modeSel.value !== '__new');
   bg.querySelector('#ckm-cancel').onclick = () => bg.remove();
   bg.querySelector('#ckm-ok').onclick = async () => {
-    const accId = bg.querySelector('#ckm-acc').value;
     try {
-      const { account } = await api('/api/accounts/' + accId);
-      const s = SITES.find((x) => x.id === account.site);
-      const creds = account.creds || {};
-      if ((s.fields || []).some((f) => f.key === 'cookie') || creds.cookie !== undefined) {
-        creds.cookie = d.cookie;
-      } else if (account.site === 'http') {
-        let h = {};
-        try { h = JSON.parse(creds.headers || '{}'); } catch { /* 忽略 */ }
-        h.Cookie = d.cookie;
-        creds.headers = JSON.stringify(h, null, 2);
-      } else { toast('该账号类型不支持填入 Cookie'); return; }
-      await api('/api/accounts/' + accId, 'PUT', { creds });
-      bg.remove(); toast('Cookie 已更新到账号'); loadAccounts();
+      if (modeSel.value === '__new') {
+        const name = (bg.querySelector('#ckm-name').value || '').trim() || s.name;
+        const creds = { cookie: d.cookie };
+        bg.querySelectorAll('#ckm-fields [data-k]').forEach((el) => { creds[el.dataset.k] = el.value; });
+        await api('/api/accounts', 'POST', { name, site: s.id, creds });
+        bg.remove(); toast('账号已创建并填入 Cookie'); loadAccounts();
+      } else {
+        const { account } = await api('/api/accounts/' + modeSel.value);
+        const creds = account.creds || {};
+        if ((s.fields || []).some((f) => f.key === 'cookie') || creds.cookie !== undefined) {
+          creds.cookie = d.cookie;
+        } else if (account.site === 'http') {
+          let h = {};
+          try { h = JSON.parse(creds.headers || '{}'); } catch { /* 忽略 */ }
+          h.Cookie = d.cookie;
+          creds.headers = JSON.stringify(h, null, 2);
+        } else { toast('该账号类型不支持填入 Cookie'); return; }
+        await api('/api/accounts/' + modeSel.value, 'PUT', { creds });
+        bg.remove(); toast('Cookie 已更新到账号'); loadAccounts();
+      }
     } catch (e) { toast('保存失败：' + e.message); }
   };
 }
