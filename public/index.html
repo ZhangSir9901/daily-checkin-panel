@@ -118,7 +118,7 @@
         </div>
         <div class="row" style="margin:8px 0">
           <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
-          <button class="ghost sm ck-tab" data-t="paste" type="button">📋 直接粘贴</button>
+          <button class="ghost sm ck-tab" data-t="addrbar" type="button">🔗 地址栏代码</button>
           <button class="ghost sm ck-tab" data-t="curl" type="button">🌀 cURL 命令</button>
           <button class="ghost sm ck-tab" data-t="headers" type="button">🧾 请求头</button>
           <button class="ghost sm ck-tab" data-t="json" type="button">🧩 JSON 导入</button>
@@ -135,9 +135,14 @@
             <div class="tips">在目标网站登录状态下点击书签，会自动打开面板并弹出 Cookie 填入确认框。HttpOnly 类型的 Cookie 浏览器不允许 JS 读取，这类站点仍需手动复制粘贴。</div>
           </div>
         </div>
-        <div id="ck-panel-paste" class="ck-panel hidden">
-          <textarea id="ck-paste" rows="3" placeholder="粘贴 Cookie 字符串，如：a=1; b=2"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-paste" type="button">解析并预览</button></div>
+        <div id="ck-panel-addrbar" class="ck-panel hidden">
+          <p class="muted">不用建书签的一次性代码，选好站点后复制：</p>
+          <div class="row"><button class="ghost sm" id="btn-copy-addr" type="button">复制地址栏代码</button></div>
+          <div class="tips">用法：<br>
+          1️⃣ 在手机浏览器打开目标网站（保持登录状态）<br>
+          2️⃣ 把代码粘贴到地址栏<br>
+          3️⃣ 光标移到最前面，<b>手动输入 javascript:</b>（浏览器粘贴时会自动吞掉它，必须手打，加上冒号）<br>
+          4️⃣ 回车 → 自动跳回面板，弹出填入确认框，选账号保存即可</div>
         </div>
         <div id="ck-panel-curl" class="ck-panel hidden">
           <textarea id="ck-curl" rows="3" placeholder="粘贴浏览器「复制为 cURL」得到的命令"></textarea>
@@ -481,9 +486,19 @@ function ckParseFail(e) {
   toast('解析失败：' + (e && e.message ? e.message : e));
 }
 
-$('btn-parse-paste').onclick = () => {
-  try { ckPreview(parseCookieHeader($('ck-paste').value), null, '直接粘贴'); }
-  catch (e) { ckParseFail(e); }
+// ---------- 地址栏代码：不用建书签，粘贴到已登录网站的地址栏执行 ----------
+$('btn-copy-addr').onclick = async () => {
+  const siteId = $('ck-account').value;
+  const s = SITES.find((x) => x.id === siteId);
+  if (!s) return toast('请先选择站点');
+  const code = "javascript:void(function(){try{var c=document.cookie;"
+    + "if(!c){alert('当前页面读不到 Cookie（可能为 HttpOnly 类型），请改用面板内其它方式');return;}"
+    + "var d={site:" + JSON.stringify(s.id) + ",cookie:c};"
+    + "var e=btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');"
+    + "window.open(" + JSON.stringify(location.origin + '/') + "+'#ck='+e,'_blank');"
+    + "}catch(err){alert('失败：'+err.message);}}())";
+  try { await navigator.clipboard.writeText(code); toast('代码已复制，去目标网站的地址栏粘贴'); }
+  catch (e) { toast('复制失败，请换个浏览器试试'); }
 };
 $('btn-parse-headers').onclick = () => {
   try { ckPreview(extractCookieFromHeaders($('ck-headers').value), null, '请求头'); }
