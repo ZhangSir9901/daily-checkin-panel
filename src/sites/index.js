@@ -6,8 +6,9 @@ import { quark } from './quark.js';
 import { cloud189 } from './cloud189.js';
 import { httpTask } from './http.js';
 import { nodeseek } from './nodeseek.js';
+import { akile } from './akile.js';
 
-export const SITES = [quark, cloud189, nodeseek, httpTask];
+export const SITES = [quark, cloud189, nodeseek, akile, httpTask];
 
 export function getSite(id) {
   return SITES.find((s) => s.id === id);
