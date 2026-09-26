@@ -4,6 +4,7 @@ import { v2ex } from '../src/sites/v2ex.js';
 import { misign } from '../src/sites/misign.js';
 import { kanxue } from '../src/sites/kanxue.js';
 import { wuaipojie } from '../src/sites/wuaipojie.js';
+import { nodeseek } from '../src/sites/nodeseek.js';
 
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
@@ -173,6 +174,25 @@ await t('52pojie：重定向链签到成功', async () => {
 
 await t('52pojie：缺 UA 报错', async () => {
   await assert.rejects(wuaipojie.run({ cookie: 'c=x', user_agent: '' }), /User-Agent/);
+});
+
+// ---------- NodeSeek ----------
+await t('nodeseek：签到成功', async () => {
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), body: JSON.stringify({ success: true, message: '获得 5 个鸡腿' }) }]);
+  const r = await nodeseek.run({ cookie: 'a=1' }, { meta: { toggles: { random: false } } });
+  assert.equal(r.ok, true);
+  assert.match(r.message, /鸡腿/);
+});
+
+await t('nodeseek：CF 验证页报错带人机验证提示', async () => {
+  const html = '<html><head><title>Just a moment...</title></head><body><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script></body></html>';
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), status: 200, body: html }]);
+  await assert.rejects(nodeseek.run({ cookie: 'a=1' }, {}), /人机验证/);
+});
+
+await t('nodeseek：非 JSON 非 CF 页面报错带页面片段', async () => {
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), status: 200, body: '<html><body>Service Busy</body></html>' }]);
+  await assert.rejects(nodeseek.run({ cookie: 'a=1' }, {}), /页面片段.*Service Busy/);
 });
 
 console.log(`\n${n} 组通过`);

@@ -56,7 +56,12 @@ export const nodeseek = {
     try {
       j = JSON.parse(text);
     } catch {
-      throw new Error(`签到失败：站点返回异常（HTTP ${res.status}），可能被 Cloudflare 拦截，稍后重试`);
+      // 非 JSON：大概率是 Cloudflare 验证页/拦截页。带上页面片段便于从日志里直接判断。
+      const snippet = text.replace(/\s+/g, ' ').slice(0, 150);
+      if (/challenge-platform|cf-chl|just a moment|__cf_chl/i.test(text)) {
+        throw new Error(`签到失败：被 NodeSeek 的 Cloudflare 人机验证拦截（HTTP ${res.status}），机房 IP 被要求验证，稍后重试`);
+      }
+      throw new Error(`签到失败：站点返回非 JSON 数据（HTTP ${res.status}），稍后重试。页面片段：${snippet}`);
     }
 
     const msg = String(j.message || '');
