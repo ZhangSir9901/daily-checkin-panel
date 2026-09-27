@@ -164,10 +164,10 @@
           cursor:pointer; margin:3px 6px 3px 0; white-space:nowrap; transition:all .15s; font-weight:600; }
   .pill:hover { border-color:var(--accent); color:var(--text); }
   .pill.on { border-color:var(--ok); color:var(--ok); background:var(--ok-dim); }
-  /* 分段选择器（如随机/固定）：与徽章同字号、弧度、高度 */
-  .seg { display:inline-flex; border-radius:20px; overflow:hidden; margin:3px 6px 3px 0;
+  /* 分段选择器（如随机/固定）：与徽章同字号、弧度、高度、宽度 */
+  .seg { display:inline-flex; border-radius:20px; overflow:hidden; margin:0; width:100%; box-sizing:border-box;
          border:1px solid transparent; background:rgba(91,140,255,.16); }
-  .seg-opt { background:transparent; border:0; padding:4px 12px; font-size:12px; font-weight:600;
+  .seg-opt { background:transparent; border:0; padding:4px 0; font-size:12px; font-weight:600; flex:1; text-align:center;
              color:var(--muted); cursor:pointer; white-space:nowrap; box-shadow:none; border-radius:0; line-height:1.5; }
   .seg-opt:hover { color:var(--text); transform:none; box-shadow:none; }
   .seg-opt.on { background:rgba(91,140,255,.25); color:var(--accent2); }
@@ -216,7 +216,7 @@
   .row-hint { margin-top:5px; font-size:11px; line-height:1.5; color:var(--warn);
               max-width:230px; }
   .row-hint::before { content:"⚠️ "; }
-  .row-pills { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; }
+  .row-pills { margin-top:0; display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; }
   /* 提示不再占一整行：改成一个小红标，鼠标移上去才弹出来（见 #_tip） */
   .hint-dot { display:inline-flex; align-items:center; justify-content:center; flex:none;
               width:16px; height:16px; border-radius:50%; font-size:11px; font-weight:700; line-height:1;
@@ -240,15 +240,15 @@
   .site-cell { min-width:140px; text-align:center; }
   /* 包裹层居中，内部右对齐：切换按钮右边缘与徽章右边缘对齐 */
   .site-wrap { display:inline-block; text-align:right; }
-  .site-head { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-bottom:6px; }
+  .site-head { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-bottom:4px; }
   .site-head b { font-size:14px; }
   /* 切换按钮：边框提亮 */
   .exec-switch { font-size:11px !important; padding:3px 10px !important; white-space:nowrap; flex-shrink:0;
                  border-color:rgba(91,140,255,.45) !important; color:var(--accent2) !important; }
   .exec-switch:hover { border-color:var(--accent) !important; background:var(--accent-dim) !important; }
-  /* 网络徽章：右对齐，与切换按钮右边缘对齐 */
-  .site-line { display:flex; align-items:center; justify-content:flex-end; margin-top:0; }
-  .site-line .badge { flex-shrink:0; }
+  /* 网络徽章：右对齐，与切换按钮右边缘对齐；宽度拉满与分段器一致 */
+  .site-line { display:flex; align-items:center; justify-content:flex-end; margin-top:0; margin-bottom:4px; }
+  .site-line .badge { flex-shrink:0; width:100%; justify-content:center; box-sizing:border-box; }
   /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
   td.msg { width:100%; min-width:160px; max-width:280px; }
   .msg-main { font-size:12.5px; line-height:1.5;
