@@ -88,6 +88,15 @@ $('btn-send').onclick = async () => {
   status('已打开面板，请在面板中确认保存', 'ok');
 };
 
+$('panel-url').oninput = () => {
+  chrome.storage.sync.set({ panelUrl: $('panel-url').value.trim().replace(/\/$/, '') });
+};
+
+$('api-key').oninput = () => {
+  chrome.storage.sync.set({ apiKey: $('api-key').value.trim() });
+};
+
+// 兼容旧的 onchange（保留）
 $('panel-url').onchange = () => {
   chrome.storage.sync.set({ panelUrl: $('panel-url').value.trim().replace(/\/$/, '') });
 };
