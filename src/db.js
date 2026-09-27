@@ -37,6 +37,8 @@ const MIGRATIONS = [
     updated_at INTEGER NOT NULL
   )`).run(),
   async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_relay_status ON relay_jobs(status, created_at)').run(),
+  // v5：relay_jobs.options（fetch 选项透传：redirect/credentials 等）
+  async (db) => ensureColumn(db, 'relay_jobs', 'options', `TEXT NOT NULL DEFAULT '{}'`),
 ];
 
 export async function ensureSchema(db) {

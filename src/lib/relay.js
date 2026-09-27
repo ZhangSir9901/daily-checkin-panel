@@ -20,7 +20,7 @@ function b64decode(b64) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // 提交中继任务到 D1 队列，返回 job_id
-export async function queueRelayJob(db, { url, method = 'GET', headers = {}, body = null }) {
+export async function queueRelayJob(db, { url, method = 'GET', headers = {}, body = null, options = {} }) {
   const id = 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
   const now = Date.now();
   let bodyB64 = null;
@@ -29,15 +29,18 @@ export async function queueRelayJob(db, { url, method = 'GET', headers = {}, bod
     else if (body instanceof Uint8Array) bodyB64 = b64encode(body);
     else if (body instanceof ArrayBuffer) bodyB64 = b64encode(new Uint8Array(body));
   }
+  // 只透传安全的 fetch 选项（redirect 等），过滤掉 body/headers（已单独处理）
+  const safeOptions = {};
+  if (options.redirect) safeOptions.redirect = String(options.redirect);
   await db.prepare(
-    'INSERT INTO relay_jobs(id, url, method, headers, body, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
-  ).bind(id, String(url), String(method).toUpperCase(), JSON.stringify(headers || {}), bodyB64, 'pending', now, now).run();
+    'INSERT INTO relay_jobs(id, url, method, headers, body, options, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)'
+  ).bind(id, String(url), String(method).toUpperCase(), JSON.stringify(headers || {}), bodyB64, JSON.stringify(safeOptions), 'pending', now, now).run();
   // 顺手清理旧任务
   await db.prepare('DELETE FROM relay_jobs WHERE created_at < ?').bind(now - 600000).run().catch(() => {});
   return id;
 }
 
-// 等待中继结果（轮询 D1），返回 { status, headers, body: Uint8Array }，超时抛错
+// 等待中继结果（轮询 D1），返回 { status, headers, body: Uint8Array, url }，超时抛错
 export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -45,10 +48,17 @@ export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 200
     if (!job) throw new Error('中继任务不存在');
     if (job.status === 'failed') throw new Error('本地网络执行失败：' + (job.error || '未知错误'));
     if (job.status === 'done') {
+      let respUrl = '';
+      try {
+        const h = JSON.parse(job.resp_headers || '{}');
+        // 扩展回传的最终 URL 存在 headers 的 x-relay-url（如果有）
+        respUrl = h['x-relay-url'] || '';
+      } catch { /* 忽略 */ }
       return {
         status: job.resp_status || 0,
         headers: JSON.parse(job.resp_headers || '{}'),
         body: job.resp_body ? b64decode(job.resp_body) : new Uint8Array(0),
+        url: respUrl,
       };
     }
     await sleep(pollMs);
@@ -57,16 +67,17 @@ export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 200
 }
 
 // 模拟 fetch 的中继版本：在用户本地网络中执行 HTTP 请求
-// init: { method, headers, body }，body 支持 string / Uint8Array / ArrayBuffer
-// 返回：{ status, headers, arrayBuffer(), text(), json() }
+// init: { method, headers, body, redirect }，body 支持 string / Uint8Array / ArrayBuffer
+// 返回：{ status, headers, url, arrayBuffer(), text(), json() }
 export async function relayFetch(db, url, init = {}) {
   const jobId = await queueRelayJob(db, {
     url,
     method: init.method || 'GET',
     headers: init.headers || {},
     body: init.body || null,
+    options: { redirect: init.redirect },
   });
-  const { status, headers, body } = await waitRelayResult(db, jobId);
+  const { status, headers, body, url: finalUrl } = await waitRelayResult(db, jobId);
   return {
     status,
     headers: {
@@ -75,8 +86,19 @@ export async function relayFetch(db, url, init = {}) {
         return k ? headers[k] : null;
       },
     },
-    url,
+    url: finalUrl || url,
     async arrayBuffer() { return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength); },
     async text() { return new TextDecoder().decode(body); },
   };
+}
+
+// 检查扩展是否在线（90 秒内有轮询 relay-pending）
+export async function isRelayAvailable(db) {
+  try {
+    const { getSetting } = await import('../db.js');
+    const last = parseInt((await getSetting(db, 'relay_last_poll')) || '0', 10) || 0;
+    return Date.now() - last < 90000;
+  } catch {
+    return false;
+  }
 }

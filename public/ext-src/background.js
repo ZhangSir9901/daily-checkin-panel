@@ -193,7 +193,7 @@ async function executeRelayJob(job) {
 
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: async (url, method, headers, bodyB64) => {
+      func: async (url, method, headers, bodyB64, options) => {
         const b64ToBytes = (b64) => {
           const s = atob(b64);
           const arr = new Uint8Array(s.length);
@@ -205,20 +205,32 @@ async function executeRelayJob(job) {
           for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
           return btoa(s);
         };
-        const init = { method, headers, credentials: 'include' };
+        const init = {
+          method,
+          headers,
+          credentials: 'include', // 始终携带用户 Cookie
+          redirect: options.redirect || 'follow', // 透传 redirect 选项
+        };
         if (bodyB64) init.body = b64ToBytes(bodyB64);
         const resp = await fetch(url, init);
         const buf = new Uint8Array(await resp.arrayBuffer());
         const h = {};
         resp.headers.forEach((v, k) => { h[k] = v; });
-        return { status: resp.status, headers: h, body_base64: bytesToB64(buf) };
+        return {
+          status: resp.status,
+          headers: h,
+          body_base64: bytesToB64(buf),
+          url: resp.url, // 最终 URL（跟随重定向后）
+        };
       },
-      args: [job.url, job.method, job.headers || {}, job.body_base64 || null],
+      args: [job.url, job.method, job.headers || {}, job.body_base64 || null, job.options || {}],
     });
 
     const r = results && results[0] && results[0].result;
     if (!r) throw new Error('无返回结果');
-    return { status: r.status, headers: r.headers, body_base64: r.body_base64 };
+    // 把最终 URL 放入特殊头，Worker 端可读取
+    const headers = { ...(r.headers || {}), 'x-relay-url': r.url || job.url };
+    return { status: r.status, headers, body_base64: r.body_base64 };
   } catch (e) {
     return { error: String(e.message || e).slice(0, 500) };
   } finally {

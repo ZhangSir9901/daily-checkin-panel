@@ -21,19 +21,49 @@ export async function runAccount(env, account) {
   try {
     const site = getSite(account.site);
     if (!site) throw new Error('未知站点：' + account.site);
-    // 执行模式：账号覆盖 > 站点默认
-    let execMode = site.execution || 'server';
-    if (meta.execution === 'server' || meta.execution === 'browser' || meta.execution === 'relay') {
-      execMode = meta.execution;
+
+    // ---- 执行模式解析 ----
+    // 手动覆盖（面板切换）：browser=强制浏览器 / relay=强制中继 / server=强制云端直连 / ''=自动
+    // 自动：站点默认 browser→扩展处理（跳过）；站点默认 server→扩展在线时自动中继，否则云端直连
+    const manual = meta.execution || '';
+    const siteDefault = site.execution || 'server';
+    let useRelay = false;
+    let skipReason = '';
+
+    if (manual === 'browser' || (manual === '' && siteDefault === 'browser')) {
+      skipReason = '浏览器模式：请确保扩展已安装，它会自动执行';
+    } else if (manual === 'relay') {
+      useRelay = true; // 强制中继
+    } else if (manual === 'server') {
+      useRelay = false; // 强制云端直连
+    } else if (manual === '' && siteDefault === 'server') {
+      // 自动：扩展在线时走中继（用户本地网络），否则云端直连
+      const { isRelayAvailable } = await import('./lib/relay.js');
+      useRelay = await isRelayAvailable(db);
     }
-    if (execMode === 'browser') {
-      throw new Error('浏览器模式：请确保扩展已安装，它会自动执行');
-    }
+
+    if (skipReason) throw new Error(skipReason);
+
     const creds = await decryptJSON(env, db, account.creds);
-    // 中继模式：传入 relayDb，站点模块用 relayFetch 经扩展走用户本地网络
     const ctx = { env, db, account, meta };
-    if (execMode === 'relay') ctx.relayDb = db;
-    const res = await site.run(creds, ctx);
+
+    let res;
+    if (useRelay) {
+      // 中继模式：透明替换 global fetch，站点代码无需修改，HTTP 经扩展走用户本地网络
+      const { relayFetch } = await import('./lib/relay.js');
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (url, init) => relayFetch(db, url, init);
+      try {
+        res = await site.run(creds, ctx);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+      // 在消息中标注走了中继
+      if (res && res.message) res.message = '[中继] ' + res.message;
+    } else {
+      res = await site.run(creds, ctx);
+    }
+
     status = res.ok ? 'ok' : 'fail';
     message = String(res.message || '').slice(0, 800);
     detail = String(res.detail || '').slice(0, 800);

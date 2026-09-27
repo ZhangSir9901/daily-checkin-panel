@@ -92,15 +92,6 @@ export const wuaipojie = {
     if (!cookie) throw new Error('Cookie 未配置');
     if (!ua) throw new Error('User-Agent 未配置（必须与抓 Cookie 时的浏览器一致）');
 
-    // 中继模式：通过浏览器扩展用用户本地网络执行（绕过 Worker IP 限制）
-    // ctx.relayDb 由 runAccount 在 relay 模式时传入
-    let fetchImpl = fetch;
-    if (ctx && ctx.relayDb) {
-      const { relayFetch } = await import('../lib/relay.js');
-      const db = ctx.relayDb;
-      fetchImpl = (url, init) => relayFetch(db, url, init);
-    }
-
     const baseHeaders = {
       'User-Agent': ua,
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -109,19 +100,9 @@ export const wuaipojie = {
       Cookie: cookie,
     };
 
-    // fetchDualText 的 fetch 可替换（支持中继）
-    const fetchDualTextLocal = async (url, init) => {
-      const res = await fetchImpl(url, init);
-      const ab = await res.arrayBuffer();
-      const bytes = ab instanceof Uint8Array ? ab : new Uint8Array(ab);
-      const utf8 = new TextDecoder('utf-8').decode(bytes);
-      let gbk = '';
-      try { gbk = new TextDecoder('gbk').decode(bytes); } catch { /* 环境不支持则忽略 */ }
-      return { res, utf8, gbk };
-    };
-
     // ① 预检首页
-    const home = await fetchDualTextLocal('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
+    // 注：中继模式下 runner.js 会透明替换 global fetch，站点代码无需改动
+    const home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
     assertNoWaf(home);
     if (has(home, SIGNED_MARKS)) {
       return { ok: true, message: '今日已签到，无需重复' };
@@ -134,7 +115,7 @@ export const wuaipojie = {
     let url = 'https://www.52pojie.cn/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php';
     let final = null;
     for (let i = 0; i < 4; i++) {
-      const { res, utf8, gbk } = await fetchDualTextLocal(url, { headers: baseHeaders, redirect: 'manual' });
+      const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: 'manual' });
       assertNoWaf({ utf8, gbk });
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers.get('location') || res.headers.get('Location');

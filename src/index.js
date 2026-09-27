@@ -254,20 +254,21 @@ async function handleApi(req, env, url) {
     if (!(await checkExternalKey(env, apiKey))) {
       return json({ error: '无效的 API Key' }, 401);
     }
-    const { url, method, headers, body } = await readBody(req);
+    const { url, method, headers, body, options } = await readBody(req);
     if (!url || !/^https?:\/\//i.test(String(url))) {
       return json({ error: 'url 非法' }, 400);
     }
     const id = 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     const now = Date.now();
     await env.DB.prepare(
-      'INSERT INTO relay_jobs(id, url, method, headers, body, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
+      'INSERT INTO relay_jobs(id, url, method, headers, body, options, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)'
     ).bind(
       id,
       String(url),
       String(method || 'GET').toUpperCase(),
       JSON.stringify(headers || {}),
       body ? String(body) : null, // base64
+      JSON.stringify(options || {}),
       'pending',
       now,
       now
@@ -304,8 +305,10 @@ async function handleApi(req, env, url) {
     if (!(await checkExternalKey(env, apiKey))) {
       return json({ error: '无效的 API Key' }, 401);
     }
+    // 记录扩展最后轮询时间，用于判断扩展是否在线（自动中继）
+    await setSetting(env.DB, 'relay_last_poll', String(Date.now())).catch(() => {});
     const { results } = await env.DB.prepare(
-      "SELECT id, url, method, headers, body FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 10"
+      "SELECT id, url, method, headers, body, options FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 10"
     ).all();
     return json({
       jobs: (results || []).map((j) => ({
@@ -314,6 +317,7 @@ async function handleApi(req, env, url) {
         method: j.method,
         headers: JSON.parse(j.headers || '{}'),
         body_base64: j.body || null,
+        options: JSON.parse(j.options || '{}'),
       })),
     });
   }
@@ -601,6 +605,13 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
+  // 中继状态（扩展是否在线）：前端展示用
+  if (path === '/api/relay-status' && method === 'GET') {
+    const last = parseInt((await getSetting(env.DB, 'relay_last_poll')) || '0', 10) || 0;
+    const online = Date.now() - last < 90000;
+    return json({ online, last_poll: last });
+  }
+
   // 修改管理密码
   if (path === '/api/change-password' && method === 'POST') {
     const { old_password, new_password } = await readBody(req);
@@ -652,13 +663,13 @@ export default {
           const now = new Date();
           let changed = false;
           for (const acc of results || []) {
-            // 执行模式：账号可单独覆盖（meta.execution），否则跟随站点默认
-            // browser 模式由用户浏览器扩展执行，Worker 调度器跳过
+            // 执行模式：browser 由扩展执行，Worker 跳过；relay/server/auto 由 runner.js 统一处理
+            // （auto 时扩展在线则自动中继，否则云端直连）
             const site = getSite(acc.site);
             let execMode = site?.execution || 'server';
             try {
               const m = JSON.parse(acc.meta || '{}');
-              if (m.execution === 'server' || m.execution === 'browser') execMode = m.execution;
+              if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
             } catch { /* 忽略 */ }
             if (execMode === 'browser') continue;
             const hour = accountHour(acc.meta, globalTime);
