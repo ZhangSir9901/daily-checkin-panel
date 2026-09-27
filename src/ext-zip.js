@@ -110,8 +110,8 @@ export async function handleExtZip(req, env) {
   const files = [];
 
   for (const name of fileNames) {
-    // 从 public/ext-src/ 读取源文件
-    const res = await env.ASSETS.fetch(new Request(url.origin + '/ext-src/' + name));
+    // 从公开的静态路径读取源文件（env.ASSETS 在部分部署中不可用，改用自请求）
+    const res = await fetch(origin + '/ext-src/' + name);
     if (!res.ok) {
       return new Response('扩展源文件缺失：' + name, { status: 500 });
     }
