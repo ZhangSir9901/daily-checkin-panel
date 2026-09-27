@@ -69,6 +69,22 @@ async function executeJob(job) {
       });
     }
 
+    // 如果任务指定了导航 URL（如吾爱破解），先导航到该页面（模拟手动点击），再执行检查脚本
+    if (job.navigate_url) {
+      await chrome.tabs.update(tab.id, { url: job.navigate_url });
+      await new Promise((resolve) => {
+        const listener = (tabId, info) => {
+          if (tabId === tab.id && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(resolve, 20000);
+      });
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+
     // 在页面上下文中执行签到脚本
     // 脚本是面板下发的自包含 async 函数，入参为 params，返回 { ok, message }
     const execPromise = chrome.scripting.executeScript({

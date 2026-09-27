@@ -281,6 +281,7 @@ async function handleApi(req, env, url) {
         domain,
         script: bs.script,
         params,
+        navigate_url: bs.navigateUrl || '', // 扩展先导航到此 URL（模拟手动），再执行脚本检查页面
       });
       // 标记已领取任务，避免重复下发（扩展上报后也会更新 last_run，这里先占位）
       lastMap[String(acc.id)] = key;
@@ -342,6 +343,7 @@ async function handleApi(req, env, url) {
               script: bs.script,
               params,
               manual: true, // 标记为手动任务，扩展执行后需通知面板删除队列记录
+              navigate_url: bs.navigateUrl || '', // 扩展先导航到此 URL（模拟手动），再执行脚本
             });
           }
         }

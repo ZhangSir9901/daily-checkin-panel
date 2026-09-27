@@ -190,6 +190,24 @@ async function executeJobInPopup(job, onStep) {
         setTimeout(resolve, 15000);
       });
     }
+    // 如果任务指定了导航 URL（如吾爱破解），先导航到该页面（模拟手动点击），再执行检查脚本
+    if (job.navigate_url) {
+      step('导航到签到页面…');
+      await chrome.tabs.update(tab.id, { url: job.navigate_url });
+      step('等待签到页面加载…');
+      await new Promise((resolve) => {
+        const listener = (tabId, info) => {
+          if (tabId === tab.id && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(resolve, 20000);
+      });
+      // 多等 2 秒，让页面内跳转完成
+      await new Promise((r) => setTimeout(r, 2000));
+    }
     step('注入签到脚本…');
     // 脚本执行加 60 秒超时，防止卡死
     const execPromise = chrome.scripting.executeScript({

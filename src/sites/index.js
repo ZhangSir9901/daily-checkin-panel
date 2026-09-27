@@ -38,5 +38,5 @@ export function siteMeta() {
 export function getBrowserScript(id) {
   const s = getSite(id);
   if (!s || !s.browserScript) return null;
-  return { domain: s.domain || '', script: s.browserScript };
+  return { domain: s.domain || '', script: s.browserScript, navigateUrl: s.navigateUrl || '' };
 }
