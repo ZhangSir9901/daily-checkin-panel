@@ -12,8 +12,9 @@ import { misign } from './misign.js';
 import { kanxue } from './kanxue.js';
 import { wuaipojie } from './wuaipojie.js';
 import { v2board } from './v2board.js';
+import { hutue } from './hutue.js';
 
-export const SITES = [quark, cloud189, nodeseek, akile, v2ex, misign, kanxue, wuaipojie, v2board, httpTask];
+export const SITES = [quark, cloud189, nodeseek, akile, v2ex, misign, kanxue, wuaipojie, v2board, hutue, httpTask];
 
 export function getSite(id) {
   return SITES.find((s) => s.id === id);

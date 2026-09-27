@@ -809,7 +809,9 @@ function renderCkNewFields(bg, s, extra) {
   const box = bg.querySelector('#ckm-fields');
   box.innerHTML = (s.fields || []).filter((f) => f.key !== 'cookie').map((f) => {
     const req = f.required ? ' *' : '';
-    const pre = (extra && f.key === 'user_agent' && extra.userAgent) ? extra.userAgent : '';
+    let pre = '';
+    if (extra && f.key === 'user_agent' && extra.userAgent) pre = extra.userAgent;
+    if (extra && f.key === 'site_url' && extra.domain) pre = 'https://' + extra.domain.replace(/^https?:\/\//i, '');
     if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${f.key}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
     if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${esc(pre)}</textarea>`;
     return `<label>${esc(f.label)}${req}</label><input data-k="${f.key}" placeholder="${esc(f.placeholder || '')}" value="${esc(pre)}">`;
@@ -846,7 +848,7 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
       <button id="ckm-ok">填入并保存</button>
     </div></div>`;
   document.body.appendChild(bg);
-  renderCkNewFields(bg, s, extra);
+  renderCkNewFields(bg, s, { ...(extra || {}), domain });
   const modeSel = bg.querySelector('#ckm-mode');
   modeSel.onchange = () => bg.querySelector('#ckm-new').classList.toggle('hidden', modeSel.value !== '__new');
   bg.querySelector('#ckm-cancel').onclick = () => bg.remove();
@@ -890,6 +892,7 @@ function guessSiteByDomain(domain) {
   if (d.includes('akile')) return 'akile';
   if (d.includes('quark.cn')) return 'quark';
   if (d.includes('cloud.189.cn')) return 'cloud189';
+  if (d.includes('hutue.cn')) return 'hutue';
   return '';
 }
 

@@ -239,6 +239,17 @@ async function handleApi(req, env, url) {
           }
         } catch { /* 忽略 */ }
       }
+      if (acc.site === 'hutue') {
+        try {
+          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
+          let u = String(creds.site_url || '').trim();
+          if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u;
+          params.base_url = u.replace(/\/+$/, '');
+          if (params.base_url) {
+            try { domain = new URL(params.base_url).hostname; } catch { /* 忽略 */ }
+          }
+        } catch { /* 忽略 */ }
+      }
       if (acc.site === 'kanxue') {
         try {
           const creds = await decryptJSON(env, env.DB, acc.creds) || {};
@@ -309,6 +320,17 @@ async function handleApi(req, env, url) {
             const t = meta.toggles ? meta.toggles.random : undefined;
             if (t != null) params.random = !!t;
             else params.random = ((await getSetting(env.DB, 'nodeseek_mode')) || 'random') === 'random';
+          }
+          if (acc.site === 'hutue') {
+            try {
+              const creds = await decryptJSON(env, env.DB, acc.creds) || {};
+              let u = String(creds.site_url || '').trim();
+              if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u;
+              params.base_url = u.replace(/\/+$/, '');
+              if (params.base_url) {
+                try { domain = new URL(params.base_url).hostname; } catch { /* 忽略 */ }
+              }
+            } catch { /* 忽略 */ }
           }
           // misign/kanxue 等需要 creds 参数的站点，复用上面的逻辑（简化：只处理通用情况）
           if (domain) {
