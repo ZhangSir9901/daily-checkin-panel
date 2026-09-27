@@ -119,6 +119,7 @@
         <div class="row" style="margin:8px 0">
           <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
           <button class="ghost sm ck-tab" data-t="addrbar" type="button">🔗 地址栏代码</button>
+          <button class="ghost sm ck-tab" data-t="console" type="button">💻 控制台代码</button>
           <button class="ghost sm ck-tab" data-t="curl" type="button">🌀 cURL 命令</button>
           <button class="ghost sm ck-tab" data-t="headers" type="button">🧾 请求头</button>
           <button class="ghost sm ck-tab" data-t="json" type="button">🧩 JSON 导入</button>
@@ -143,6 +144,15 @@
           2️⃣ 把代码粘贴到地址栏<br>
           3️⃣ 光标移到最前面，<b>手动输入 javascript:</b>（浏览器粘贴时会自动吞掉它，必须手打，加上冒号）<br>
           4️⃣ 回车 → 自动跳回面板，弹出填入确认框，选账号保存即可<br>
+          ⚠️ 只能读到普通 Cookie，<b>读不到 HttpOnly 类型的登录 Cookie</b>（如 NodeSeek）。如果导入后网站不认登录信息，请改用 cURL / 请求头 / JSON / cookie.txt 方式</div>
+        </div>
+        <div id="ck-panel-console" class="ck-panel hidden">
+          <textarea id="ck-console" rows="3" placeholder="粘贴控制台输入 document.cookie 后返回的内容"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-console" type="button">解析并预览</button></div>
+          <div class="tips">用法：<br>
+          1️⃣ 在电脑浏览器打开目标网站（保持登录状态），按 F12 打开开发者工具<br>
+          2️⃣ 切换到 Console（控制台）标签页，输入 <code>document.cookie</code> 回车<br>
+          3️⃣ 把返回的那串 <code>名称=值; 名称=值</code> 复制，粘贴到上面<br>
           ⚠️ 只能读到普通 Cookie，<b>读不到 HttpOnly 类型的登录 Cookie</b>（如 NodeSeek）。如果导入后网站不认登录信息，请改用 cURL / 请求头 / JSON / cookie.txt 方式</div>
         </div>
         <div id="ck-panel-curl" class="ck-panel hidden">
@@ -536,6 +546,13 @@ $('btn-parse-json').onclick = () => {
 $('btn-parse-txt').onclick = () => {
   try { ckPreview(parseNetscapeCookies($('ck-txt').value), null, 'cookie.txt'); }
   catch (e) { ckParseFail(e); }
+};
+$('btn-parse-console').onclick = () => {
+  try {
+    const v = $('ck-console').value.trim().replace(/^["']|["'];?$/g, '');
+    if (!v || !v.includes('=')) throw new Error('没解析出 Cookie，请确认粘贴的是 document.cookie 的返回值');
+    ckPreview(v, null, '控制台代码');
+  } catch (e) { ckParseFail(e); }
 };
 $('btn-parse-curl').onclick = () => {
   try {
