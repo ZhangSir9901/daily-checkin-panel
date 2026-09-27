@@ -314,6 +314,7 @@
         <div id="ck-panel-headers" class="ck-panel hidden">
           <textarea id="ck-headers" rows="3" placeholder="粘贴开发者工具里复制的请求头文本（含 Cookie: 开头的一行）"></textarea>
           <div class="row"><button class="ghost sm" id="btn-parse-headers" type="button">解析并预览</button></div>
+          <div class="tips">💡 浏览器 F12 → 网络 → 点任一请求 → 复制请求头：<b>Cookie 那行下面就是 User-Agent</b>，一起粘贴过来，吾爱等站点新建账号时 UA 会自动填入。</div>
         </div>
         <div id="ck-panel-json" class="ck-panel hidden">
           <textarea id="ck-json" rows="3" placeholder="粘贴 Cookie-Editor / EditThisCookie 插件导出的 JSON"></textarea>
@@ -706,8 +707,10 @@ $('btn-copy-addr').onclick = async () => {
   catch (e) { toast('复制失败，请换个浏览器试试'); }
 };
 $('btn-parse-headers').onclick = () => {
-  try { ckPreview(extractCookieFromHeaders($('ck-headers').value), null, '请求头'); }
-  catch (e) { ckParseFail(e); }
+  try {
+    const r = extractCookieFromHeaders($('ck-headers').value);
+    ckPreview(r.cookie, r.userAgent ? { userAgent: r.userAgent } : null, '请求头');
+  } catch (e) { ckParseFail(e); }
 };
 $('btn-parse-json').onclick = () => {
   try { ckPreview(parseCookieEditorJson($('ck-json').value), null, 'JSON 导入'); }

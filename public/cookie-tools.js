@@ -16,12 +16,15 @@ function parseCookieHeader(str) {
 function extractCookieFromHeaders(text) {
   const lines = String(text == null ? '' : text).split(/\r?\n/);
   const found = [];
+  let userAgent = '';
   for (const line of lines) {
     const m = line.match(/^\s*cookie\s*:\s*(.+?)\s*$/i);
     if (m && m[1]) found.push(m[1]);
+    const u = line.match(/^\s*user-agent\s*:\s*(.+?)\s*$/i);
+    if (u && u[1]) userAgent = u[1];
   }
   if (!found.length) throw new Error('没有找到 Cookie 请求头（形如 Cookie: a=1; b=2）');
-  return parseCookieHeader(found.join('; '));
+  return { cookie: parseCookieHeader(found.join('; ')), userAgent };
 }
 
 function parseCookieEditorJson(text) {
