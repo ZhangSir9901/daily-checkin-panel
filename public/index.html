@@ -565,7 +565,9 @@ async function loadSchedule() {
   try {
     const s = await api('/api/schedule');
     GLOBAL_HOUR = s.time;
-    $('sched-line').textContent = `每天 ${s.time}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
+    // 规范化显示：旧的 "08" 显示为 "08:00"
+    const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
+    $('sched-line').textContent = `每天 ${displayTime}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
     $('sched-hour').value = s.time;
     if (!$('sched-tz').options.length) {
       $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option ${z === s.tz ? 'selected' : ''}>${z}</option>`).join('');
