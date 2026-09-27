@@ -183,59 +183,16 @@ $('api-key').onchange = () => {
   chrome.storage.sync.set({ apiKey: $('api-key').value.trim() });
 };
 
-// 立即执行待办签到（触发后台任务）
+// 立即开始中继（让后台马上领任务）。
+// 后台常驻长轮询（挂起 20 秒），所以这里点一下等于“立刻唤醒”一次，
+// 配合面板端的「执行」，签到请求会在 1 秒内被扩展领走，不用再等 alarm 周期。
 $('btn-run-now').onclick = async () => {
-  status('正在获取待办任务…', '');
   try {
-    let panelUrl = $('panel-url').value.trim().replace(/\/$/, '');
-    if (!panelUrl) return status('请先填写签到面板地址', 'err');
-    if (!panelUrl.startsWith('http')) panelUrl = 'https://' + panelUrl;
-    const apiKey = $('api-key').value.trim();
-    if (!apiKey) return status('请先填写 API Key', 'err');
-
-    // 直接在弹窗里获取并执行（不依赖后台 Service Worker，避免休眠无响应）
-    const resp = await fetch(panelUrl + '/api/external/browser-jobs', {
-      headers: { 'X-Api-Key': apiKey },
-    });
-    if (!resp.ok) return status('获取任务失败：HTTP ' + resp.status, 'err');
-    const data = await resp.json();
-    const jobs = data.jobs || [];
-    if (!jobs.length) return status('暂无待办任务', 'ok');
-
-    status(`找到 ${jobs.length} 个任务，开始执行…`, '');
-    for (const job of jobs) {
-      const jobName = job.site_name || job.domain;
-      status(`正在执行：${jobName}…`, '');
-      const r = await executeJobInPopup(job, (s) => status(`${jobName}：${s}`, ''));
-      // 上报结果
-      try {
-        const repResp = await fetch(panelUrl + '/api/external/report', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
-          body: JSON.stringify({
-            account_id: job.account_id,
-            status: r.status,
-            message: r.message,
-            detail: '',
-            duration_ms: r.durationMs || 0,
-          }),
-        });
-        if (!repResp.ok) {
-          status(`${job.site_name || job.domain}：执行完成但上报失败（HTTP ${repResp.status}），请检查 API Key`, 'err');
-          await new Promise((r2) => setTimeout(r2, 1500));
-          continue;
-        }
-      } catch (repErr) {
-        status(`${job.site_name || job.domain}：执行完成但上报失败（${repErr.message || repErr}），请检查网络`, 'err');
-        await new Promise((r2) => setTimeout(r2, 1500));
-        continue;
-      }
-      status(`${job.site_name || job.domain}：${r.message}`, r.status === 'ok' ? 'ok' : 'err');
-      await new Promise((r2) => setTimeout(r2, 1500));
-    }
-    status('全部执行完成，去面板查看日志', 'ok');
+    await chrome.runtime.sendMessage({ action: 'runRelayNow' });
+    status('已唤醒中继，正在实时接单…去面板点「执行」即可', 'ok');
+    chrome.alarms.create('relay-poll', { periodInMinutes: 0.5 });
   } catch (e) {
-    status('执行失败：' + (e.message || e), 'err');
+    status('唤醒失败：' + (e.message || e) + '（可重新加载扩展后重试）', 'err');
   }
 };
 

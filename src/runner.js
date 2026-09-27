@@ -1,11 +1,18 @@
 // 定时/手动执行引擎：遍历启用的账号 → 调用站点模块签到 → 写运行日志 → 推送汇总。
 
-import { ensureSchema } from './db.js';
+import { ensureSchema, getSetting } from './db.js';
 import { decryptJSON } from './crypto.js';
 import { getSite } from './sites/index.js';
 import { sendNotify } from './notify.js';
+import { dayInTz } from './schedule.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 「今天」以哪个时区为准：跟随面板设置里的 schedule_tz（默认 Asia/Shanghai）。
+// 状态列跨零点重置需要和签到时间用同一个时区，否则会差一天。
+async function scheduleTz(db) {
+  try { return (await getSetting(db, 'schedule_tz')) || 'Asia/Shanghai'; } catch { return 'Asia/Shanghai'; }
+}
 
 export async function runAccount(env, account) {
   const db = env.DB;
@@ -73,13 +80,14 @@ export async function runAccount(env, account) {
       const { relayFetch } = await import('./lib/relay.js');
       const originalFetch = globalThis.fetch;
       globalThis.fetch = (url, init) => relayFetch(db, url, init);
+      // 告知站点模块「当前走本地网络」：重定向无法用 manual（opaqueredirect 读不到头），需改用 follow
+      ctx.relayDb = db;
       try {
         res = await site.run(creds, ctx);
       } finally {
         globalThis.fetch = originalFetch;
+        delete ctx.relayDb;
       }
-      // 在消息中标注走了中继
-      if (res && res.message) res.message = '[中继] ' + res.message;
     } else {
       res = await site.run(creds, ctx);
     }
@@ -99,14 +107,11 @@ export async function runAccount(env, account) {
     .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
     .bind(account.id, account.site, account.name, status, message, detail, duration, now)
     .run();
-  // 签到成功时记录今日已签到日期（用于状态列显示 已签到/未签到）
+  // 签到成功时记录「今日」已签到日期（用于状态列显示 已签到/未签到）。
+  // 只有 status === 'ok' 才写：fail / skip 一律不写，保证过了当地 00:00
+  // 状态统一回到「未签到」，而只有当天真正签到成功才变回「已签到」。
   if (status === 'ok') {
-    const d = new Date(now);
-    // 用 Asia/Shanghai 日期
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
-    const p = {};
-    for (const x of parts) p[x.type] = x.value;
-    meta.last_signin_date = `${p.year}-${p.month}-${p.day}`;
+    meta.last_signin_date = dayInTz(new Date(now), await scheduleTz(db));
   }
   await db
     .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')

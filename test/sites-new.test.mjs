@@ -127,6 +127,7 @@ await t('kanxue：重复签到', async () => {
 });
 
 // ---------- 吾爱破解 ----------
+// （“签到完毕”是 Discuz 任务页已签到后的按钮文案，见下面两条用例）
 const PJ_HOME_CLEAN = '<html><a href="home.php?mod=space">我的空间</a>论坛首页</html>';
 
 await t('52pojie：今日已签到', async () => {
@@ -135,9 +136,63 @@ await t('52pojie：今日已签到', async () => {
   assert.equal(r.ok, true);
 });
 
+// 线上真实现象：当天已经签到过之后，52pojie 每日签到任务页的按钮会变成「签到完毕」，
+// 再点没有任何反应。旧逻辑没有这个词，于是报「未识别到成功标识」，面板还显示「未签到」。
+await t('52pojie：已签到（签到完毕）算成功，不再报未识别', async () => {
+  mockFetch([
+    { match: (u) => u.includes('mod=task'), body: '<html><a href="home.php?mod=task">每日签到</a> 签到完毕</html>' },
+    { match: (u) => u.includes('portal.php'), body: PJ_HOME_CLEAN },
+    { match: () => true, body: '<html>吾爱币 12</html>' },
+  ]);
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' });
+  assert.equal(r.ok, true);
+  assert.match(r.message, /已签到|签到完毕/);
+});
+
+await t('52pojie：签到完毕在首页预检就直接结束（不再打任务页）', async () => {
+  const urls = [];
+  mockFetch([
+    { match: (u) => u.includes('portal.php'), body: PJ_HOME_CLEAN + '签到完毕' },
+    { match: () => true, body: '<html>吾爱币 12</html>' },
+  ]);
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { urls.push(String(url)); return orig(url, init); };
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' });
+  globalThis.fetch = orig;
+  assert.equal(r.ok, true);
+  assert.ok(!urls.some((u) => u.includes('mod=task')), '已签到就不该再打签到接口');
+});
+
 await t('52pojie：WAF 拦截提示', async () => {
   mockFetch([{ match: () => true, body: '<html>waf_zw_verify 请完成安全验证</html>' }]);
   await assert.rejects(wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }), /安全验证/);
+});
+
+// 线上真实现象：云端（Cloudflare 出口 IP）请求 52pojie 被网宿 WAF 用 UrlACL 碾掉，
+// 返回体里根本没有 WAF 特征串，只有一行 403 文本，旧逻辑会报成「未识别到成功标识」这种废话。
+await t('52pojie：403 UrlACL（云端 IP 被封）→ 明确提示切本地网络', async () => {
+  mockFetch([{ match: () => true, status: 403, body: '403 Forbidden 403 Forbidden Client IP: 172.70.215.118 eventID: 1249-1790535085.403-waf02whc reason:UrlACL' }]);
+  const err = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }).catch((e) => e);
+  assert.match(err.message, /UrlACL|403/);
+  assert.match(err.message, /本地网络/);
+  assert.doesNotMatch(err.message, /未识别到成功标识/);
+});
+
+await t('52pojie：本地网络模式的重定向走 follow（页面拿不到 opaqueredirect 的头）', async () => {
+  const seen = [];
+  mockFetch([
+    // 注意：签到 URL 的 referer 参数里也含 portal.php，所以 mod=task 必须先匹配
+    { match: (u) => u.includes('mod=task'), body: '<html>任务已完成，恭喜获得 2 热心值</html>' },
+    { match: (u) => u.includes('portal.php'), body: '<html>首页正常</html>' },
+    { match: () => true, body: '<html>吾爱币 12 威望 3</html>' },
+  ]);
+  const orig = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => { seen.push(init.redirect || '(未指定)'); return orig(url, init); };
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }, { relayDb: {} });
+  assert.equal(r.ok, true);
+  const taskCalls = seen.filter((m) => m !== '(未指定)');
+  assert.ok(taskCalls.length > 0, '应该有带 redirect 的请求');
+  assert.ok(taskCalls.every((m) => m === 'follow'), '中继模式下应全部用 follow，实际：' + JSON.stringify(seen));
 });
 
 await t('52pojie：Cookie 失效', async () => {
@@ -205,6 +260,13 @@ await t('nodeseek：被跳到首页判为登录信息未被识别', async () => 
   const err = await nodeseek.run({ cookie: 'a=1' }, {}).catch((e) => e);
   assert.match(err.message, /没认出登录信息/);
   assert.match(err.detail || '', /最终地址 https:\/\/www\.nodeseek\.com\//);
+});
+
+await t('nodeseek：被跳到 IPv6 提示页 → 提示切本地网络', async () => {
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), status: 200, body: '<html><body>您的网络未启用 IPv6</body></html>', finalUrl: 'https://warning.nodeseek.com/ipv6-is-disabled?f=https%3A%2F%2Fwww.nodeseek.com%2Fapi%2Fattendance' }]);
+  const err = await nodeseek.run({ cookie: 'a=1' }, {}).catch((e) => e);
+  assert.match(err.message, /IPv6/);
+  assert.match(err.message, /本地网络/);
 });
 
 await t('nodeseek：成功时返回网站原始回馈 detail', async () => {

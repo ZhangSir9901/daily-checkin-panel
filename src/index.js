@@ -8,13 +8,19 @@ import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
-import { shouldRun, validHour, validTime, validTz, accountHour } from './schedule.js';
+import { shouldRun, validHour, validTime, validTz, accountHour, dayInTz, dayStartInTz } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
 import { verifyExternalRequest } from './lib/ext-auth.js';
 
 // 外部请求鉴权已迁移到 src/lib/ext-auth.js（API Key + HMAC 签名 + 防重放）。
 
 const SESSION_TTL_MS = 7 * 864e5;
+
+// 「今天」以哪个时区为准：跟随设置里的 schedule_tz（默认 Asia/Shanghai）。
+// 签到时间、状态列跨零点重置、当天签到记录查询必须用同一个时区，否则会差一天。
+async function scheduleTz(db) {
+  try { return (await getSetting(db, 'schedule_tz')) || 'Asia/Shanghai'; } catch { return 'Asia/Shanghai'; }
+}
 
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
@@ -139,11 +145,7 @@ async function handleApi(req, env, url) {
     let rmeta = {};
     try { rmeta = JSON.parse(fullAcc?.meta || '{}'); } catch { /* 忽略 */ }
     if (validStatus === 'ok') {
-      const d = new Date();
-      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
-      const p = {};
-      for (const x of parts) p[x.type] = x.value;
-      rmeta.last_signin_date = `${p.year}-${p.month}-${p.day}`;
+      rmeta.last_signin_date = dayInTz(new Date(), await scheduleTz(env.DB));
     }
     await env.DB.prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
       .bind(validStatus, message || '', Date.now(), JSON.stringify(rmeta), Date.now(), acc.id).run();
@@ -370,25 +372,44 @@ async function handleApi(req, env, url) {
     });
   }
 
-  // 扩展轮询待执行的中继任务
+  // 扩展获取待执行的中继任务
+  // 支持长轮询：?wait=20000 → 没有任务时挂起最多 20 秒（每 800ms 查一次 D1），
+  // 一有任务立刻返回。这样「点执行」后扩展几乎立刻领走任务，不用等 30 秒的 alarm 周期
+  // （Chrome 会把 alarms 的最小周期压到 0.5 分钟，短轮询必然导致每跳 15~30 秒延迟）。
   if (path === '/api/external/relay-pending' && method === 'GET') {
     const deny = await extGuard();
     if (deny) return deny;
-    // 记录扩展最后轮询时间，用于判断扩展是否在线（自动中继）
-    await setSetting(env.DB, 'relay_last_poll', String(Date.now())).catch(() => {});
-    const { results } = await env.DB.prepare(
-      "SELECT id, url, method, headers, body, options FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 10"
-    ).all();
-    return json({
-      jobs: (results || []).map((j) => ({
+    const startPollAt = Date.now();
+    const wait = Math.min(Math.max(parseInt(url.searchParams.get('wait') || '0', 10) || 0, 0), 20000);
+    const deadline = Date.now() + wait;
+    const readPending = async () => {
+      const { results } = await env.DB.prepare(
+        "SELECT id, url, method, headers, body, options FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 10"
+      ).all();
+      return (results || []).map((j) => ({
         id: j.id,
         url: j.url,
         method: j.method,
         headers: JSON.parse(j.headers || '{}'),
         body_base64: j.body || null,
         options: JSON.parse(j.options || '{}'),
-      })),
-    });
+      }));
+    };
+    // 记录扩展最后轮询时间，用于判断扩展是否在线（自动中继）；
+    // 同时记下扩展版本（?v=2.2），面板可以提醒用户版本是否陈旧。
+    await setSetting(env.DB, 'relay_last_poll', String(Date.now())).catch(() => {});
+    const extVer = String(url.searchParams.get('v') || '').slice(0, 16);
+    if (extVer) await setSetting(env.DB, 'relay_version', extVer).catch(() => {});
+    let jobs = await readPending();
+    while (!jobs.length && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 800));
+      jobs = await readPending();
+    }
+    // 长轮询期间也要保活「扩展在线」状态，否则面板会误判扩展已离线
+    if (Date.now() - startPollAt > 5000) {
+      await setSetting(env.DB, 'relay_last_poll', String(Date.now())).catch(() => {});
+    }
+    return json({ jobs, waited: wait > 0 });
   }
 
   // 扩展回传中继结果
@@ -434,12 +455,8 @@ async function handleApi(req, env, url) {
     ).all();
     const accounts = results || [];
     // 回填：今日有成功记录但 meta 缺 last_signin_date 的，补上（兼容旧数据）
-    const d = new Date();
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
-    const p = {};
-    for (const x of parts) p[x.type] = x.value;
-    const today = `${p.year}-${p.month}-${p.day}`;
-    const dayStart = new Date(`${today}T00:00:00+08:00`).getTime();
+    const today = dayInTz(new Date(), await scheduleTz(env.DB));
+    const dayStart = dayStartInTz(new Date(), await scheduleTz(env.DB));
     for (const acc of accounts) {
       let m = {};
       try { m = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
@@ -588,14 +605,29 @@ async function handleApi(req, env, url) {
     let meta = {};
     try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
     const cur = meta.execution || '';
-    // 循环：''（跟随默认） → 'browser' → 'server' → ''
-    // 注：relay 模式已从手动切换中移除（中继代理过于复杂，browser 模式已覆盖本地网络需求）
-    const next = cur === '' ? 'browser' : cur === 'browser' ? 'server' : '';
+    // 「本地网络」只有浏览器扩展在线时才可用（扩展才是真正的本地网络中继）。
+    const { isRelayAvailable } = await import('./lib/relay.js');
+    const relayOk = await isRelayAvailable(env.DB);
+    let next;
+    const { target: want = '' } = await readBody(req);
+    if (want === 'local') {
+      if (!relayOk) return json({ error: '浏览器扩展当前离线，现在不能切换到「本地网络」。请先安装并打开扩展（顶部会显示在线状态），再试。' }, 400);
+      next = 'browser';
+    } else if (want === 'cf') {
+      next = 'server';
+    } else if (want === 'default') {
+      next = '';
+    } else {
+      // 无参时循环切换：''（跟随默认） → 本地网络 → CF 网络 → ''
+      // 扩展离线时跳过「本地网络」这一档，避免切到一个根本跑不了的模式里出不来
+      next = cur === '' ? 'browser' : cur === 'browser' ? 'server' : '';
+      if (next === 'browser' && !relayOk) next = 'server';
+    }
     if (next === '') delete meta.execution;
     else meta.execution = next;
     await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
       .bind(JSON.stringify(meta), Date.now(), id).run();
-    return json({ ok: true, execution: next || 'default' });
+    return json({ ok: true, execution: next || 'default', relay_online: relayOk });
   }
 
   // 签到时间设置：每天几点（整点，0-23）+ 时区
@@ -707,7 +739,8 @@ async function handleApi(req, env, url) {
   if (path === '/api/relay-status' && method === 'GET') {
     const last = parseInt((await getSetting(env.DB, 'relay_last_poll')) || '0', 10) || 0;
     const online = Date.now() - last < 90000;
-    return json({ online, last_poll: last });
+    const version = (await getSetting(env.DB, 'relay_version')) || '';
+    return json({ online, last_poll: last, version });
   }
 
   // 修改管理密码

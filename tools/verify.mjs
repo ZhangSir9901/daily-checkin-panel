@@ -1,0 +1,58 @@
+// 一键自检：语法检查 + HTML 标签配对 + 面板单测
+// 用法：node tools/verify.mjs
+import { readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+let failed = 0;
+const step = (name) => console.log('\n=== ' + name);
+const run = (args, label) => {
+  try {
+    const out = execFileSync(process.execPath, args, { cwd: root, encoding: 'utf8' });
+    const last = out.trim().split('\n').filter(Boolean).pop() || '';
+    console.log('✅ ' + label + '：' + last);
+  } catch (e) {
+    failed++;
+    console.log('❌ ' + label);
+    console.log((e.stdout || '') + (e.stderr || ''));
+  }
+};
+
+step('语法检查 src/');
+for (const f of ['index.js', 'runner.js', 'ext-zip.js', 'ext-files.js', 'schedule.js', 'db.js', 'crypto.js', 'notify.js', 'probe.js']) {
+  run(['--check', join('src', f)], f);
+}
+for (const d of ['src/lib', 'src/sites']) {
+  for (const f of readdirSync(join(root, d)).filter((x) => x.endsWith('.js'))) {
+    run(['--check', join(d, f)], d + '/' + f);
+  }
+}
+
+step('HTML 标签配对');
+run([join('tools', 'check-html.mjs')], 'index.html');
+
+step('DOM 引用检查（拦住「$() 返回 null → 整段脚本断掉」这类崩溃）');
+run([join('tools', 'check-dom-refs.mjs')], 'index.html');
+
+step('index.html 内联 JS 语法');
+{
+  const html = readFileSync(join(root, 'public', 'index.html'), 'utf8');
+  const m = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  try {
+    new Function(m[1]);
+    console.log('✅ 内联脚本语法 OK');
+  } catch (e) {
+    failed++;
+    console.log('❌ 内联脚本语法错误：' + e.message);
+  }
+}
+
+step('面板单测 test/*.test.mjs');
+for (const f of readdirSync(join(root, 'test')).filter((x) => x.endsWith('.test.mjs')).sort()) {
+  run([join('test', f)], f);
+}
+
+console.log('\n' + (failed ? `❌ 有 ${failed} 项未通过` : '✅ 全部通过'));
+process.exit(failed ? 1 : 0);

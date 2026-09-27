@@ -20,6 +20,8 @@
     --shadow-sm:0 2px 12px rgba(0,0,0,.25);
   }
   * { box-sizing:border-box; }
+  /* 让浏览器自带的控件（滚动条、下拉框等）跟随深色主题，避免深色页面里冒出白色滑块 */
+  html { color-scheme:dark; }
   body {
     margin:0; color:var(--text);
     background:radial-gradient(1200px 600px at 20% -10%, rgba(91,140,255,.08), transparent),
@@ -50,6 +52,19 @@
                background:linear-gradient(180deg, var(--accent), var(--accent2)); }
   .muted { color:var(--muted); font-size:13px; line-height:1.6; }
   .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+  .topbar-right { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  /* 首页右上角：扩展在线状态（在「退出」下方） */
+  #ext-state { display:inline-flex; align-items:center; gap:6px; padding:4px 12px;
+               border-radius:20px; font-size:12px; font-weight:600; white-space:nowrap;
+               border:1px solid transparent; cursor:pointer; transition:background .2s, color .2s; }
+  #ext-state i { width:7px; height:7px; border-radius:50%; background:currentColor;
+                 box-shadow:0 0 0 3px rgba(255,255,255,.05); }
+  #ext-state.on { background:var(--ok-dim); color:var(--ok); border-color:rgba(63,208,138,.3); }
+  #ext-state.on i { animation:pulse 2s infinite; }
+  #ext-state.off { background:rgba(147,160,189,.12); color:var(--muted); border-color:var(--line); }
+  #ext-state.wait { background:var(--accent-dim); color:var(--accent2); }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  #ext-state-sub { font-size:11px; color:var(--muted); max-width:260px; text-align:right; line-height:1.4; }
   #sched-line { display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
                 background:var(--accent-dim); border:1px solid rgba(91,140,255,.25);
                 border-radius:20px; font-size:12px; color:var(--accent2); }
@@ -107,6 +122,8 @@
   .badge.fail { background:var(--fail-dim); color:var(--fail); }
   .badge.site { background:var(--accent-dim); color:var(--accent2); }
   .badge.site::before { display:none; }
+  .badge.local { background:rgba(91,140,255,.16); color:var(--accent2); }
+  .badge.cf { background:rgba(147,160,189,.14); color:var(--muted); }
   .badge.off { background:rgba(147,160,189,.12); color:var(--muted); }
   .badge.skip { background:var(--warn-dim); color:var(--warn); }
 
@@ -162,6 +179,45 @@
   .ck-tab.active { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff; border-color:transparent; }
   .ck-panel textarea { width:100%; box-sizing:border-box; margin:4px 0; }
 
+  /* 折叠区（其它取 Cookie 方式 / 扩展安装步骤）：默认收起，保持页面清爽 */
+  .ck-more { margin-top:14px; border:1px solid var(--line); border-radius:var(--radius-sm);
+             background:rgba(255,255,255,.015); overflow:hidden; }
+  .ck-more > summary { cursor:pointer; padding:12px 14px; font-size:13px; color:var(--muted);
+                       list-style:none; user-select:none; transition:color .15s, background .15s; }
+  .ck-more > summary::-webkit-details-marker { display:none; }
+  .ck-more > summary::before { content:"▸ "; color:var(--accent2); }
+  .ck-more[open] > summary { color:var(--text); background:rgba(91,140,255,.06); }
+  .ck-more[open] > summary::before { content:"▾ "; }
+  .ck-more > summary:hover { color:var(--text); }
+  .ck-more-body { padding:2px 14px 14px; border-top:1px solid var(--line); }
+
+  /* 签到时间一行布局（紧凑） */
+  .sched-row { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
+  .sched-row .sched-field { display:flex; flex-direction:column; gap:6px; }
+  .sched-row .sched-field > label { margin:0; }
+  .sched-row select { margin:0; min-width:190px; }
+  .sched-row button { margin:0; }
+  /* 账号行里的小提示（站点推荐 / 网站回馈的操作建议） */
+  .row-hint { margin-top:5px; font-size:11px; line-height:1.5; color:var(--warn);
+              max-width:230px; }
+  .row-hint::before { content:"⚠️ "; }
+  .row-pills { margin-top:5px; display:flex; flex-wrap:wrap; gap:4px; }
+  .msg-hint { margin-top:5px; font-size:11.5px; line-height:1.55; color:var(--warn); }
+  .msg-hint::before { content:"💡 "; }
+  /* 粘贴内容分解面板 */
+  .ckb { margin-top:12px; padding:12px 14px; border-radius:12px;
+         background:rgba(91,140,255,.06); border:1px solid rgba(91,140,255,.22); }
+  .ckb-bad { background:var(--fail-dim); border-color:rgba(255,107,107,.35); }
+  .ckb-title { font-size:13px; font-weight:600; margin-bottom:8px; color:var(--accent2); }
+  .ckb-bad .ckb-title { color:var(--fail); }
+  .ckb-rows { display:flex; flex-direction:column; gap:5px; }
+  .ckb-row { display:flex; gap:10px; font-size:12.5px; line-height:1.5; }
+  .ckb-k { flex:none; width:76px; color:var(--muted2); }
+  .ckb-v { flex:1; word-break:break-word; }
+  .ckb-v code { background:rgba(255,255,255,.07); padding:1px 5px; border-radius:5px; font-size:11.5px; }
+  .ckb-status { margin-top:10px; padding-top:9px; font-size:12.5px; line-height:1.6;
+                border-top:1px dashed rgba(91,140,255,.25); }
+
   /* 空状态 */
   .empty { text-align:center; padding:40px 20px; color:var(--muted2); }
   .empty .icon { font-size:40px; margin-bottom:12px; opacity:.6; }
@@ -174,41 +230,56 @@
              transition:border-color .15s, box-shadow .15s; white-space:nowrap; }
   .tp-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
   .tp-chip.is-follow { color:var(--muted); font-weight:500; }
+  /* 大号胶囊：设置页的全局时间用它，一行放得下 */
+  .tp-chip.lg { padding:9px 18px; font-size:17px; border-radius:12px; }
   .tp-chip .tp-dot { width:6px; height:6px; border-radius:50%; background:var(--muted2); flex:none; }
   .tp-chip:not(.is-follow) .tp-dot { background:var(--accent2); box-shadow:0 0 0 3px var(--accent-dim); }
 
-  .tpx-pop { position:fixed; z-index:70; width:238px; padding:12px; border-radius:14px;
-             background:var(--card); border:1px solid var(--line2); box-shadow:var(--shadow); }
+  .tpx-pop { position:fixed; z-index:70; width:250px; padding:14px; border-radius:16px;
+             background:linear-gradient(180deg, #1b2440, #131b2e);
+             border:1px solid var(--line2); box-shadow:var(--shadow); }
   .tpx-pop.hidden { display:none; }
   .tpx-head { text-align:center; margin-bottom:10px; }
-  .tpx-preview { font-size:26px; font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums; }
+  .tpx-preview { display:inline-flex; align-items:baseline; justify-content:center; gap:1px;
+                 padding:4px 16px; border-radius:12px; background:rgba(91,140,255,.08);
+                 border:1px solid rgba(91,140,255,.22);
+                 font-size:26px; font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums; }
   .tpx-preview b { color:var(--text); }
-  .tpx-preview i { color:var(--accent2); font-style:normal; padding:0 2px; }
-  .tpx-cols { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .tpx-col { display:flex; flex-direction:column; gap:4px; }
-  .tpx-label { font-size:10.5px; color:var(--muted2); text-align:center; letter-spacing:1px; }
-  .tpx-list { position:relative; height:150px; overflow-y:auto; border:1px solid var(--line);
-              border-radius:10px; background:#0c1224; padding:4px; scrollbar-width:thin; }
-  .tpx-list::-webkit-scrollbar { width:6px; }
-  .tpx-list::-webkit-scrollbar-thumb { background:var(--line2); border-radius:3px; }
-  .tpx-opt { display:block; width:100%; padding:6px 0; margin:0; border:0; border-radius:8px;
-             background:transparent; color:var(--muted); font-size:13px; font-weight:500;
-             box-shadow:none; font-variant-numeric:tabular-nums; cursor:pointer; transition:background .12s, color .12s; }
-  .tpx-opt:hover { transform:none; box-shadow:none; background:var(--accent-dim); color:var(--text); }
-  .tpx-opt.sel { background:var(--accent); color:#fff; font-weight:700; box-shadow:none; }
-  .tpx-opt.sel:hover { background:var(--accent); color:#fff; }
-  .tpx-foot { display:flex; gap:8px; margin-top:10px; }
-  .tpx-foot button { padding:8px; border-radius:9px; font-size:12.5px; box-shadow:none; }
+  .tpx-preview i { color:var(--accent2); font-style:normal; padding:0 3px; opacity:.75; }
+  .tpx-cols { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .tpx-col { display:flex; flex-direction:column; gap:5px; }
+  .tpx-label { font-size:10.5px; color:var(--muted2); text-align:center; letter-spacing:2px; }
+  /* 滚轮：完全隐藏滚动条（Chrome 121+ 的 scrollbar-width 会覆盖 ::-webkit-scrollbar
+     并画出系统默认的白色滑块，所以这里连同 -webkit 一起彻底藏掉） */
+  .tpx-list { position:relative; height:150px; overflow-y:auto; overscroll-behavior:contain;
+              border:1px solid var(--line); border-radius:12px; background:#0a1020;
+              padding:4px 3px; scroll-behavior:smooth;
+              box-shadow:inset 0 0 22px rgba(0,0,0,.5);
+              scrollbar-width:none; -ms-overflow-style:none;
+              -webkit-mask-image:linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%);
+              mask-image:linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%); }
+  .tpx-list::-webkit-scrollbar { width:0; height:0; display:none; }
+  .tpx-opt { display:block; width:100%; padding:7px 0; margin:0; border:0; border-radius:9px;
+             background:transparent; color:var(--muted); font-size:13.5px; font-weight:500;
+             box-shadow:none; font-variant-numeric:tabular-nums; cursor:pointer;
+             transition:background .12s, color .12s, transform .12s; }
+  .tpx-opt:hover { transform:none; box-shadow:none; background:rgba(91,140,255,.14); color:var(--text); }
+  .tpx-opt.sel { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff;
+                 font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
+  .tpx-opt.sel:hover { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff; }
+  .tpx-foot { display:flex; gap:8px; margin-top:12px; }
+  .tpx-foot button { padding:9px; border-radius:10px; font-size:12.5px; box-shadow:none; }
   .tpx-follow { background:transparent; border:1px solid var(--line2); color:var(--muted); }
   .tpx-follow:hover { transform:none; box-shadow:none; color:var(--fail); border-color:var(--fail); background:var(--fail-dim); }
-  .tpx-done { background:var(--accent); border:0; color:#fff; font-weight:600; }
-  .tpx-done:hover { transform:none; box-shadow:none; background:var(--accent2); }
+  .tpx-done { background:linear-gradient(135deg, var(--accent), #4a7de8); border:0; color:#fff; font-weight:600; }
+  .tpx-done:hover { transform:none; box-shadow:none; filter:brightness(1.08); }
 
   /* 设置页内嵌形态 */
-  .tpx-inline { display:block; }
-  .tpx-inline .tpx-head { margin-bottom:8px; }
-  .tpx-inline .tpx-cols { max-width:300px; margin:0 auto; }
-  .tpx-inline .tpx-list { height:138px; }
+  .tpx-inline { display:inline-block; padding:12px 14px; border-radius:14px;
+                background:rgba(255,255,255,.02); border:1px solid var(--line); }
+  .tpx-inline .tpx-head { margin-bottom:9px; }
+  .tpx-inline .tpx-cols { width:230px; }
+  .tpx-inline .tpx-list { height:134px; }
 
   /* 账号列表里的时间单元格 */
   .sched-cell { display:flex; align-items:center; gap:6px; justify-content:center; }
@@ -253,7 +324,13 @@
   <div id="view-main" class="view hidden">
     <div class="topbar">
       <div><h1>签到面板</h1><div class="muted" id="sched-line">自动签到时间加载中…</div></div>
-      <button class="ghost sm" id="btn-logout">退出</button>
+      <div class="topbar-right">
+        <button class="ghost sm" id="btn-logout">退出</button>
+        <div id="ext-state" class="wait" title="点击检测一次扩展是否在线">
+          <i></i><span id="ext-state-text">检测扩展状态…</span>
+        </div>
+        <div id="ext-state-sub">扩展在线时才能切「本地网络」</div>
+      </div>
     </div>
     <div class="tabs">
       <button data-tab="accounts" class="active">账号</button>
@@ -276,103 +353,46 @@
         </table></div>
       </div>
       <div class="card">
-        <h2>获取 Cookie（多种方式）</h2>
-        <p class="muted">先选站点，再选一种方式拿到 Cookie：有账号就直接填入，没有就新建一个。</p>
-        <div class="row">
-          <select id="ck-account" style="flex:1;margin:4px 0"></select>
-        </div>
-        <div class="tips" style="margin:8px 0">🖥️ 当前浏览器 User-Agent（吾爱等站点需与 Cookie 配对填入）：
-          <div style="display:flex;gap:8px;margin-top:6px">
-            <input id="my-ua" readonly style="flex:1;font-size:11px" title="你的浏览器 UA">
-            <button class="ghost sm" id="btn-copy-ua" type="button">复制 UA</button>
+        <div class="row" style="justify-content:space-between;align-items:flex-end;">
+          <div>
+            <h2 style="margin:0">签到时间</h2>
+            <p class="muted" style="margin:6px 0 0">Worker 每分钟唤醒一次，到达设定的时间才执行签到。修改即时生效，无需重新部署。</p>
+          </div>
+          <div class="sched-row">
+            <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
+            <div class="sched-field"><label>时区</label><select id="sched-tz" class="sm"></select></div>
+            <button id="btn-save-sched" class="sm">保存</button>
           </div>
         </div>
+        <p class="muted" style="margin-top:10px">点时间胶囊可展开时/分滚轮；单个账号还能在「签到时间」那一列设自己的时间（留空 = 跟随这里）。</p>
+      </div>
+      <div class="card">
+        <h2>添加 / 更新账号（一步搞定）</h2>
+        <p class="muted">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
+          面板会自动认出站点、自动填好 Cookie 和 User-Agent（<b>UA 不用自己找</b>），保存后立刻可用。</p>
+        <textarea id="ck-paste" rows="3" placeholder="在这里粘贴扩展复制的内容 —— 粘上就会自动识别并保存"></textarea>
         <div class="row" style="margin:8px 0">
-          <button class="ghost sm ck-tab active" data-t="ext" type="button">🧩 扩展一键获取 ⭐</button>
-          <button class="ghost sm ck-tab" data-t="paste" type="button">📋 粘贴扩展内容</button>
-          <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
-          <button class="ghost sm ck-tab" data-t="addrbar" type="button">🔗 地址栏代码</button>
-          <button class="ghost sm ck-tab" data-t="console" type="button">💻 控制台代码</button>
-          <button class="ghost sm ck-tab" data-t="curl" type="button">🌀 cURL 命令</button>
-          <button class="ghost sm ck-tab" data-t="headers" type="button">🧾 请求头</button>
-          <button class="ghost sm ck-tab" data-t="json" type="button">🧩 JSON 导入</button>
-          <button class="ghost sm ck-tab" data-t="txt" type="button">📄 cookie.txt</button>
+          <button id="btn-parse-paste" type="button">✅ 粘贴并保存</button>
+          <button class="ghost sm" id="btn-ck-pick" type="button">手动选站点保存</button>
         </div>
-        <div id="ck-panel-ext" class="ck-panel">
-          <div class="tips">🌟 <b>推荐方式</b>：安装「签到面板 Cookie 助手」扩展，在目标网站登录状态下点一下扩展图标 → 「一键发送到签到面板」，自动打开面板并弹出确认框。<b>能读取 HttpOnly Cookie</b>，NodeSeek 这类站点也适用。支持 Chrome / Edge。<br>
-          💡 从本面板下载的扩展已<b>自动填入面板地址</b>（首次打开扩展即可看到），如需换面板可手动修改。</div>
-          <div class="row" style="margin:10px 0">
-            <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2（zip）</a>
+        <div id="ck-preview" class="hidden"></div>
+
+        <details class="ck-more">
+          <summary>🧩 还没装扩展？点这里下载并安装（推荐，一次装好永久省事）</summary>
+          <div class="ck-more-body">
+            <div class="tips">在目标网站登录状态下点一下扩展图标 → 「一键发送到签到面板」，自动打开面板并保存。<b>能读取 HttpOnly Cookie</b>，NodeSeek 这类站点也适用。支持 Chrome / Edge。<br>
+            💡 从本面板下载的扩展已<b>自动填入面板地址</b>（首次打开扩展即可看到），如需换面板可手动修改。</div>
+            <div class="row" style="margin:10px 0">
+              <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2（zip）</a>
+            </div>
+            <p class="muted">安装步骤：</p>
+            <p class="muted">1️⃣ 点击上方下载并解压 zip<br>
+            2️⃣ 浏览器地址栏输入 <b>chrome://extensions/</b>（Edge 用 <b>edge://extensions/</b>），打开「开发者模式」<br>
+            3️⃣ 点击「加载已解压的扩展程序」，选择解压后的 <b>文件夹</b>（不是 zip）<br>
+            4️⃣ 点扩展图标 → 在弹窗里填「API Key」（面板设置页复制）→ 点「🔌 面板连接检查」</p>
           </div>
-          <p class="muted">安装步骤：</p>
-          <p class="muted">1️⃣ 点击上方下载并解压 zip<br>
-          2️⃣ 浏览器地址栏输入 <b>chrome://extensions/</b>（Edge 用 <b>edge://extensions/</b>），打开「开发者模式」<br>
-          3️⃣ 点击「加载已解压的扩展程序」，选择解压后的 <b>文件夹</b>（不是 zip）<br>
-          4️⃣ 在目标网站点扩展图标 → 一键发送到面板</p>
-        </div>
-        <div id="ck-panel-paste" class="ck-panel hidden">
-          <textarea id="ck-paste" rows="3" placeholder="粘贴扩展「一键复制全部信息」得到的内容"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-paste" type="button">解析并填入</button></div>
-          <div class="tips">用法：<br>
-          1️⃣ 在目标网站点扩展图标 → 「📋 一键复制全部信息（含 UA）」<br>
-          2️⃣ 把复制的内容粘贴到上面，点「解析并填入」<br>
-          3️⃣ 面板自动识别站点、填入 Cookie 和 UA，选账号保存即可<br>
-          扩展复制的内容包含完整 Cookie（含 HttpOnly）、浏览器 User-Agent 和域名，面板自动解析，无需手动拆分。</div>
-        </div>
-        <div id="ck-panel-bm" class="ck-panel hidden">
-          <div class="row">
-            <button class="ghost sm" id="btn-gen-bm" type="button">生成小书签</button>
-          </div>
-          <div id="bm-box" class="hidden" style="margin-top:10px">
-            <p class="muted">电脑：把这个链接拖到书签栏；手机：<b>点一下这个链接</b>，按弹出的指引手动添加：</p>
-            <a href="#" class="bookmarklet" id="bm-link">📋 取Cookie填入面板</a>
-            <button class="ghost sm" id="btn-copy-bm" type="button">复制代码</button>
-            <div class="tips">在目标网站登录状态下点击书签，会自动打开面板并弹出 Cookie 填入确认框。HttpOnly 类型的 Cookie 浏览器不允许 JS 读取，这类站点仍需手动复制粘贴。</div>
-          </div>
-        </div>
-        <div id="ck-panel-addrbar" class="ck-panel hidden">
-          <p class="muted">不用建书签的一次性代码，选好站点后复制：</p>
-          <div class="row"><button class="ghost sm" id="btn-copy-addr" type="button">复制地址栏代码</button></div>
-          <div class="tips">用法：<br>
-          1️⃣ 在手机浏览器打开目标网站（保持登录状态）<br>
-          2️⃣ 把代码粘贴到地址栏<br>
-          3️⃣ 光标移到最前面，<b>手动输入 javascript:</b>（浏览器粘贴时会自动吞掉它，必须手打，加上冒号）<br>
-          4️⃣ 回车 → 自动跳回面板，弹出填入确认框，选账号保存即可<br>
-          ⚠️ 只能读到普通 Cookie，<b>读不到 HttpOnly 类型的登录 Cookie</b>（如 NodeSeek）。如果导入后网站不认登录信息，请改用 cURL / 请求头 / JSON / cookie.txt 方式</div>
-        </div>
-        <div id="ck-panel-console" class="ck-panel hidden">
-          <textarea id="ck-console" rows="3" placeholder="粘贴控制台输入 document.cookie 后返回的内容"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-console" type="button">解析并预览</button></div>
-          <div class="tips">用法：<br>
-          1️⃣ 在电脑浏览器打开目标网站（保持登录状态），按 F12 打开开发者工具<br>
-          2️⃣ 切换到 Console（控制台）标签页，输入 <code>document.cookie</code> 回车<br>
-          3️⃣ 把返回的那串 <code>名称=值; 名称=值</code> 复制，粘贴到上面<br>
-          ⚠️ 只能读到普通 Cookie，<b>读不到 HttpOnly 类型的登录 Cookie</b>（如 NodeSeek）。如果导入后网站不认登录信息，请改用 cURL / 请求头 / JSON / cookie.txt 方式</div>
-        </div>
-        <div id="ck-panel-curl" class="ck-panel hidden">
-          <textarea id="ck-curl" rows="3" placeholder="粘贴浏览器「复制为 cURL」得到的命令"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-curl" type="button">解析并预览</button></div>
-          <div class="tips">从 cURL 里自动提取 Cookie；如果还带了 User-Agent（如吾爱破解必填 UA），新建账号时会自动填入。</div>
-        </div>
-        <div id="ck-panel-headers" class="ck-panel hidden">
-          <textarea id="ck-headers" rows="3" placeholder="粘贴开发者工具里复制的请求头文本（含 Cookie: 开头的一行）"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-headers" type="button">解析并预览</button></div>
-          <div class="tips">💡 浏览器 F12 → 网络 → 点任一请求 → 复制请求头：<b>Cookie 那行下面就是 User-Agent</b>，一起粘贴过来，吾爱等站点新建账号时 UA 会自动填入。</div>
-        </div>
-        <div id="ck-panel-json" class="ck-panel hidden">
-          <textarea id="ck-json" rows="3" placeholder="粘贴 Cookie-Editor / EditThisCookie 插件导出的 JSON"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-json" type="button">解析并预览</button></div>
-        </div>
-        <div id="ck-panel-txt" class="ck-panel hidden">
-          <textarea id="ck-txt" rows="3" placeholder="粘贴 Netscape 格式的 cookie.txt 内容"></textarea>
-          <div class="row"><button class="ghost sm" id="btn-parse-txt" type="button">解析并预览</button></div>
-        </div>
-        <div id="ck-preview" class="hidden" style="margin-top:10px">
-          <div class="tips" style="word-break:break-all" id="ck-preview-text"></div>
-          <div class="row" style="margin-top:8px">
-            <button class="sm" id="btn-ck-apply" type="button">填入账号…</button>
-          </div>
-        </div>
+        </details>
+
       </div>
     </section>
 
@@ -427,29 +447,9 @@
         <button id="btn-change-pwd">修改密码</button>
       </div>
       <div class="card">
-        <h2>签到时间</h2>
-        <p class="muted">Worker 每分钟唤醒一次，到达设定的时间才执行签到。修改即时生效，无需重新部署。</p>
-        <div class="row">
-          <div style="flex:1"><label>每天执行时间</label><div id="sched-tp"></div></div>
-          <div style="flex:2"><label>时区</label><select id="sched-tz"></select></div>
-        </div>
-        <button id="btn-save-sched">保存时间设置</button>
-        <p class="muted" style="margin-top:10px;line-height:1.8">建议绑定自定义域名（workers.dev 在国内访问不稳定）。</p>
-      </div>
-      <div class="card">
-        <h2>NodeSeek 设置</h2>
-        <p class="muted">NodeSeek 由浏览器扩展在您的网络中代签。此处设置签到模式，扩展下次运行时生效。</p>
-        <label>签到模式</label>
-        <select id="nodeseek-mode">
-          <option value="random">试试手气（随机鸡腿）</option>
-          <option value="fixed">固定领取（5 个鸡腿）</option>
-        </select>
-        <button id="btn-save-nodeseek">保存 NodeSeek 设置</button>
-      </div>
-      <div class="card">
         <h2>🔌 浏览器扩展</h2>
-        <p class="muted">安装「cookie插件2.2」扩展后，它会每小时在您的浏览器中自动执行 <b>浏览器模式</b> 的签到（使用您的网络，无 IP 限制）。扩展需要下面的 API Key 才能连接面板。</p>
-        <p class="muted">中继状态：<span id="relay-status" class="badge off">检测中…</span> <span class="muted" style="font-size:12px">扩展在线时，云端任务会自动经您的本地网络执行（中继模式）</span></p>
+        <p class="muted">安装「cookie插件2.2」扩展后，它就是面板的<b>本地网络中继</b>：面板点「执行」时请求由扩展在您的浏览器里发出（用您的本机 IP 和登录态），因此能绕过 CF 网络的 IP 封禁与人机验证。扩展会自动挂长轮询接单，响应通常在 1 秒内。扩展需要下面的 API Key 才能连接面板。</p>
+        <p class="muted">中继状态：<span id="relay-status" class="badge off">检测中…</span> <span class="muted" style="font-size:12px">扩展在线时，标记为「🌐 本地网络」的账号会经您的本机网络执行</span></p>
         <label>API Key（扩展用）</label>
         <div style="display:flex;gap:8px">
           <input id="ext-api-key" type="text" readonly placeholder="点击生成" style="flex:1">
@@ -679,8 +679,8 @@ function renderTimePicker(container, initial, opts = {}) {
     };
   }
 
-  // 胶囊形态（账号列表）
-  container.innerHTML = '<button type="button" class="tp-chip"><span class="tp-dot"></span><span class="tp-text"></span></button>';
+  // 胶囊形态（账号列表 / 设置页全局时间）
+  container.innerHTML = '<button type="button" class="tp-chip' + (opts.large ? ' lg' : '') + '"><span class="tp-dot"></span><span class="tp-text"></span></button>';
   const chip = container.querySelector('.tp-chip');
   const updChip = () => {
     chip.classList.toggle('is-follow', follow);
@@ -690,19 +690,25 @@ function renderTimePicker(container, initial, opts = {}) {
 
   const pop = _tpxPopover();
   const open = () => {
-    pop.innerHTML = wheelHTML() + `<div class="tpx-foot"><button type="button" class="tpx-follow">跟随全局</button><button type="button" class="tpx-done">完成</button></div>`;
+    // opts.noFollow：全局时间自己就是“全局”，不需要“跟随全局”按钮
+    const foot = (opts.noFollow ? '' : '<button type="button" class="tpx-follow">跟随全局</button>')
+      + '<button type="button" class="tpx-done">完成</button>';
+    pop.innerHTML = wheelHTML() + `<div class="tpx-foot">${foot}</div>`;
     bindWheel(pop, () => {
       follow = false;
       updChip();
       container.dispatchEvent(new CustomEvent('tp-change', { bubbles: true }));
     });
-    pop.querySelector('.tpx-follow').onclick = (e) => {
-      e.stopPropagation();
-      follow = true;
-      pop.classList.add('hidden');
-      updChip();
-      container.dispatchEvent(new CustomEvent('tp-follow', { bubbles: true }));
-    };
+    const followBtn = pop.querySelector('.tpx-follow');
+    if (followBtn) {
+      followBtn.onclick = (e) => {
+        e.stopPropagation();
+        follow = true;
+        pop.classList.add('hidden');
+        updChip();
+        container.dispatchEvent(new CustomEvent('tp-follow', { bubbles: true }));
+      };
+    }
     pop.querySelector('.tpx-done').onclick = (e) => { e.stopPropagation(); pop.classList.add('hidden'); };
     pop.classList.remove('hidden');
     const r = chip.getBoundingClientRect();
@@ -727,17 +733,43 @@ function renderTimePicker(container, initial, opts = {}) {
 const TZ_OPTS = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney'];
 const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'UTC': 'UTC 时间' };
 let GLOBAL_HOUR = '08'; // 全局签到时间（整点小时），账号独立时间为空时跟随它
+let SCHED_TZ = 'Asia/Shanghai'; // 面板设置的时区：状态列「今天」也按它算
 let schedPicker = null;
+
+// 「今天」按面板设置的时区计算（与签到时间同口径）。
+// 跨过当地 00:00 就算新的一天，状态才会统一回到「未签到」。
+function todayInSchedTz() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SCHED_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const p = {};
+    for (const x of parts) p[x.type] = x.value;
+    return `${p.year}-${p.month}-${p.day}`;
+  } catch { return ''; }
+}
+
+// 跨零点自动刷新：不刷新页面也能看到状态变回「未签到」
+let LAST_TODAY = todayInSchedTz();
+function watchNewDay() {
+  const t = todayInSchedTz();
+  if (!t || t === LAST_TODAY) return false;
+  LAST_TODAY = t;
+  toast('已进入新的一天，签到状态已重置为「未签到」');
+  loadAccounts();
+  return true;
+}
+setInterval(watchNewDay, 20000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') watchNewDay(); });
 
 async function loadSchedule() {
   try {
     const s = await api('/api/schedule');
     GLOBAL_HOUR = s.time;
+    SCHED_TZ = s.tz || 'Asia/Shanghai';
     // 规范化显示：旧的 "08" 显示为 "08:00"
     const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
     $('sched-line').textContent = `每天 ${displayTime}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
-    // 自定义时间选择器
-    if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { inline: true });
+    // 全局签到时间：紧凑胶囊（点开滚轮浮层），noFollow 因为它就是「全局」本身
+    if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { noFollow: true, large: true });
     else schedPicker.set(displayTime);
     if (!$('sched-tz').options.length) {
       $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option ${z === s.tz ? 'selected' : ''}>${z}</option>`).join('');
@@ -768,32 +800,9 @@ function cookieCapableAccounts(siteId) {
   });
 }
 
-function refreshCkSelect() {
-  const sel = $('ck-account');
-  if (!sel) return;
-  const list = cookieCapableSites();
-  sel.innerHTML = list.length
-    ? list.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')
-    : '<option value="">暂无可用站点</option>';
-}
-
-$('btn-gen-bm').onclick = () => {
-  const siteId = $('ck-account').value;
-  if (!siteId) return toast('没有可用站点');
-  const s = SITES.find((x) => x.id === siteId);
-  if (!s) return toast('站点不存在');
-  const code = "(function(){try{var c=document.cookie;"
-    + "if(!c){alert('当前页面没有可读取的 Cookie（可能为 HttpOnly 类型），请改用面板内粘贴方式');return;}"
-    + "var d={domain:location.hostname,cookie:c,site:" + JSON.stringify(s.id) + ",sname:" + JSON.stringify(s.name) + "};"
-    + "var s=btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');"
-    + "window.open(" + JSON.stringify(location.origin) + "+'/#ck='+s,'_blank');"
-    + "}catch(e){alert('失败：'+e.message);}})();";
-  const link = $('bm-link');
-  link.href = 'javascript:' + code;
-  link.dataset.code = code;
-  $('bm-box').classList.remove('hidden');
-  toast('小书签已生成，拖到书签栏使用');
-};
+// 旧版「先选站点再粘 Cookie」的下拉已移除（现在一个粘贴框自动认站点）。
+// 保留成空函数，只为不动旧的调用点。
+function refreshCkSelect() { /* no-op */ }
 
 // Akile 取 token 小书签：在 akile.ai 页面点书签，自动复制 localStorage 的 akile-token
 const AKILE_BM = "javascript:(function(){try{"
@@ -808,151 +817,152 @@ $('btn-akile-bm').onclick = async () => {
   catch (e) { prompt('复制小书签代码，新建书签粘贴到网址栏', AKILE_BM); }
 };
 
-$('btn-copy-bm').onclick = async () => {
-  const full = 'javascript:' + ($('bm-link').dataset.code || '');
-  try { await navigator.clipboard.writeText(full); toast('代码已复制（含 javascript: 前缀），粘贴到书签的网址栏'); }
-  catch (e) { toast('复制失败，请手动拖拽链接到书签栏'); }
-};
+// ---------- 粘贴框：自动识别格式 + 中文逐段分解 ----------
+// 一个框吃下所有格式，省得用户先想「我该贴哪个框」：
+//   ① 扩展「一键复制全部信息」的 JSON（最常用）
+//   ② 浏览器「复制请求头」的整段文本（Cookie 和 User-Agent 一起拿）
+//   ③ 浏览器「复制为 cURL」的命令
+//   ④ Cookie-Editor / Netscape cookie.txt 导出的内容
+//   ⑤ 光秃秃的 name=value; name=value（控制台 document.cookie 拷出来的）
+function parsePasteBox() {
+  const raw = $('ck-paste').value.trim();
+  if (!raw) throw new Error('请先在目标网站用扩展「📋 一键复制全部信息」，然后在这里粘贴');
+  const v = raw.replace(/^["']|["'];?$/g, '');
 
-// 点小书签链接本身：浏览器不允许网页自动添加书签，所以弹手机添加指引
-$('bm-link').onclick = (e) => {
-  e.preventDefault();
-  const code = 'javascript:' + ($('bm-link').dataset.code || '');
-  const bg = document.createElement('div');
-  bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal"><h2>在手机上添加小书签</h2>
-    <div class="tips">浏览器不允许网页自动往书签里加东西，需要手动加一次（以 Chrome 为例，其他浏览器菜单大同小异）：<br>
-    1️⃣ 点下面的「复制代码」<br>
-    2️⃣ 点浏览器右上角 ⋮ → ☆ 收藏当前页面<br>
-    3️⃣ ⋮ → 书签 → 找到刚收藏的这条 → 长按（或点 ⋯）→ 修改<br>
-    4️⃣ 把「网址」栏清空，粘贴代码，保存<br>
-    5️⃣ 打开目标网站（保持登录状态），在地址栏输入书签名称点一下，Cookie 就传回面板了</div>
-    <textarea id="bmg-code" rows="4" readonly style="width:100%;box-sizing:border-box">${esc(code)}</textarea>
-    <div class="row" style="margin-top:8px">
-      <button class="sm" id="bmg-copy" type="button">复制代码</button>
-      <button class="ghost sm hidden" id="bmg-share" type="button">分享代码</button>
-      <button class="ghost sm" id="bmg-close" type="button" style="margin-left:auto">关闭</button>
-    </div></div>`;
-  document.body.appendChild(bg);
-  const ta = bg.querySelector('#bmg-code');
-  ta.onclick = () => { ta.focus(); ta.select(); };
-  bg.querySelector('#bmg-copy').onclick = async () => {
-    try { await navigator.clipboard.writeText(code); toast('已复制'); }
-    catch (e) { ta.select(); toast('请手动长按复制文本框里的代码'); }
-  };
-  const shareBtn = bg.querySelector('#bmg-share');
-  if (navigator.share) {
-    shareBtn.classList.remove('hidden');
-    shareBtn.onclick = () => navigator.share({ title: '取Cookie小书签', text: code }).catch(() => {});
+  // ①/④ JSON：扩展格式带 cookies 字段；数组则是 Cookie-Editor 导出
+  if (v.startsWith('{') || v.startsWith('[')) {
+    let d = null;
+    try { d = JSON.parse(v); } catch { throw new Error('JSON 格式不对，请在扩展里点「📋 一键复制全部信息」重新复制一次'); }
+    if (Array.isArray(d)) {
+      return { cookie: parseCookieEditorJson(v), domain: '', userAgent: '', format: 'Cookie-Editor JSON' };
+    }
+    if (!d || !d.cookies) throw new Error('这段 JSON 里没有 Cookie，请确认是扩展「一键复制全部信息」复制出来的');
+    return {
+      cookie: String(d.cookies),
+      domain: String(d.domain || ''),
+      userAgent: String(d.userAgent || ''),
+      cookieList: Array.isArray(d.cookieList) ? d.cookieList : [],
+      localStorage: d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {},
+      stats: d.stats || null,
+      format: '扩展「一键复制全部信息」',
+    };
   }
-  bg.querySelector('#bmg-close').onclick = () => bg.remove();
-};
 
-// ---------- 多方式取 Cookie：tab 切换 + 解析预览 ----------
-let CK_PENDING = null; // { cookie, extra:{userAgent}, label }
+  // ③ cURL：浏览器右键「复制为 cURL」
+  if (/^curl\s|curl\s+'https?:/i.test(v)) {
+    const r = extractCookieFromCurl(v);
+    return { cookie: r.cookie, domain: '', userAgent: r.userAgent || '', format: '浏览器复制的 cURL 命令' };
+  }
 
-document.querySelectorAll('.ck-tab').forEach((b) => {
-  b.onclick = () => {
-    document.querySelectorAll('.ck-panel').forEach((p) => p.classList.add('hidden'));
-    $('ck-panel-' + b.dataset.t).classList.remove('hidden');
-    document.querySelectorAll('.ck-tab').forEach((x) => x.classList.remove('active'));
-    b.classList.add('active');
-  };
-});
+  // ② 请求头文本：带 Cookie: / User-Agent: 这类头
+  if (/^\s*cookie\s*:/im.test(v) || /^\s*user-agent\s*:/im.test(v)) {
+    const r = extractCookieFromHeaders(v);
+    return { cookie: r.cookie, domain: '', userAgent: r.userAgent || '', format: '浏览器复制的请求头' };
+  }
 
-// 显示当前浏览器 UA，一键复制（吾爱等站点用）
-$('my-ua').value = navigator.userAgent;
-$('btn-copy-ua').onclick = async () => {
-  try {
-    await navigator.clipboard.writeText(navigator.userAgent);
-    toast('User-Agent 已复制');
-  } catch { toast('复制失败，请手动选中复制'); }
-};
+  // ④ Netscape cookie.txt：以 # 开头的注释 + 制表符分隔的 7 列
+  if (/^#(?: Netscape )?HTTP Cookie File/im.test(v) || v.split('\n').some((l) => l.split('\t').length === 7)) {
+    return { cookie: parseNetscapeCookies(v), domain: '', userAgent: '', format: 'cookie.txt（Netscape 格式）' };
+  }
 
-function ckPreview(cookie, extra, label) {
-  CK_PENDING = { cookie, extra: extra || {}, label: label || '' };
-  $('ck-preview-text').innerHTML = `解析成功${label ? `（${esc(label)}）` : ''}：共 ${cookie.length} 字符，预览前 80 字符：<br>${esc(cookie.slice(0, 80))}…`
-    + (extra && extra.userAgent ? `<br>同时提取到 User-Agent：${esc(extra.userAgent.slice(0, 60))}…` : '');
-  $('ck-preview').classList.remove('hidden');
+  // ⑤ 纯 Cookie 串
+  if (v.includes('=')) {
+    return { cookie: v, domain: '', userAgent: '', format: '纯 Cookie 字符串' };
+  }
+  throw new Error('没看出这是 Cookie，请用扩展的「📋 一键复制全部信息」再试一次');
 }
 
-function ckParseFail(e) {
-  CK_PENDING = null;
-  $('ck-preview').classList.add('hidden');
+// 把 Cookie 串拆成一段段，并给每段中文说明（只看名字和属性，不展示值）
+function splitCookieParts(cookie, cookieList) {
+  if (Array.isArray(cookieList) && cookieList.length) {
+    return cookieList.map((c) => ({
+      name: String(c.name || ''),
+      note: [
+        c.httpOnly ? 'HttpOnly（脚本读不到、只能用扩展抓）' : '',
+        c.session ? '会话 Cookie（关浏览器就失效）' : '',
+        c.path && c.path !== '/' ? '路径 ' + c.path : '',
+        c.expirationDate ? '有效期至 ' + new Date(c.expirationDate * 1000).toLocaleDateString('zh-CN') : '',
+      ].filter(Boolean).join('，') || '普通 Cookie',
+    }));
+  }
+  return String(cookie || '')
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => ({ name: s.split('=')[0].trim(), note: '普通 Cookie' }))
+    .filter((x) => x.name);
+}
+
+// 渲染「中文分解」面板：这个框告诉你面板到底读到了什么、每一段是什么
+function renderPasteBreakdown(info, status) {
+  const el = $('ck-preview');
+  if (!el) return;
+  const parts = splitCookieParts(info.cookie, info.cookieList);
+  const siteId = info.siteId || guessSiteByDomain(info.domain || '');
+  const site = SITES.find((s) => s.id === siteId);
+  const uaFrom = info.userAgent
+    ? (info.uaAutoFilled ? '当前浏览器（扩展没带，面板自动兜底）' : '抓 Cookie 那台浏览器（扩展带的）')
+    : '不需要';
+  const rows = [
+    ['识别格式', esc(info.format || '未知') + '（面板自动判断，你不用选）'],
+    ['来自网站', (site ? '<b>' + esc(site.name) + '</b>' : '<b>未识别</b>') + (info.domain ? '，域名 ' + esc(info.domain) : '')],
+    ['Cookie 段', '共 <b>' + parts.length + '</b> 段' + (parts.length ? '：' : '')],
+    ...parts.map((p, i) => ['第 ' + (i + 1) + ' 段', '<code>' + esc(p.name) + '</code> — ' + esc(p.note)]),
+    ['User-Agent', uaFrom + (info.userAgent ? '<br><span class="muted" style="font-size:11px">' + esc(String(info.userAgent).slice(0, 90)) + '…</span>' : '')],
+  ];
+  if (info.localStorage && Object.keys(info.localStorage).length) {
+    rows.push(['localStorage', Object.keys(info.localStorage).length + ' 项（部分站点把登录 token 放这里）']);
+  }
+  el.innerHTML = '<div class="ckb">'
+    + '<div class="ckb-title">🔍 粘贴内容分解</div>'
+    + '<div class="ckb-rows">'
+    + rows.map(([k, v]) => `<div class="ckb-row"><span class="ckb-k">${esc(k)}</span><span class="ckb-v">${v}</span></div>`).join('')
+    + '</div>'
+    + (status ? `<div class="ckb-status">${status}</div>` : '')
+    + '</div>'
+    + (site ? '' : '<div class="row" style="margin-top:8px"><button class="sm" id="btn-ck-apply" type="button">我来选站点…</button></div>');
+  el.classList.remove('hidden');
+  const pick = $('btn-ck-apply');
+  if (pick) pick.onclick = () => openCookieSitePicker(info.cookie, info.domain || '', info.userAgent || '');
+}
+
+function pasteFail(e) {
+  const el = $('ck-preview');
+  if (el) {
+    el.innerHTML = '<div class="ckb ckb-bad"><div class="ckb-title">✗ 没看懂这段内容</div><div class="ckb-row">'
+      + esc(e && e.message ? e.message : String(e)) + '</div></div>';
+    el.classList.remove('hidden');
+  }
   toast('解析失败：' + (e && e.message ? e.message : e));
 }
 
-// ---------- 地址栏代码：不用建书签，粘贴到已登录网站的地址栏执行 ----------
-$('btn-copy-addr').onclick = async () => {
-  const siteId = $('ck-account').value;
-  const s = SITES.find((x) => x.id === siteId);
-  if (!s) return toast('请先选择站点');
-  const code = "javascript:void(function(){try{var c=document.cookie;"
-    + "if(!c){alert('当前页面读不到 Cookie（可能为 HttpOnly 类型），请改用面板内其它方式');return;}"
-    + "var d={site:" + JSON.stringify(s.id) + ",cookie:c};"
-    + "var e=btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'');"
-    + "window.open(" + JSON.stringify(location.origin + '/') + "+'#ck='+e,'_blank');"
-    + "}catch(err){alert('失败：'+err.message);}}())";
-  try { await navigator.clipboard.writeText(code); toast('代码已复制，去目标网站的地址栏粘贴'); }
-  catch (e) { toast('复制失败，请换个浏览器试试'); }
-};
-$('btn-parse-headers').onclick = () => {
+// 「✅ 粘贴并保存」：先给你看分解，再自动建号/更新并试跑
+$('btn-parse-paste').onclick = async () => {
   try {
-    const r = extractCookieFromHeaders($('ck-headers').value);
-    ckPreview(r.cookie, r.userAgent ? { userAgent: r.userAgent } : null, '请求头');
-  } catch (e) { ckParseFail(e); }
-};
-$('btn-parse-json').onclick = () => {
-  try { ckPreview(parseCookieEditorJson($('ck-json').value), null, 'JSON 导入'); }
-  catch (e) { ckParseFail(e); }
-};
-$('btn-parse-txt').onclick = () => {
-  try { ckPreview(parseNetscapeCookies($('ck-txt').value), null, 'cookie.txt'); }
-  catch (e) { ckParseFail(e); }
-};
-$('btn-parse-console').onclick = () => {
-  try {
-    const v = $('ck-console').value.trim().replace(/^["']|["'];?$/g, '');
-    if (!v || !v.includes('=')) throw new Error('没解析出 Cookie，请确认粘贴的是 document.cookie 的返回值');
-    ckPreview(v, null, '控制台代码');
-  } catch (e) { ckParseFail(e); }
-};
-$('btn-parse-curl').onclick = () => {
-  try {
-    const r = extractCookieFromCurl($('ck-curl').value);
-    ckPreview(r.cookie, { userAgent: r.userAgent }, 'cURL 命令');
-  } catch (e) { ckParseFail(e); }
-};
-// 扩展「一键复制全部信息」的粘贴解析：JSON 含 domain/userAgent/cookies
-$('btn-parse-paste').onclick = () => {
-  try {
-    const v = $('ck-paste').value.trim();
-    if (!v) throw new Error('请先粘贴扩展复制的内容');
-    let d = null;
-    let rawCookie = '';
-    // 情况1：扩展的标准 JSON 格式
-    if (v.startsWith('{')) {
-      try { d = JSON.parse(v); } catch (e) { throw new Error('不是有效的扩展复制格式，请确认是从扩展「一键复制全部信息」复制的'); }
-      if (!d || !d.cookies) throw new Error('内容里没有 Cookie 数据');
-    } else if (v.includes('=')) {
-      // 情况2：用户误粘了纯 Cookie 字符串（name=val; name=val），降级为手动选站点
-      rawCookie = v.replace(/^["']|["'];?$/g, '');
-      return openCookieSitePicker(rawCookie, '', '');
-    } else {
-      throw new Error('没识别出 Cookie 内容，请确认粘贴的是扩展复制的完整内容');
+    const info = parsePasteBox();
+    const siteId = guessSiteByDomain(info.domain || '');
+    info.siteId = siteId;
+    renderPasteBreakdown(info, '⏳ 正在保存到面板并试跑一次…');
+    if (!siteId) {
+      renderPasteBreakdown(info, '⚠️ 没能从域名认出站点，请点下面的「我来选站点…」选一个');
+      return;
     }
-    const domain = d.domain || '';
-    const siteId = guessSiteByDomain(domain);
-    if (!siteId) return openCookieSitePicker(d.cookies, domain, d.userAgent || '');
-    openCookieApplyDialog(siteId, d.cookies, domain, { userAgent: d.userAgent || '' });
+    await autoApplyCookies(siteId, { cookies: info.cookie, domain: info.domain, userAgent: info.userAgent, cookieList: info.cookieList, localStorage: info.localStorage }, { inline: (text, ok) => renderPasteBreakdown(info, text) });
+  } catch (e) { pasteFail(e); }
+};
+
+// 「手动选站点保存」：强行自己选站点（域名猜不出来、或站点没登记域名时用）
+$('btn-ck-pick').onclick = () => {
+  try {
+    const { cookie, domain, userAgent } = parsePasteBox();
+    openCookieSitePicker(cookie, domain, userAgent);
   } catch (e) { toast('解析失败：' + (e && e.message ? e.message : e)); }
 };
-$('btn-ck-apply').onclick = () => {
-  if (!CK_PENDING) return toast('请先解析出 Cookie');
-  const siteId = $('ck-account').value;
-  if (!siteId) return toast('请先选择站点');
-  openCookieApplyDialog(siteId, CK_PENDING.cookie, '', CK_PENDING.extra);
-};
+
+// 粘上就自动识别保存：复制 → Ctrl+V → 完成，不用再点按钮
+$('ck-paste').addEventListener('paste', () => {
+  setTimeout(() => { try { $('btn-parse-paste').click(); } catch { /* 忽略 */ } }, 80);
+});
 
 function b64urlDecode(s) {
   s = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -965,7 +975,8 @@ function renderCkNewFields(bg, s, extra) {
   box.innerHTML = (s.fields || []).filter((f) => f.key !== 'cookie').map((f) => {
     const req = f.required ? ' *' : '';
     let pre = '';
-    if (extra && f.key === 'user_agent' && extra.userAgent) pre = extra.userAgent;
+    // UA 不用用户自己去找：优先用抓 Cookie 那个浏览器的，其次用当前浏览器
+    if (f.key === 'user_agent') pre = (extra && extra.userAgent) || navigator.userAgent;
     if (extra && f.key === 'site_url' && extra.domain) pre = 'https://' + extra.domain.replace(/^https?:\/\//i, '');
     if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${f.key}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
     if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${esc(pre)}</textarea>`;
@@ -991,11 +1002,12 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
     Cookie 长度 ${cookie.length} 字符，预览前 80 字符：</p>
     <div class="tips" style="word-break:break-all">${esc(cookie.slice(0, 80))}…</div>
     ${extra && extra.userAgent ? `<p class="muted">已提取到 User-Agent（${esc(extra.userAgent.slice(0, 50))}…），会自动填入。</p>` : ''}
-    ${uaMissing ? `<p style="color:#ffb020;font-size:13px">⚠️ 该站点需要 User-Agent 配对，但本次未获取到。请在下方手动填写（面板「获取 Cookie」区可复制当前浏览器 UA）。</p>` : ''}
+    ${uaMissing ? `<p style="color:#ffb020;font-size:13px">⚠️ 该站点要求 Cookie 与 User-Agent 配对。已自动填入<b>当前浏览器</b>的 UA；如果这串 Cookie 是从别的浏览器/手机上抓的，请把下面 UA 换成那台设备的 UA（否则会被 WAF 拦）。</p>` : ''}
     <label>填入方式</label>
     <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">已有账号：${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 添加到面板（新建记录）</option>' : ''}</select>
     <div id="ckm-new" class="${list.length ? 'hidden' : ''}">
       <label>备注名</label><input id="ckm-name" value="${esc(s.name)}">
+      <p class="muted" style="font-size:12px">下面的项已尽量自动填好，确认无误直接保存即可。</p>
       <div id="ckm-fields"></div>
     </div>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
@@ -1062,15 +1074,18 @@ async function autoApplyCookies(siteId, d) {
   const s = SITES.find((x) => x.id === siteId);
   if (!s) return toast('未知站点');
   const cookie = String(d.cookies || '');
-  const ua = String(d.userAgent || '');
+  const needUA = (s.fields || []).some((f) => f.key === 'user_agent');
+  // 站点要求 Cookie 与 UA 配对但这次没带 UA：直接用面板所在浏览器的 UA（同一浏览器抓的 Cookie 就对得上），
+  // 不把「去找 UA」这件事丢给用户。
+  const uaAutoFilled = !String(d.userAgent || '') && needUA;
+  const ua = String(d.userAgent || '') || (needUA ? navigator.userAgent : '');
+  d = { ...d, userAgent: ua };
   const list = Array.isArray(d.cookieList) ? d.cookieList : [];
   const ls = d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {};
   const names = (list.length ? list.map((c) => c.name) : cookie.split(';').map((x) => x.trim().split('=')[0])).filter(Boolean);
-  const needUA = (s.fields || []).some((f) => f.key === 'user_agent');
   // 除 Cookie/UA 外还有别的必填项（如 Discuz 的论坛地址）时，交给原对话框补充
   const missing = (s.fields || []).filter((f) => f.required && f.key !== 'cookie' && !(f.key === 'user_agent' && ua));
   if (missing.length) return openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua });
-  if (needUA && !ua) return openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: '' });
 
   const existing = cookieCapableAccounts(siteId);
   let accountId = null;
@@ -1083,16 +1098,17 @@ async function autoApplyCookies(siteId, d) {
       if (ua && needUA) creds.user_agent = ua;
       await api('/api/accounts/' + existing[0].id, 'PUT', { creds });
       accountId = existing[0].id;
-      actionText = '已更新账号「' + existing[0].name + '」的 Cookie 与 UA';
+      actionText = '已更新账号「' + existing[0].name + '」的 Cookie' + (needUA ? ' 与 UA' : '')
+        + (uaAutoFilled ? '（UA 自动取本浏览器）' : '');
     } else if (existing.length > 1) {
       // 同站点有多个账号，交给用户选（保留原有对话框）
       return openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua });
     } else {
       const creds = { cookie };
-      if (ua) creds.user_agent = ua;
+      if (ua && needUA) creds.user_agent = ua;
       const r = await api('/api/accounts', 'POST', { name: s.name, site: siteId, creds });
       accountId = r.id;
-      actionText = '已新建账号「' + s.name + '」';
+      actionText = '已新建账号「' + s.name + '」' + (uaAutoFilled ? '（UA 自动取本浏览器）' : '');
     }
   } catch (e) {
     return toast('保存失败：' + e.message);
@@ -1195,6 +1211,7 @@ async function initMain() {
   const { sites } = await api('/api/sites');
   SITES = sites;
   await loadSchedule(); // 先加载全局时间，供账号列表的"跟随全局"显示
+  await refreshExtState(); // 扩展在线状态：首页右上角展示，并决定能否切「本地网络」
   await loadAccounts();
   checkCookieHash();
 }
@@ -1207,16 +1224,77 @@ function siteName(id) {
 
 let ACCTS = [];
 
+// 站点级推荐说明：只在当前模式不是本地网络时显示，提醒用户某站必须用本机网络
+// （CF 机房 IP 会被这些站点的 WAF / IPv6 要求直接挡下）
+const SITE_MODE_HINT = {
+  wuaipojie: '吾爱破解屏蔽了 CF 网络（403 UrlACL），必须用「本地网络」；本地网络需安装并打开浏览器扩展',
+  nodeseek: 'NodeSeek 登录有人机验证、CF 网络又没有 IPv6，请切「本地网络」',
+  hutue: '糊涂鳄对机房 IP 更严格，建议切「本地网络」',
+  kanxue: '看雪建议用「本地网络」（CF 网络常被拦）',
+  misign: 'Discuz 论坛多数会拦机房 IP，建议切「本地网络」',
+  v2ex: 'V2EX 建议用「本地网络」',
+};
+
+// 执行模式单元格（徽章 + 切换按钮 + 站点推荐 + 站点开关胶囊）。
+// 单独抽出来是为了「切换模式」时可以只更新这一格，不用整表重绘。
+function execCellHTML(a, execOverride) {
+  const site = SITES.find((s) => s.id === a.site);
+  const siteExec = site ? (site.execution || 'server') : 'server';
+  const effExec = execOverride || siteExec;
+  // 浏览器模式已并入本地中继：对外统一显示为「本地网络」，避免两个名字其实是同一件事
+  const isLocalExec = effExec === 'browser' || effExec === 'relay';
+  const execBadge = isLocalExec
+    ? `<span class="badge local" title="借你的本机网络发请求（逻辑仍在 Worker）：可绕过机房 IP 封禁与人机验证。需要浏览器扩展在线。">🌐 本地网络</span>`
+    : `<span class="badge cf" title="由 Cloudflare 机房 IP 直接请求：适合普通 API 类站点。部分站点会屏蔽机房 IP。">☁️ CF 网络</span>`;
+  const execName = isLocalExec ? '本地网络' : 'CF 网络';
+  const siteLocalExec = siteExec === 'browser' || siteExec === 'relay';
+  const siteExecName = siteLocalExec ? '本地网络' : 'CF 网络';
+  const execTitle = execOverride ? `（已手动设为${execName}，点击切换）` : `（跟随站点默认：${siteExecName}，点击可手动覆盖）`;
+  // 站点级推荐（如吾爱破解只能走本地网络），只在当前不是本地网络时提醒，避免添乱
+  const hint = !isLocalExec && SITE_MODE_HINT[a.site] ? SITE_MODE_HINT[a.site] : '';
+  const pills = togglePills(a);
+  return {
+    isLocalExec,
+    html: `<b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button>${hint ? `<div class="row-hint">推荐：${esc(hint)}</div>` : ''}${pills}`,
+  };
+}
+
+// 网站反馈的「怎么办」提示：根据回传的原始文本判断失败类型，给一句可执行的中文建议。
+function feedbackHint(msg, siteId, isLocalExec) {
+  const m = String(msg || '');
+  if (!m) return '';
+  if (/UrlACL|Client IP|网宿|waf0(?!\d)/i.test(m) || /403 Forbidden/.test(m)) {
+    return '建议：该网站屏蔽了 CF 网络（机房 IP），请切换为「本地网络」签到；本地网络需安装并保持浏览器扩展在线';
+  }
+  if (/人机验证|验证码|captcha|turnstile|请先完成验证/i.test(m)) {
+    return '建议：该网站需要人工验证，请在浏览器里登录/过一次验证，再点扩展图标重新获取 Cookie';
+  }
+  if (/最少等待|一天只能|已签到|重复签到/.test(m)) return '';
+  if (/Cookie.*(失效|过期)|未登录|login required|请先登录/i.test(m)) {
+    return isLocalExec
+      ? '建议：浏览器里登录该网站后，点扩展图标「一键复制 Cookie」，回面板粘贴保存'
+      : '建议：Cookie 已过期，请重新登录后再复制一次 Cookie；若仍失败可切「本地网络」';
+  }
+  if (/中继执行超时|超时|timed? ?out/i.test(m)) {
+    return '建议：请确认浏览器扩展在线（点扩展图标看连接状态），并保持该网站的标签页可以正常打开';
+  }
+  if (/扩展(离线|不在线)|中继不可用|relay unavailable/i.test(m)) {
+    return '建议：打开浏览器、确认扩展已安装并处于在线状态；中继任务由扩展接单执行';
+  }
+  if (/ipv6/i.test(m) && !isLocalExec) return '建议：CF 网络没有 IPv6 出口，请切换为「本地网络」';
+  return '';
+}
+
 function togglePills(a) {
   const s = SITES.find((x) => x.id === a.site);
-  if (!s || !s.toggles || !s.toggles.length) return '<span class="muted">-</span>';
+  if (!s || !s.toggles || !s.toggles.length) return '';
   let meta = {};
   try { meta = JSON.parse(a.meta || '{}'); } catch { /* 忽略 */ }
   const tg = meta.toggles || {};
-  return s.toggles.map((t) => {
+  return '<div class="row-pills">' + s.toggles.map((t) => {
     const v = tg[t.key] == null ? !!t.default : !!tg[t.key];
-    return `<button class="pill ${v ? 'on' : ''}" data-atoggle="${a.id}:${esc(t.key)}" data-v="${v ? 0 : 1}" title="点击切换">${esc(t.label)}：${esc(v ? t.onLabel : t.offLabel)}</button>`;
-  }).join('');
+    return `<button class="pill ${v ? 'on' : ''}" data-atoggle="${a.id}:${esc(t.key)}" data-v="${v ? 0 : 1}" title="点击切换（不用进编辑）">${esc(t.label)}：${esc(v ? t.onLabel : t.offLabel)}</button>`;
+  }).join('') + '</div>';
 }
 
 async function loadAccounts() {
@@ -1242,33 +1320,23 @@ async function loadAccounts() {
       execOverride = m.execution || '';
       lastSigninDate = m.last_signin_date || '';
     } catch { /* 忽略 */ }
-    // 今日是否已签到：比较 Asia/Shanghai 日期
-    const todayParts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-    const tp = {};
-    for (const x of todayParts) tp[x.type] = x.value;
-    const today = `${tp.year}-${tp.month}-${tp.day}`;
+    // 今日是否已签到：比较面板设置时区下的日期（跨零点自动回到「未签到」）
+    const today = todayInSchedTz();
     const signedToday = lastSigninDate === today;
     const statusBadge = signedToday
       ? '<span class="badge ok">已签到</span>'
       : '<span class="badge fail">未签到</span>';
-    const site = SITES.find((s) => s.id === a.site);
-    const siteExec = site ? (site.execution || 'server') : 'server';
-    const effExec = execOverride || siteExec;
-    // 浏览器模式已并入本地中继：对外统一显示为「本地网络」，避免两个名字其实是同一件事
-    const isLocalExec = effExec === 'browser' || effExec === 'relay';
-    const execBadge = isLocalExec
-      ? `<span class="badge" style="background:#e8f4fd;color:#1a73e8" title="借你的本地网络发请求（逻辑仍在 Worker），可绕过云端 IP / 人机验证限制。需浏览器扩展在线。">🌐 本地网络</span>`
-      : `<span class="badge" style="background:#f0f4f8;color:#5f6368" title="Worker 直接请求（云端 IP）">☁️ 云端</span>`;
-    const execName = isLocalExec ? '本地网络' : '云端';
-    const siteLocalExec = siteExec === 'browser' || siteExec === 'relay';
-    const siteExecName = siteLocalExec ? '本地网络' : '云端';
-    const execTitle = execOverride ? `（已手动设为${execName}，点击切换）` : `（跟随站点默认：${siteExecName}，点击可手动覆盖）`;
+    const { html: execCell, isLocalExec } = execCellHTML(a, execOverride);
+    const rawMsg = String(a.last_msg || '');
+    // 旧版本遗留的提示文案（已无意义），不展示
+    const msg = (rawMsg.includes('浏览器模式') || rawMsg.includes('请确保扩展')) ? '' : rawMsg;
+    const hintText = feedbackHint(msg, a.site, isLocalExec);
     return `
     <tr>
-      <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
+      <td data-exec-cell="${a.id}">${execCell}</td>
       <td><div class="sched-cell"><div data-tp-acc="${a.id}" title="点击设置该账号的独立签到时间（跟随全局：${GLOBAL_HOUR}）"></div></div></td>
       <td>${statusBadge}</td>
-      <td class="msg">${(() => { const m = a.last_msg || ''; return (m.includes('浏览器模式') || m.includes('请确保扩展')) ? '-' : esc(m || '-'); })()}</td>
+      <td class="msg">${msg ? esc(msg) : '-'}${hintText ? `<div class="msg-hint">${esc(hintText)}</div>` : ''}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
       <td><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
       <td><div style="display:inline-flex;gap:6px;white-space:nowrap">
@@ -1303,13 +1371,31 @@ async function loadAccounts() {
     });
   });
 
+  bindRowActions(tb, accounts);
+
+  refreshCkSelect();
+  refreshLogAccountFilter();
+}
+
+// 给一定范围内的行按钮绑定事件。单独抽出来是因为「就地更新一行」之后也要重新绑定。
+function bindRowActions(tb, accounts) {
   tb.querySelectorAll('[data-atoggle]').forEach((b) => (b.onclick = async () => {
     const [id, key] = b.dataset.atoggle.split(':');
     try {
       await api('/api/accounts/' + id + '/toggle', 'POST', { key, value: b.dataset.v === '1' });
       toast('已切换');
     } catch (e) { toast(e.message); }
-    loadAccounts();
+    // 就地改本地 meta，再只重画这一格，避免整表重绘闪烁
+    const acc = findAcc(accounts, id);
+    if (acc) {
+      try {
+        const m = JSON.parse(acc.meta || '{}');
+        m.toggles = m.toggles || {};
+        m.toggles[key] = b.dataset.v === '1';
+        acc.meta = JSON.stringify(m);
+      } catch { /* 忽略 */ }
+    }
+    applyExecToRow(id);
   }));
 
   tb.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
@@ -1320,17 +1406,33 @@ async function loadAccounts() {
   }));
   tb.querySelectorAll('[data-exec]').forEach((b) => (b.onclick = async () => {
     const id = b.dataset.exec;
+    const orig = b.innerHTML;
+    b.disabled = true; b.textContent = '…';
     try {
       const r = await api('/api/accounts/' + id + '/execution', 'PUT', {});
       const msgs = {
-        browser: '已切换为浏览器执行（扩展在您的网络中跑完整签到）',
-        relay: '已切换为中继代理（Worker 逻辑 + 您的本地网络）',
-        server: '已切换为云端执行（Worker 直接请求）',
+        browser: '已切换为本地网络（借用您的本机网络发请求）',
+        relay: '已切换为本地网络（借用您的本机网络发请求）',
+        server: '已切换为 CF 网络执行（Cloudflare 机房 IP 直接请求）',
         default: '已恢复跟随站点默认',
       };
-      toast(msgs[r.execution] || '已切换');
-    } catch (e) { toast('切换失败：' + e.message); }
-    loadAccounts();
+      let tip = msgs[r.execution] || '已切换';
+      if (r.relay_online === false && r.execution !== 'browser' && r.execution !== 'relay') {
+        tip += '（扩展当前离线，暂时不能切「本地网络」）';
+      }
+      toast(tip);
+      if (r.relay_online != null) RELAY_ONLINE = !!r.relay_online;
+      // 就地更新这一行的执行模式格，不整表重绘
+      const acc = findAcc(accounts, id);
+      if (acc) {
+        try {
+          const m = JSON.parse(acc.meta || '{}');
+          if (r.execution === 'default') delete m.execution; else m.execution = r.execution;
+          acc.meta = JSON.stringify(m);
+        } catch { /* 忽略 */ }
+      }
+      applyExecToRow(id);
+    } catch (e) { toast('切换失败：' + e.message); b.disabled = false; b.innerHTML = orig; }
   }));
   tb.querySelectorAll('[data-run]').forEach((b) => (b.onclick = async () => {
     b.disabled = true; const orig = b.textContent; b.textContent = '执行中…';
@@ -1347,8 +1449,23 @@ async function loadAccounts() {
     await api('/api/accounts/' + b.dataset.del, 'DELETE');
     toast('已删除'); loadAccounts();
   }));
-  refreshCkSelect();
-  refreshLogAccountFilter();
+}
+
+function findAcc(accounts, id) {
+  return (accounts || []).find((x) => String(x.id) === String(id))
+    || ACCTS.find((x) => String(x.id) === String(id));
+}
+
+// 只重画某一行的「执行模式」单元格（徽章 + 切换 + 站点开关胶囊），切换模式时更顺滑
+function applyExecToRow(accId) {
+  const cell = document.querySelector(`[data-exec-cell="${accId}"]`);
+  if (!cell) return loadAccounts();
+  const a = findAcc(ACCTS, accId);
+  if (!a) return loadAccounts();
+  let execOverride = '';
+  try { execOverride = JSON.parse(a.meta || '{}').execution || ''; } catch { /* 忽略 */ }
+  cell.innerHTML = execCellHTML(a, execOverride).html;
+  bindRowActions(cell, ACCTS);
 }
 
 $('btn-run-all').onclick = async (e) => {
@@ -1694,40 +1811,58 @@ async function loadSettings() {
   $('bark-set').textContent = s.bark_key_set ? '（已设置）' : '';
   $('wh-set').textContent = s.webhook_url_set ? '（已设置）' : '';
   loadSchedule();
-  // NodeSeek 模式
-  try {
-    const { mode } = await api('/api/nodeseek-mode');
-    $('nodeseek-mode').value = mode || 'random';
-  } catch { /* 忽略 */ }
   // 扩展 API Key
   loadExtKey();
 }
 
-$('btn-save-nodeseek').onclick = async () => {
-  try {
-    await api('/api/nodeseek-mode', 'PUT', { mode: $('nodeseek-mode').value });
-    toast('NodeSeek 设置已保存，扩展下次运行时生效');
-  } catch (e) { toast(e.message); }
-};
-
 // ---------- 扩展 API Key ----------
+// 扩展（本地网络中继）在线状态：首页右上角与设置页显示同一个值。
+// 只有在线时，账号才能切到「本地网络」——否则请求没人接单，点了也只是白等。
+let RELAY_ONLINE = false;
+let RELAY_VERSION = '';
+async function refreshExtState() {
+  const home = $('ext-state');
+  const sub = $('ext-state-sub');
+  try {
+    const s = await api('/api/relay-status', 'GET');
+    RELAY_ONLINE = !!s.online;
+    RELAY_VERSION = s.version || '';
+  } catch {
+    RELAY_ONLINE = false;
+  }
+  if (home) {
+    home.className = RELAY_ONLINE ? 'on' : 'off';
+    $('ext-state-text').textContent = RELAY_ONLINE ? '扩展在线（自动中继已启用）' : '扩展离线（本地网络不可用）';
+  }
+  if (sub) {
+    sub.textContent = RELAY_ONLINE
+      ? '可切「本地网络」：请求经您的浏览器发出'
+      : '切「本地网络」需先安装并打开扩展';
+  }
+  const el = $('relay-status');
+  if (el) {
+    el.className = RELAY_ONLINE ? 'badge ok' : 'badge off';
+    el.textContent = RELAY_ONLINE
+      ? `🟢 扩展在线（自动中继已启用）${RELAY_VERSION ? ' · v' + RELAY_VERSION : ''}`
+      : '⚪ 扩展离线（走 CF 网络）';
+  }
+  return RELAY_ONLINE;
+}
+
+// 点一下首页那个状态胶囊就手动检测一次
+$('ext-state').onclick = async () => {
+  const ok = await refreshExtState();
+  toast(ok ? '扩展在线：可以切换到「本地网络」' : '扩展离线：请安装并打开浏览器扩展，或去设置页看下载步骤');
+};
+// 每 30 秒自动检测一次（扩展断线时天也不会显示错）
+setInterval(() => { if (!$('view-main').classList.contains('hidden')) refreshExtState(); }, 30000);
+
 async function loadExtKey() {
   try {
     const d = await api('/api/ext-key', 'GET');
     if (d.key) $('ext-api-key').value = d.key;
   } catch (e) { /* 忽略 */ }
-  // 中继状态
-  try {
-    const s = await api('/api/relay-status', 'GET');
-    const el = $('relay-status');
-    if (s.online) {
-      el.className = 'badge ok';
-      el.textContent = '🟢 扩展在线（自动中继已启用）';
-    } else {
-      el.className = 'badge off';
-      el.textContent = '⚪ 扩展离线（云端直连）';
-    }
-  } catch { /* 忽略 */ }
+  await refreshExtState();
 }
 $('btn-gen-key').onclick = () => {
   const bytes = new Uint8Array(24);

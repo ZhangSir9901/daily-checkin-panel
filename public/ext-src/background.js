@@ -7,8 +7,16 @@ const DEFAULT_PANEL_URL = '__PANEL_URL__';
 const ALARM_NAME = 'checkin-jobs';
 const CHECK_INTERVAL_MIN = 5; // 每 5 分钟领一次待办签到任务（面板点“执行”后无需等一小时）
 const RELAY_ALARM = 'relay-poll';
-const RELAY_INTERVAL_MIN = 0.25; // 中继代理 15 秒轮询一次（任务来时快速响应）
-const RELAY_JOB_TIMEOUT_MS = 45000; // 单个中继任务硬超时，超时也要回传，避免任务永久卡在 pending
+// 注意：Chrome 会把 alarms 的周期压到最小 0.5 分钟，靠短轮询做不到「秒级响应」。
+// 所以中继改成「长轮询」：请求挂起最多 20 秒，一有任务 Worker 立刻返回；
+// 一轮结束马上接下一轮（RELAY_GAP_MS），延迟从 15~30 秒降到 1 秒内。
+const RELAY_INTERVAL_MIN = 0.5; // 兜底 alarm（Service Worker 被回收后由它重新拉起长轮询循环）
+const RELAY_LONGPOLL_MS = 15000; // 单次长轮询挂起时长（Worker 端上限 15 秒）
+const RELAY_GAP_MS = 200; // 两轮长轮询之间的间隔
+const RELAY_BURST_ROUNDS = 24; // 单次突发最多跑几轮长轮询（防止无限循环/异常时死循环）
+const RELAY_BURST_IDLE = 6; // 连续几轮没接到任务就结束本次突发（6×15s≈90s 空转覆盖）
+const RELAY_JOB_TIMEOUT_MS = 30000; // 单个中继任务硬超时，超时也要回传，避免任务永久卡在 pending
+const RELAY_FETCH_TIMEOUT_MS = 18000; // 页面内单次 fetch 的超时（防止 52pojie 这类站把连接吊死）
 
 // 获取面板地址和 API Key
 async function getConfig() {
@@ -230,9 +238,12 @@ function bytesToB64(bytes) {
   return btoa(s);
 }
 
-// 获取待执行的中继任务
-async function fetchRelayJobs(panelUrl, apiKey) {
-  const resp = await fetch(panelUrl + '/api/external/relay-pending', {
+// 获取待执行的中继任务（长轮询：没有任务时挂起，一有任务立刻返回）
+async function fetchRelayJobs(panelUrl, apiKey, waitMs = RELAY_LONGPOLL_MS) {
+  // 带上扩展版本（?v=），面板可以显示「扩展在线 · v2.2」并提醒版本陈旧
+  let ver = '';
+  try { ver = (chrome.runtime.getManifest() || {}).version || ''; } catch { /* 忽略 */ }
+  const resp = await fetch(panelUrl + '/api/external/relay-pending?wait=' + waitMs + (ver ? '&v=' + encodeURIComponent(ver) : ''), {
     headers: { 'X-Api-Key': apiKey },
   });
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -270,13 +281,13 @@ async function executeRelayJob(job) {
           }
         };
         chrome.tabs.onUpdated.addListener(listener);
-        setTimeout(resolve, 15000);
+        setTimeout(resolve, 8000); // 建标签页只为拿登录态，页面没加载完也照样能发请求，不必等满
       });
     }
 
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: async (url, method, headers, bodyB64, options) => {
+      func: async (url, method, headers, bodyB64, options, timeoutMs) => {
         const b64ToBytes = (b64) => {
           const s = atob(b64);
           const arr = new Uint8Array(s.length);
@@ -292,21 +303,31 @@ async function executeRelayJob(job) {
           method,
           headers,
           credentials: 'include', // 始终携带用户 Cookie
-          redirect: options.redirect || 'follow', // 透传 redirect 选项
+          // 页面里拿不到 opaqueredirect 的响应头，manual 等于白跑一轮，统一 follow
+          redirect: options.redirect === 'manual' ? 'follow' : (options.redirect || 'follow'),
         };
         if (bodyB64) init.body = b64ToBytes(bodyB64);
-        const resp = await fetch(url, init);
-        const buf = new Uint8Array(await resp.arrayBuffer());
-        const h = {};
-        resp.headers.forEach((v, k) => { h[k] = v; });
-        return {
-          status: resp.status,
-          headers: h,
-          body_base64: bytesToB64(buf),
-          url: resp.url, // 最终 URL（跟随重定向后）
-        };
+        // 页面内自超时：即便站点把连接吊死，也要抛出错误而不是让整个任务卡到硬超时
+        // （AbortController 在某些受限环境里不存在，存在性判断不能省）
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs || 18000) : null;
+        if (ctrl) init.signal = ctrl.signal;
+        try {
+          const resp = await fetch(url, init);
+          const buf = new Uint8Array(await resp.arrayBuffer());
+          const h = {};
+          resp.headers.forEach((v, k) => { h[k] = v; });
+          return {
+            status: resp.status,
+            headers: h,
+            body_base64: bytesToB64(buf),
+            url: resp.url, // 最终 URL（跟随重定向后）
+          };
+        } finally {
+          clearTimeout(timer);
+        }
       },
-      args: [job.url, job.method, job.headers || {}, job.body_base64 || null, job.options || {}],
+      args: [job.url, job.method, job.headers || {}, job.body_base64 || null, job.options || {}, RELAY_FETCH_TIMEOUT_MS],
     });
 
     const r = results && results[0] && results[0].result;
@@ -324,15 +345,27 @@ async function executeRelayJob(job) {
   }
 }
 
-// 中继轮询主循环
-async function runRelay() {
+// 中继主循环（单轮）：取任务 → 执行 → 回传
+// 若正好有一轮在跑，先等它（避免「刚排队的任务被这轮跳过」），最多等 ~600ms。
+async function runRelayOnce() {
+  for (let i = 0; i < 3 && relayBusy; i++) await sleep(200);
+  if (relayBusy) return { ok: true, count: 0, skipped: true };
+  relayBusy = true;
+  try {
+    return await runRelayRound();
+  } finally {
+    relayBusy = false;
+  }
+}
+
+async function runRelayRound() {
   const { panelUrl, apiKey } = await getConfig();
-  if (!panelUrl || !apiKey) return;
+  if (!panelUrl || !apiKey) return { ok: false, reason: 'noconfig' };
   let jobs;
   try {
     jobs = await fetchRelayJobs(panelUrl, apiKey);
-  } catch {
-    return; // 面板不可达时静默
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) }; // 面板不可达时静默重试
   }
   for (const job of jobs) {
     try {
@@ -351,25 +384,69 @@ async function runRelay() {
       } catch { /* 忽略 */ }
     }
   }
+  return { ok: true, count: jobs.length };
+}
+
+// 中继长轮询「突发」：一轮结束立刻接下一轮，让面板点「执行」后 1 秒内就被领走。
+//
+// 为什么不用 while(true) 常驻循环：① 浏览器可能随时回收 Service Worker，常驻循环早晚会断；
+// ② 若面板侧不支持长轮询（旧版本），常驻循环会变成毫秒级空转打网络。
+// 所以改成「有界突发」：最多 RELAY_BURST_ROUNDS 轮，连续 RELAY_BURST_IDLE 轮没任务就结束；
+// 由 RELAY_ALARM（0.5 分钟）和 popup 的「立即执行」反复拉起，接得上就与常驻无异。
+let relayGen = 0; // 代际令牌：新的突发会作废旧的，避免多份循环并发抢任务
+let relayBusy = false; // 正在处理一轮长轮询（避免并发取同一批任务）
+
+function sleep(ms) {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+function startRelayBurst(opts = {}) {
+  const rounds = opts.rounds || RELAY_BURST_ROUNDS;
+  const idleStop = opts.idleStop || RELAY_BURST_IDLE;
+  const gen = ++relayGen;
+  let idle = 0;
+  (async () => {
+    for (let i = 0; i < rounds; i++) {
+      if (gen !== relayGen) return; // 已被更新的突发取代/已停止
+      let r;
+      try {
+        r = await runRelayOnce();
+      } catch (e) {
+        r = { ok: false, error: String((e && e.message) || e) };
+      }
+      if (gen !== relayGen) return;
+      if (r && r.reason === 'noconfig') return; // 未配置面板地址/Key，不空转
+      if (r && r.count) idle = 0; else idle++;
+      if (idle >= idleStop) return; // 一连几轮都没任务，先歇着，交给下次 alarm
+      await sleep(r && r.ok ? RELAY_GAP_MS : 5000);
+    }
+  })();
+}
+
+// 供 popup / 测试使用：立刻停掉当前突发（不打断正在执行的那一轮）
+function stopRelayBurst() {
+  relayGen++;
 }
 
 // 定时器
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) runJobs();
-  if (alarm.name === RELAY_ALARM) runRelay();
+  if (alarm.name === RELAY_ALARM) startRelayBurst();
 });
 
 // 扩展安装/启动时设置定时器
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: CHECK_INTERVAL_MIN });
   chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
-  // 安装后立即跑一次（方便验证）
+  // 安装后立即跑一次（方便验证），并起一次中继突发
   setTimeout(runJobs, 5000);
+  startRelayBurst();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: CHECK_INTERVAL_MIN });
   chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
+  startRelayBurst();
 });
 
 // Service Worker 每次启动时确保定时器存在（覆盖"重新加载"场景：onInstalled/onStartup 都不触发）
@@ -387,7 +464,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true; // 异步响应
   }
   if (msg && msg.action === 'runRelayNow') {
-    runRelay().then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: String(e) }));
+    // 先同步跑完一轮（已排队的任务立即执行），响应后再转入长轮询突发
+    runRelayOnce()
+      .then((r) => {
+        sendResponse({ ok: true, count: (r && r.count) || 0 });
+        startRelayBurst();
+      })
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true;
+  }
+  if (msg && msg.action === 'stopRelay') {
+    stopRelayBurst();
+    sendResponse({ ok: true });
     return true;
   }
 });

@@ -15,8 +15,20 @@
 // 3. 遇到 WAF 页时模块会明确报错提示重新验证，不会静默失败。
 
 const WAF_MARKS = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中', 'Please enable JavaScript'];
-const SIGNED_MARKS = ['今日已签到', '今日已签', '已经签到', '已完成', '您已完成过此任务', '下期再来', 'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´']; // 后两项为 GBK 被误作 Latin1 解码时的特征
-const SUCCESS_MARKS = ['签到成功', '打卡成功', '恭喜', '获得', '吾爱币', '热心值'];
+// 网宿 WAF 的硬拦截页（实测云端出口 IP 会被这里挡下）：
+//   403 Forbidden ... Client IP: 172.70.x.x eventID: ...403-waf02whc reason:UrlACL
+const BLOCK_RE = /reason:UrlACL|Client IP:\s*[\d.:a-f]+|eventID:\s*\d+-[\d.]+-\d+-waf|Request blocked|Access Denied|403 Forbidden/i;
+// 已签到特征。重点补充「签到完毕」：52pojie 的每日签到任务页在当天领过之后，
+// 按钮文字会变成「签到完毕」，再点没有任何反应（不会报错也不会给提示）。
+// 旧版没有这个词，于是把「已经签到过」误报成「未识别到成功标识」，
+// 面板也因此显示「未签到」——必须按已签到处理。
+const SIGNED_MARKS = [
+  '今日已签到', '今日已签', '已经签到', '已签到', '签到完毕', '签到完成', '已完成签到',
+  '已完成', '您已完成过此任务', '您已完成', '今日任务已完成', '无需重复', '无需再签',
+  '下期再来', '明天再来',
+  'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´', // GBK 被误作 Latin1 解码时的特征
+];
+const SUCCESS_MARKS = ['签到成功', '打卡成功', '恭喜', '获得', '吾爱币', '热心值', '签到完毕'];
 const PAUSED_MARKS = ['暂停签到', '签到暂停', '暂停每日签到', '签到功能维护'];
 const LOGIN_MARKS = ['请先登录', '需要先登录', '请登录后'];
 
@@ -58,7 +70,7 @@ function clean(texts) {
 async function creditSuffix(headers) {
   try {
     const page = await fetchDualText('https://www.52pojie.cn/home.php?mod=spacecp&ac=credit', { headers });
-    assertNoWaf(page);
+    assertNoWaf(page, page.res.status);
     const t = clean(page);
     const pick = (label) => {
       const m = t.match(new RegExp(label + '\\s*[:：]?\\s*(\\d+)'));
@@ -80,13 +92,22 @@ async function creditSuffix(headers) {
 // 从页面里挑出与签到相关的一句话，作为真实网站回馈
 function pickLine(texts) {
   const text = clean(texts);
-  const m = text.match(/[^\s]{0,20}(任务已完成|签到成功|打卡成功|已签到|已经签到|恭喜|下期再来|获得[^\s]{0,10})[^\s]{0,30}/);
+  const m = text.match(/[^\s]{0,20}(任务已完成|签到成功|打卡成功|签到完毕|签到完成|已签到|已经签到|恭喜|下期再来|明天再来|获得[^\s]{0,10})[^\s]{0,30}/);
   return (m ? m[0] : text.slice(0, 120)).trim();
 }
 
-function assertNoWaf(texts) {
+// status 可选：HTTP 403 直接判定为被拦截，不用靠猜页面文本
+function assertNoWaf(texts, status) {
   if (has(texts, WAF_MARKS)) {
     throw new Error('遇到安全验证（WAF）：请用浏览器打开 www.52pojie.cn 完成滑块/安全验证，然后重新复制完整 Cookie（含 wzws_cid）到面板');
+  }
+  const all = ((texts && texts.utf8) || '') + '\n' + ((texts && texts.gbk) || '');
+  if (Number(status) === 403 || BLOCK_RE.test(all)) {
+    throw new Error(
+      '网站安全防护拦截（HTTP 403 / 网宿 UrlACL）：\n' +
+        '· 若为「云端」执行：Cloudflare 出口 IP 已被该站封禁（52pojie 只放行家庭宽带 IP），请把此账号切到「本地网络」。\n' +
+        '· 若为「本地网络」执行：请先在浏览器打开 www.52pojie.cn 完成滑块/安全验证，再重新获取 Cookie。'
+    );
   }
 }
 
@@ -107,7 +128,7 @@ export const wuaipojie = {
     const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中'];
     if (WAF.some((m) => all.includes(m))) return { ok: false, message: '遇到安全验证（WAF）：请在浏览器中打开 www.52pojie.cn 完成验证后重试' };
     if (/任务已完成|签到成功|打卡成功|恭喜.*获得/.test(all)) return { ok: true, message: '签到成功' };
-    if (/今日已签到|已经签到|下期再来/.test(all)) return { ok: true, message: '今日已签到，无需重复' };
+    if (/今日已签到|已经签到|已签到|签到完毕|签到完成|下期再来|明天再来|无需重复/.test(all)) return { ok: true, message: '今日已签到，无需重复' };
     if (/需要先登录|请先登录/.test(all)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
     return { ok: false, message: '未识别到成功标识，页面标题：' + (document.title || '未知') };
   }`,
@@ -146,7 +167,7 @@ export const wuaipojie = {
     // ① 预检首页
     // 注：中继模式下 runner.js 会透明替换 global fetch，站点代码无需改动
     const home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
-    assertNoWaf(home);
+    assertNoWaf(home, home.res.status);
     if (has(home, PAUSED_MARKS)) {
       throw new Error('论坛官方暂停签到（开放注册期间），等恢复后再试');
     }
@@ -165,7 +186,7 @@ export const wuaipojie = {
     const redirectMode = ctx && ctx.relayDb ? 'follow' : 'manual';
     for (let i = 0; i < 4; i++) {
       const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: redirectMode });
-      assertNoWaf({ utf8, gbk });
+      assertNoWaf({ utf8, gbk }, res.status);
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers.get('location') || res.headers.get('Location');
         if (!loc) throw new Error('签到失败：重定向无 Location');
@@ -188,6 +209,9 @@ export const wuaipojie = {
     if (has(final, LOGIN_MARKS)) {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
     }
-    throw new Error('签到失败：未识别到成功标识，' + final.utf8.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 160));
+    throw new Error(
+      `签到失败：未识别到成功标识（HTTP ${final.status}），` +
+        pickText(final).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 160)
+    );
   },
 };

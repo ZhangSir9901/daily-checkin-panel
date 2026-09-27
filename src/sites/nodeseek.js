@@ -102,6 +102,10 @@ export const nodeseek = {
       if (/challenge-platform|cf-chl|just a moment|__cf_chl/i.test(text)) {
         fail('网站人机验证拦截，稍后重试', detail);
       }
+      // 被跳到「IPv6 未启用」提示页（warning.nodeseek.com）：云端出口没有 IPv6，本机网络才有
+      if (/warning\.nodeseek\.com|ipv6-is-disabled/i.test(finalUrl + ' ' + text)) {
+        fail('NodeSeek 要求 IPv6：本机网络才有 IPv6，请把此账号切到「本地网络」执行（需浏览器扩展在线）', detail);
+      }
       if (bounced || /signIn\.html|立即登录/.test(text)) {
         fail('网站没认出登录信息，请重新获取 Cookie', detail);
       }

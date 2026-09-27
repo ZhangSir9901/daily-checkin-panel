@@ -54,7 +54,9 @@ await t('hutue：首页无线索时用兜底 action', async () => {
   const r = await hutue.run({ site_url: 'https://hutue.cn', cookie: 'c=x' }, { meta: {} });
   assert.equal(r.ok, true);
   const post = calls.find((c) => c.method === 'POST');
-  assert.match(post.body, /action=user_qiandao/);
+  // 实测：首页内联脚本只给 ajaxurl、不写 action 名（真正的处理器在 xb-app.js），
+  // 所以兜底顺序首位应该是 xb_user_qiandao，否则每次都要白打一个请求
+  assert.match(post.body, /action=xb_user_qiandao/);
 });
 
 // ---------- 3. 今日已签到 ----------
@@ -146,6 +148,39 @@ await t('judgeSigninResponse：成功/已签/登录失效/线索不足', async (
   assert.equal(bad.result.outcome, 'need_login');
   const unclear = judgeSigninResponse('{"success":false,"data":{"msg":"无效的请求"}}', 200);
   assert.equal(unclear.done, false);
+});
+
+// ---------- 11. 回归：首页带「请先登录」字样但其实是登录态 → 不得误报 Cookie 失效 ----------
+// 线上真实踩坑：RiPro 首页的登录弹窗/内联脚本里就带「请先登录」「登录后查看」「wp-login.php」，
+// 旧逻辑只看这些字样 + 没有 admin-ajax 字样，就把刚复制的**新鲜 Cookie** 判成失效。
+await t('hutue：首页含「请先登录」文案但已有登录态 → 不误报 Cookie 失效', async () => {
+  const HOME = '<html><body><div id="wpadminbar">你好，xxx</div>'
+    + '<div class="login-modal">请先登录后查看内容</div>'
+    + '<script>jQuery("#login").on("click",function(){location.href="/wp-login.php"});</script>'
+    + '<script>var t={"ajaxurl":"\\/wp-admin\\/admin-ajax.php"};jQuery.post(t.ajaxurl,{action:"user_qiandao"},function(r){})</script>'
+    + '</body></html>';
+  const calls = mock((u) => {
+    if (u === 'https://dj.hutue.cn/') return { body: HOME };
+    if (u.includes('admin-ajax.php')) return { body: JSON.stringify({ status: 1, msg: '签到成功，获得 5 积分' }) };
+    return { throw: 'unexpected ' + u };
+  });
+  const r = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'fresh=1' }, { meta: {} });
+  assert.equal(r.ok, true);
+  assert.match(r.message, /签到成功/);
+  assert.ok(calls.some((c) => c.method === 'POST'), '应真的去打了签到接口');
+});
+
+// 反过来：真的是登录页（有 loginform 表单）时，仍要明确报失效
+await t('hutue：首页真的是登录表单 → 报 Cookie 失效', async () => {
+  mock((u) => {
+    if (u === 'https://dj.hutue.cn/') {
+      return { body: '<html><form id="loginform" action="https://dj.hutue.cn/wp-login.php" method="post"><input name="log"><input name="pwd"></form></html>' };
+    }
+    return { body: '[]' };
+  });
+  const err = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'bad' }, { meta: {} }).catch((e) => e);
+  assert.match(err.message, /Cookie 已失效/);
+  assert.match(err.detail, /网站返回/);
 });
 
 console.log(`\n${n} 组通过`);

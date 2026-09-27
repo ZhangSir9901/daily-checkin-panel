@@ -14,6 +14,38 @@ export function tzParts(date, tz) {
   return { day: `${p.year}-${p.month}-${p.day}`, hour: p.hour, minute: p.minute };
 }
 
+// 当前（指定时区，默认 Asia/Shanghai）的日期 "YYYY-MM-DD"。
+// 用于「状态」列的跨零点自动重置：过了当地 00:00 就算新的一天，
+// 全部账号重新显示「未签到」，只有当天真正签到成功才变回「已签到」。
+export function dayInTz(date, tz) {
+  try {
+    return tzParts(date, tz || 'Asia/Shanghai').day;
+  } catch {
+    return tzParts(date, 'Asia/Shanghai').day;
+  }
+}
+
+// 指定时区相对 UTC 的偏移（毫秒）。做法：把当地墙上时间当 UTC 解析，
+// 再减去真实时刻（截到分钟 —— 格式化只精确到分钟）。
+function tzOffsetMs(date, tz) {
+  let p;
+  try {
+    p = tzParts(date, tz || 'Asia/Shanghai');
+  } catch {
+    p = tzParts(date, 'Asia/Shanghai');
+  }
+  const wall = Date.parse(`${p.day}T${p.hour}:${p.minute}:00Z`);
+  const real = Math.floor(date.getTime() / 60000) * 60000;
+  return wall - real;
+}
+
+// 指定时区「今天 00:00」的时间戳（毫秒）。
+// 用于判断某条运行记录是否属于「今天」——跟状态列的跨零点重置口径一致。
+export function dayStartInTz(date, tz) {
+  const day = dayInTz(date, tz);
+  return Date.parse(`${day}T00:00:00Z`) - tzOffsetMs(date, tz);
+}
+
 // now: Date；timeHH: "08"；tz: IANA；lastKey: 上次执行 key（"YYYY-MM-DD HH"）
 // 返回 { run, key }：run 为 true 表示本小时应该执行。
 export function shouldRun(now, timeHHMM, tz, lastKey) {

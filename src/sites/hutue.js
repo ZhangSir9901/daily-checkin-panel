@@ -20,8 +20,12 @@ import { classifySignal, OUTCOME } from '../lib/signals.js';
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
-// 兜底 action 名（发现阶段没找到线索时才用）
-const FALLBACK_ACTIONS = ['user_qiandao', 'xb_user_qiandao', 'qiandao', 'user_checkin'];
+// 兜底 action 名（发现阶段没找到线索时才用）。
+// 顺序按实测命中率排：dj.hutue.cn / hutue.cn 用的是 xb-child 子主题，
+// 签到按钮 <a class="click-qiandao zzhuti_qd_1"> 的处理器在 xb-app.js：
+//   $.post(caozhuti.ajaxurl, { action: "xb_user_qiandao" }, ...) → 1 == n.status 为成功
+// 首页内联脚本里虽然有 ajaxurl，但不会写出 action 名，所以这个兜底顺序很重要（少打一次无用请求）。
+const FALLBACK_ACTIONS = ['xb_user_qiandao', 'user_qiandao', 'qiandao', 'user_checkin'];
 const MAX_ATTEMPTS = 6; // 最多打几次，避免把站点打烦
 
 function normBase(u) {
@@ -197,15 +201,32 @@ export const hutue = {
       nonce = d.nonce;
 
       // 首页本身若是验证码/登录页，直接给出明确结论，不再瞎试
+      const snippet = '网站返回：' + String(html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
       const sig = classifySignal(html, { status: res.status });
-      if (sig.outcome === OUTCOME.CAPTCHA) {
+      // 只有「页面明显不是正常主题页」时才认作拦截页：
+      // 正常首页会加载 /wp-content/themes/... 资源，而验证码/WAF 插页不会。
+      // 否则主题里一个叫「滑块」的轮播组件就能把正常签到吓回去。
+      const looksLikeThemePage = /wp-content\/(themes|plugins)/i.test(html);
+      if (sig.outcome === OUTCOME.CAPTCHA && !looksLikeThemePage) {
         const e = new Error('站点要求人机验证，请在浏览器完成验证后重新获取 Cookie');
         e.outcome = OUTCOME.CAPTCHA;
+        e.detail = snippet;
         throw e;
       }
-      if (/wp-login\.php|请先登录|登录后查看/.test(html) && !/wp-admin\/admin-ajax\.php/.test(html)) {
+      // 「登录已失效」必须确凿才能下结论。
+      // 踩过的坑：RiPro 首页的登录弹窗/内联脚本里就带「请先登录」「登录后查看」「wp-login.php」，
+      // 只看这些字样会把刚刚登录的账号误判成 Cookie 失效（实测：新鲜 Cookie 被报失效）。
+      // 现在的判据：页面里真的有登录表单（loginform / name=log+name=pwd / form action 指 wp-login.php），
+      // 并且没有任何「已登录」痕迹（admin bar / 退出登录 / wp-admin 脚本）。
+      const loginForm =
+        /id=["']loginform["']/i.test(html) ||
+        (/name=["']log["']/i.test(html) && /name=["']pwd["']/i.test(html)) ||
+        /<form[^>]+action=["'][^"']*wp-login\.php/i.test(html);
+      const loggedInHint = /wpadminbar|wp-admin-bar|action=logout|退出登录/i.test(html);
+      if (loginForm && !loggedInHint) {
         const e = new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
         e.outcome = OUTCOME.NEED_LOGIN;
+        e.detail = snippet;
         throw e;
       }
     } catch (e) {

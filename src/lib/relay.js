@@ -41,12 +41,18 @@ export async function queueRelayJob(db, { url, method = 'GET', headers = {}, bod
 }
 
 // 等待中继结果（轮询 D1），返回 { status, headers, body: Uint8Array, url }，超时抛错
-export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 2000) {
+// 轮询间隔调小（300ms），配合扩展端的长轮询：任务被领走后通常 1 秒内就能拿到结果
+// timeoutMs 也要覆盖「扩展多等一轮长轮询」的最坏情况。
+export async function waitRelayResult(db, jobId, timeoutMs = 60000, pollMs = 300) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const job = await db.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(jobId).first();
     if (!job) throw new Error('中继任务不存在');
-    if (job.status === 'failed') throw new Error('本地网络执行失败：' + (job.error || '未知错误'));
+    if (job.status === 'failed') {
+      const err = new Error('本地网络执行失败：' + (job.error || '未知错误'));
+      err.outcome = 'relay';
+      throw err;
+    }
     if (job.status === 'done') {
       let respUrl = '';
       try {
@@ -63,7 +69,7 @@ export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 200
     }
     await sleep(pollMs);
   }
-  throw new Error('等待本地网络响应超时（扩展可能未运行或未配置 API Key）');
+  throw new Error('等待本地网络响应超时：扩展没有在 ' + Math.round(timeoutMs / 1000) + ' 秒内回传（扩展可能休眠、被关闭，或未配置 API Key）');
 }
 
 // 模拟 fetch 的中继版本：在用户本地网络中执行 HTTP 请求
@@ -78,12 +84,15 @@ export async function relayFetch(db, url, init = {}) {
     options: { redirect: init.redirect },
   });
   const { status, headers, body, url: finalUrl } = await waitRelayResult(db, jobId);
+  const headerBag = {};
+  for (const k of Object.keys(headers || {})) headerBag[k.toLowerCase()] = headers[k];
   return {
     status,
+    // 大小写不敏感的头访问（站点模块里 res.headers.get('Location')/'location' 都能拿到）
     headers: {
       get: (name) => {
-        const k = Object.keys(headers).find((h) => h.toLowerCase() === String(name).toLowerCase());
-        return k ? headers[k] : null;
+        const k = String(name).toLowerCase();
+        return k in headerBag ? headerBag[k] : null;
       },
     },
     url: finalUrl || url,

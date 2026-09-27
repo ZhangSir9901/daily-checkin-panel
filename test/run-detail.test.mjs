@@ -128,4 +128,47 @@ await t('runner：抛错时 e.detail 也写入 runs', async () => {
   assert.match(args[5] || '', /网站返回/, '失败时 detail 也应写入');
 });
 
+// ---- runner：本地网络中继（长轮询版）不应该再给消息加 [中继] 前缀 ----
+// 线上现象：NodeSeek 的日志显示「[中继] 今日已签到，不能重复签到」，用户不想要这个内部标记。
+function fakeDbRelay() {
+  const inserted = [];
+  const now = Date.now();
+  const body = Buffer.from(JSON.stringify({ success: false, message: '今天已完成签到，请勿重复操作' }), 'utf8').toString('base64');
+  return {
+    inserted,
+    prepare(sql) {
+      const stmt = {
+        _args: [],
+        bind(...args) { stmt._args = args; return stmt; },
+        async run() {
+          if (/INSERT INTO runs/i.test(sql)) inserted.push({ sql, args: stmt._args });
+          return {};
+        },
+        async all() { return { results: [] }; },
+        async first() {
+          if (/FROM settings/i.test(sql)) return { value: String(now) }; // relay_last_poll → 扩展在线
+          if (/FROM relay_jobs/i.test(sql)) {
+            return { status: 'done', resp_status: 200, resp_headers: '{}', resp_body: body };
+          }
+          return null;
+        },
+      };
+      return stmt;
+    },
+    async batch() { return []; },
+  };
+}
+
+await t('runner：中继模式的消息不带 [中继] 前缀，且站点拿得到 ctx.relayDb', async () => {
+  const db = fakeDbRelay();
+  const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
+  const credsEnc = await encryptJSON(env, db, { cookie: 'a=1' });
+  const account = { id: 9, site: 'nodeseek', name: 'NS中继', creds: credsEnc, meta: '{"execution":"relay"}', enabled: 1 };
+  const r = await runAccount(env, account);
+  assert.equal(r.status, 'ok');
+  assert.doesNotMatch(r.message, /\[中继\]/, '消息里不应再出现 [中继]，实际：' + r.message);
+  assert.match(r.message, /已签到/);
+  assert.equal(db.inserted.length, 1);
+});
+
 console.log(`\n${n} 组通过`);
