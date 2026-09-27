@@ -169,15 +169,37 @@ export const wuaipojie = {
 
     // 超时后的验证：如果签到请求超时/中继失败，可能是请求实际成功但响应没回来，
     // 去任务页看一眼有没有「签到完毕」，有就按已签到处理，避免误报失败。
+    // 查两个页面：apply 页（直接结果）+ task 列表页（按钮状态是铁证）
     const verifySigned = async () => {
-      try {
-        const v = await fetchDualText('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2', { headers: baseHeaders });
+      const checkPage = (v) => {
         if (has(v, SIGNED_MARKS)) return true;
-        // 按钮文字「签到完毕」是已签到的铁证（见用户截图）
         const t = clean(v);
         if (/签到完毕/.test(t)) return true;
+        // 任务列表页：找 id=2 任务行的按钮文字
+        const raw = pickText(v);
+        const taskRow = raw.match(/id=2[\s\S]{0,500}/i);
+        if (taskRow && /签到完毕|已完成|已领取/.test(taskRow[0])) return true;
+        return false;
+      };
+      try {
+        const v = await fetchDualText('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2', { headers: baseHeaders });
+        if (checkPage(v)) return true;
+      } catch { /* 忽略，继续查列表页 */ }
+      try {
+        const v = await fetchDualText('https://www.52pojie.cn/home.php?mod=task', { headers: baseHeaders });
+        if (checkPage(v)) return true;
       } catch { /* 验证失败则忽略 */ }
       return false;
+    };
+
+    // Discuz showmessage 的消息藏在 <script> 里，clean() 会把它删掉。
+    // 这里单独从原始 HTML（含 script）里提取消息文本，用于判定。
+    const extractShowMessage = (texts) => {
+      const raw = pickText(texts);
+      const m = raw.match(/showmessage\(['"]([^'"]{2,100})['"]/i)
+        || raw.match(/<div[^>]*class=["'].*?(?:msg|message|alert).*?["'][^>]*>([\s\S]{2,200}?)<\/div>/i);
+      if (m) return m[1].replace(/<[^>]+>/g, ' ').replace(/\\n/g, ' ').trim();
+      return '';
     };
 
     // ① 预检首页：**只看 WAF**。
@@ -239,6 +261,17 @@ export const wuaipojie = {
     if (!final) throw new Error('签到失败：重定向次数过多');
 
     // 判定只看签到页（home.php?mod=task）——这页的文字都是任务本身的，不会被帖子标题污染
+    // 先查 showmessage 弹窗（Discuz 的成功/失败提示藏在 <script> 里，clean 会删掉）
+    const showMsg = extractShowMessage(final);
+    if (showMsg) {
+      const smTexts = { utf8: showMsg, gbk: showMsg };
+      if (has(smTexts, SUCCESS_MARKS)) {
+        return { ok: true, message: '签到成功：' + showMsg, detail: '网站返回：' + showMsg };
+      }
+      if (has(smTexts, SIGNED_MARKS)) {
+        return { ok: true, message: '今日已签到，无需重复：' + showMsg, detail: '网站返回：' + showMsg };
+      }
+    }
     const finalText = pickText(final);
     const hasLoginForm = /name=["']loginform["']/i.test(finalText) || /action=["'][^"']*logging\.php/i.test(finalText);
     if (hasLoginForm && !has(final, SIGNED_MARKS) && !has(final, SUCCESS_MARKS)) {
@@ -277,6 +310,13 @@ export const wuaipojie = {
       // draw 失败不致命，继续用 apply 的结果报错
       if (/WAF|安全验证|403|UrlACL/.test(e.message || '')) throw e;
     }
+    // 最后一道兜底：页面解析不出结论时，直接查任务实际状态（按钮是不是"签到完毕"）
+    // 避免"网站其实已签到，面板却报未签到"的情况
+    try {
+      if (await verifySigned()) {
+        return { ok: true, message: '今日已签到，无需重复（任务页验证确认：签到完毕）' };
+      }
+    } catch { /* 忽略，走下面的报错 */ }
     // 诊断：记录页面关键特征，帮助排查为什么没识别到
     const diag = [];
     const diagText = pickText(final);
