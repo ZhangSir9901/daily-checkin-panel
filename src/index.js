@@ -221,6 +221,23 @@ async function handleApi(req, env, url) {
           if (creds.csrf_token) params.csrf_token = String(creds.csrf_token);
         } catch { /* 忽略 */ }
       }
+      if (acc.site === 'v2board') {
+        try {
+          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
+          params.domain = String(creds.domain || '').trim();
+          params.email = String(creds.email || '').trim();
+          params.password = String(creds.password || '');
+          if (params.domain) {
+            try { domain = new URL(params.domain.startsWith('http') ? params.domain : 'https://' + params.domain).hostname; } catch { /* 忽略 */ }
+          }
+        } catch { /* 忽略 */ }
+      }
+      if (acc.site === 'akile') {
+        try {
+          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
+          params.token = String(creds.token || '').trim();
+        } catch { /* 忽略 */ }
+      }
       if (!domain) continue; // 没有目标域名无法执行
       jobs.push({
         account_id: acc.id,

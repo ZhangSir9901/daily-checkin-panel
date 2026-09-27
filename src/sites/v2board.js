@@ -26,7 +26,6 @@ export const v2board = {
   id: 'v2board',
   name: 'V2Board 机场',
   desc: 'V2Board 面板机场每日签到领流量。填机场域名 + 注册邮箱 + 密码，面板自动登录签到。',
-  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     {
       key: 'domain',
@@ -88,5 +87,46 @@ export const v2board = {
     }
     if (/已签到|已经签到|签到过/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
     throw new Error('签到失败：' + (msg || `ret=${chk && chk.ret}`));
+  },
+
+  // 浏览器端签到脚本：在用户浏览器中运行，使用用户本地网络（绕过 CF IP 限制）
+  execution: 'browser', // 改为默认浏览器执行（CF 网络不稳定）
+  domain: 'china_69yun.337979.xyz', // 浏览器执行时的目标域名（动态从 params.domain 覆盖）
+  browserScript: {
+    script: async (params) => {
+      const domain = String(params.domain || '').replace(/\/+$/, '');
+      if (!domain) return { ok: false, message: '未配置机场域名' };
+      const base = domain.startsWith('http') ? domain : 'https://' + domain;
+      // 1. 登录（表单提交）
+      const form = new URLSearchParams({
+        email: params.email || '',
+        password: params.password || '',
+        passwd: params.password || '',
+        remember_me: '1',
+        code: '',
+      });
+      const loginRes = await fetch(`${base}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+        credentials: 'include',
+      });
+      const login = await loginRes.json().catch(() => null);
+      if (!login || login.ret !== 1) {
+        return { ok: false, message: '登录失败：' + ((login && login.msg) || '未知错误') };
+      }
+      // 2. 签到
+      const chkRes = await fetch(`${base}/user/checkin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        credentials: 'include',
+      });
+      const chk = await chkRes.json().catch(() => null);
+      const msg = String((chk && chk.msg) || '');
+      if (chk && chk.ret === 1) return { ok: true, message: `签到成功：${msg || '领取成功'}` };
+      if (/已签到|已经签到|签到过/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
+      return { ok: false, message: '签到失败：' + (msg || `ret=${chk && chk.ret}`) };
+    },
   },
 };

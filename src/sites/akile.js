@@ -81,7 +81,6 @@ export const akile = {
   id: 'akile',
   name: 'AkileCloud',
   desc: 'Akile 云服务器每日签到，奖励 1~10 AK币。token 方式签到：浏览器登录 akile.ai 后复制 akile-token，面板自动续期。',
-  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     {
       key: 'token',
@@ -125,5 +124,33 @@ export const akile = {
     }
     if (msg.includes('已签到')) return { ok: true, message: '今日已签到，无需重复' };
     throw new Error('签到失败：' + (msg || `status_code=${chk.body.status_code}`));
+  },
+
+  // 浏览器端签到脚本：在用户浏览器中运行，使用用户本地网络（绕过 CF IP 限制）
+  execution: 'browser', // 改为默认浏览器执行（CF 到 akile 网络不稳定）
+  domain: 'api.akile.ai', // 浏览器执行时的目标域名
+  browserScript: {
+    script: async (params) => {
+      const token = String(params.token || '').trim();
+      if (!token) return { ok: false, message: '请先填写 akile-token' };
+      const res = await fetch('https://api.akile.ai/api/v1/user/Checkin', {
+        headers: { 'Authorization': token, 'Accept': 'application/json' },
+        credentials: 'include',
+      });
+      const body = await res.json().catch(() => null);
+      if (!body) return { ok: false, message: `接口异常（HTTP ${res.status}），稍后重试` };
+      const okCode = (c) => c === 0 || c === 200 || c === '0' || c === '200';
+      const msg = String(body.status_msg || '');
+      if (okCode(body.status_code)) {
+        const d = body.data || {};
+        const amount = d.amount ?? d.akCoin ?? d.coin ?? '';
+        return { ok: true, message: amount ? `签到成功，获得 ${amount} AK币` : `签到成功：${msg || '领取成功'}` };
+      }
+      if (/过期|无效|未登录|unauthorized|token/i.test(msg) || res.status === 401) {
+        return { ok: false, message: '登录已过期，请重新从浏览器复制 akile-token' };
+      }
+      if (msg.includes('已签到')) return { ok: true, message: '今日已签到，无需重复' };
+      return { ok: false, message: '签到失败：' + (msg || `status_code=${body.status_code}`) };
+    },
   },
 };
