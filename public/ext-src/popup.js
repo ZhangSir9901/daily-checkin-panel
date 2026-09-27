@@ -117,4 +117,15 @@ $('btn-run-now').onclick = async () => {
   }
 };
 
+// 立即处理中继任务（调试用）
+$('btn-relay-now').onclick = async () => {
+  status('正在获取中继任务…', '');
+  try {
+    await chrome.runtime.sendMessage({ action: 'runRelayNow' });
+    status('已触发中继处理，请稍后在面板查看日志', 'ok');
+  } catch (e) {
+    status('触发失败：' + (e.message || e), 'err');
+  }
+};
+
 init();

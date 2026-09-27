@@ -291,4 +291,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     runJobs().then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true; // 异步响应
   }
+  if (msg && msg.action === 'runRelayNow') {
+    runRelay().then(() => sendResponse({ ok: true })).catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
 });

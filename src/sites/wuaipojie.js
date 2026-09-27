@@ -114,8 +114,10 @@ export const wuaipojie = {
     // ② 签到（手动跟随重定向，最多 3 跳）
     let url = 'https://www.52pojie.cn/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php';
     let final = null;
+    // 中继模式下无法使用 redirect:'manual'（opaqueredirect 响应头不可读），改用 follow 让浏览器自动跟随
+    const redirectMode = ctx.relayDb ? 'follow' : 'manual';
     for (let i = 0; i < 4; i++) {
-      const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: 'manual' });
+      const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: redirectMode });
       assertNoWaf({ utf8, gbk });
       if (res.status >= 300 && res.status < 400) {
         const loc = res.headers.get('location') || res.headers.get('Location');

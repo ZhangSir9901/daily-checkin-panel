@@ -284,6 +284,29 @@ async function handleApi(req, env, url) {
     return json({ jobs });
   }
 
+  // ---- 诊断：中继队列状态（需要登录） ----
+  if (path === '/api/diag/relay' && method === 'GET') {
+    const user = await requireAuth(req, env);
+    if (!user) return json({ error: '未登录' }, 401);
+    try {
+      const { results: pending } = await env.DB.prepare(
+        "SELECT id, url, method, status, created_at FROM relay_jobs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10"
+      ).all();
+      const { results: recent } = await env.DB.prepare(
+        "SELECT id, url, method, status, created_at FROM relay_jobs ORDER BY created_at DESC LIMIT 10"
+      ).all();
+      const lastPoll = await getSetting(env.DB, 'relay_last_poll');
+      return json({
+        pending: pending || [],
+        recent: recent || [],
+        last_poll: lastPoll ? new Date(Number(lastPoll)).toISOString() : null,
+        last_poll_ago_sec: lastPoll ? Math.floor((Date.now() - Number(lastPoll)) / 1000) : null,
+      });
+    } catch (e) {
+      return json({ error: '查询失败: ' + e.message }, 500);
+    }
+  }
+
   // ---- 本地网络中继代理 ----
   // Worker 把 HTTP 请求存入队列，浏览器扩展用用户本地网络执行后回传响应。
   // 适用于：站点逻辑复杂、希望逻辑保留在 Worker，但需要用户本地 IP 的场景。
