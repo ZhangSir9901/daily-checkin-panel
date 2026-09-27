@@ -67,4 +67,35 @@ await t('空步骤抛错', async () => {
   await assert.rejects(runHttpSteps([]), /至少需要一个步骤/);
 });
 
+// ---- 统一网站反馈识别（signals.js 接入后）----
+await t('返回登录页时给出可操作提示，而不是只说“不包含期望内容”', async () => {
+  mockFetch(() => ({ body: '<html>请先登录后重试</html>' }));
+  await assert.rejects(
+    runHttpSteps([{ name: '签到', url: 'https://a.com/x', expect_contains: 'success' }]),
+    /登录已失效/
+  );
+});
+
+await t('验证码页给出人机验证提示', async () => {
+  mockFetch(() => ({ body: '<div class="slide-verify">请完成滑动验证</div>' }));
+  await assert.rejects(
+    runHttpSteps([{ name: '签到', url: 'https://a.com/x', expect_contains: 'success' }]),
+    /人机验证/
+  );
+});
+
+await t('今日已签到不算失败（即使状态码非期望）', async () => {
+  mockFetch(() => ({ status: 403, body: '<html>今日已签到，请勿重复</html>' }));
+  const r = await runHttpSteps([{ name: '签到', url: 'https://a.com/x' }]);
+  assert.equal(r.ok, true);
+});
+
+await t('状态码不符且无明确结论时，保留原始报错文案', async () => {
+  mockFetch(() => ({ status: 500, body: 'boom' }));
+  await assert.rejects(
+    runHttpSteps([{ name: '签到', url: 'https://a.com/x' }]),
+    /状态码 500，期望 200/
+  );
+});
+
 console.log(`\n${n} 组通过`);

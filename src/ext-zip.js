@@ -103,6 +103,8 @@ export function buildZip(files) {
 }
 
 // 从嵌入的源文件读取，注入面板地址，打包返回（不依赖 ASSETS 或自请求）
+// 注意：只注入面板地址；API Key 仍由用户去面板设置页复制后手动填入扩展，
+// 避免 Key 随下载文件传播，也方便随时在面板里换 Key。
 export async function handleExtZip(req, env) {
   const url = new URL(req.url);
   const origin = url.origin; // 当前面板地址，如 https://xxx.workers.dev
@@ -116,7 +118,7 @@ export async function handleExtZip(req, env) {
       return new Response('扩展源文件缺失：' + name, { status: 500 });
     }
     if (name === 'popup.js' || name === 'background.js') {
-      // 替换所有占位符
+      // 替换所有占位符（仅面板地址）
       text = text.split('__PANEL_URL__').join(origin);
     }
     files.push({ name, data: te.encode(text) });

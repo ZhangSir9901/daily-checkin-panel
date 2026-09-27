@@ -23,7 +23,8 @@ t('原始字符串为空报错', () => {
 
 t('从请求头文本提取', () => {
   const txt = 'GET / HTTP/1.1\nHost: www.nodeseek.com\nCookie: a=1; b=2\nUser-Agent: x';
-  assert.equal(extractCookieFromHeaders(txt), 'a=1; b=2');
+  // 同时带回 UA，便于吾爱等需要 UA 与 Cookie 配对的站点直接填入
+  assert.deepEqual(extractCookieFromHeaders(txt), { cookie: 'a=1; b=2', userAgent: 'x' });
 });
 
 t('请求头无 Cookie 报错', () => {

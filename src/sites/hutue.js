@@ -1,14 +1,28 @@
 // 糊涂鳄资源站每日签到（hutue.cn / dj.hutue.cn，WordPress + RiPro 主题）
-// 流程（来源：2026-09-27 抓包 dj.hutue.cn）：
-// ① POST https://dj.hutue.cn/wp-admin/admin-ajax.php（带登录 Cookie）
-//    参数：action=user_qiandao（首页按钮）或 action=xb_user_qiandao（用户中心）
-//    → 返回 JSON：{status: 1, msg: "签到成功..."} = 成功；status 非 1 = 失败/已签到（看 msg）
-// ② 若返回登录相关提示 = Cookie 失效
+// ---------------------------------------------------------------------------
+// 关键发现（2026-09-27）：这两个站登录后，页面右侧会挂一个「签到」悬浮窗。
+// 悬浮窗不是简单的固定链接，而是主题自带的 AJAX 组件——不同 RiPro 版本/魔改版
+// 用的 action 名并不统一（user_qiandao / xb_user_qiandao / 甚至自定义），
+// 有的还要求带一个 nonce。靠硬编码 action 名会随主题升级随时失效。
 //
-// 注意：
-// 1. WordPress 登录 Cookie 为 wordpress_logged_in_xxx 等 HttpOnly，需用扩展抓取。
-// 2. 有 hutue.cn 和 dj.hutue.cn 两个站，账号里填 site_url 区分。
-// 3. 默认浏览器扩展执行（用户本地网络）。
+// 因此本模块改为「先发现、再执行」：
+//   ① 用登录 Cookie 抓一次站点首页，从 HTML/内联 JS 里找出：
+//        - ajax 入口（ajaxurl / ajax_url）
+//        - 候选 action（形如 action:'xxx_qiandao' / data-action="qiandao"，
+//          以及页面里出现的 /wp-json/...qiandao... 路由）
+//        - 可能的 nonce
+//   ② 先试「发现到的 action」，再兜底常见 action；nonce 有就带着，失败再试不带
+//   ③ 用统一的网站反馈识别器（signals.js）判定成功/已签/登录失效/验证码
+//
+// 这样悬浮窗换了 action 名也能自动跟上，不需要改代码。
+
+import { classifySignal, OUTCOME } from '../lib/signals.js';
+
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+
+// 兜底 action 名（发现阶段没找到线索时才用）
+const FALLBACK_ACTIONS = ['user_qiandao', 'xb_user_qiandao', 'qiandao', 'user_checkin'];
+const MAX_ATTEMPTS = 6; // 最多打几次，避免把站点打烦
 
 function normBase(u) {
   let s = String(u || '').trim();
@@ -17,63 +31,117 @@ function normBase(u) {
   return s.replace(/\/+$/, '');
 }
 
+function absolutize(u, base) {
+  const s = String(u || '').trim().replace(/\\\//g, '/');
+  if (!s) return '';
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith('//')) return 'https:' + s;
+  if (s.startsWith('/')) return base + s;
+  return base + '/' + s;
+}
+
+function tryJson(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+// ---------- ① 从首页发现签到接口 ----------
+// 返回 { ajaxUrl, actions: [], routes: [], nonce }
+export function discoverSignin(base, html) {
+  const out = { ajaxUrl: '', actions: [], routes: [], nonce: '' };
+
+  const ajax = String(html || '').match(/["']?(?:ajaxurl|ajax_url|adminAjax)["']?\s*[:=]\s*["']([^"']+)["']/i);
+  if (ajax) out.ajaxUrl = absolutize(ajax[1], base);
+
+  // action:'user_qiandao' / action: "xb_user_qiandao" / data-action="qiandao"
+  const actionRe = /(?:action|do|type)\s*[:=]\s*["']([A-Za-z0-9_-]*(?:qiandao|checkin|check_in|signin|sign_in)[A-Za-z0-9_-]*)["']/gi;
+  for (const m of String(html || '').matchAll(actionRe)) {
+    if (m[1] && !out.actions.includes(m[1])) out.actions.push(m[1]);
+  }
+  const dataActionRe = /data-(?:action|do)\s*=\s*["']([A-Za-z0-9_-]*(?:qiandao|checkin|sign)[A-Za-z0-9_-]*)["']/gi;
+  for (const m of String(html || '').matchAll(dataActionRe)) {
+    if (m[1] && !out.actions.includes(m[1])) out.actions.push(m[1]);
+  }
+  // 站内出现的中文关键词附近若带引号标识符，也收进来（如 'sign': 'qiandao'）
+  const looseRe = /["']([A-Za-z0-9_-]{3,40})["']\s*:\s*["']([A-Za-z0-9_-]*(?:qiandao|checkin|signin)[A-Za-z0-9_-]*)["']/gi;
+  for (const m of String(html || '').matchAll(looseRe)) {
+    if (m[2] && !out.actions.includes(m[2])) out.actions.push(m[2]);
+  }
+
+  // REST 路由线索：/wp-json/xxx/qiandao（绝对或站内相对路径都要能识别）
+  const routeRe = /["']([^"'\s]*wp-json[^"'\s]*(?:qiandao|checkin|sign)[^"'\s]*)["']/gi;
+  for (const m of String(html || '').matchAll(routeRe)) {
+    const abs = absolutize(m[1], base);
+    if (abs && !out.routes.includes(abs)) out.routes.push(abs);
+  }
+
+  // nonce：优先主题专用字段名，其次通用 nonce
+  const noncePats = [
+    /["']?(?:ripro_ajax_nonce|ripro_nonce|ajax_nonce|_ajax_nonce|security)["']?\s*[:=]\s*["']([A-Za-z0-9_-]{6,})["']/i,
+    /data-nonce\s*=\s*["']([A-Za-z0-9_-]{6,})["']/i,
+    /["']?nonce["']?\s*[:=]\s*["']([A-Za-z0-9_-]{6,})["']/i,
+  ];
+  for (const p of noncePats) {
+    const m = String(html || '').match(p);
+    if (m) { out.nonce = m[1]; break; }
+  }
+
+  return out;
+}
+
+// ---------- ③ 判定一次签到响应 ----------
+// 约定：
+//   { done: true,  result: { ok: true,  message } }        → 签到成功/今日已签，立即返回
+//   { done: true,  result: { ok: false, message, outcome } } → 该 action 给出「明确负面结论」
+//                                                              （登录失效/验证码/WAF/限流），
+//                                                              记录下来，但继续试别的 action
+//   { done: false, reason }                                 → 线索不足，继续试下一个 action
+// 不在函数内抛异常，便于调用方在所有 action 试完后再挑最有信息量的原因抛出。
+export function judgeSigninResponse(raw, status) {
+  const text = String(raw == null ? '' : raw).trim();
+  const snippet = `网站返回：${text.replace(/\s+/g, ' ').slice(0, 300)}`;
+  const j = tryJson(text);
+
+  if (j && typeof j === 'object') {
+    const msg = String(j.msg || j.message || (j.data && (j.data.msg || j.data.message)) || '');
+    const okFlag =
+      j.status == 1 || j.code == 1 || j.ret == 1 || j.success === true ||
+      (j.data && (j.data.status == 1 || j.data.success === true || j.data.code == 1));
+    if (okFlag) {
+      return { done: true, result: { ok: true, message: '签到成功' + (msg ? `：${msg}` : ''), detail: snippet } };
+    }
+    const sig = classifySignal(msg || text, { status });
+    if (sig.outcome === OUTCOME.ALREADY) return { done: true, result: { ok: true, message: '今日已签到，无需重复', detail: snippet } };
+    if (sig.outcome === OUTCOME.NEED_LOGIN) return definitive('登录已失效，请重新获取 Cookie', sig, snippet);
+    if (sig.outcome === OUTCOME.CAPTCHA) return definitive('遇到人机验证，请在浏览器完成验证后重试', sig, snippet);
+    if (sig.outcome === OUTCOME.WAF) return definitive('遇到网站安全防护（WAF），请在浏览器完成验证后重试', sig, snippet);
+    if (sig.outcome === OUTCOME.RATE_LIMIT) return definitive('请求过于频繁，稍后再试', sig, snippet);
+    return { done: false, reason: msg || `status=${j.status != null ? j.status : j.code}` };
+  }
+
+  // 非 JSON（可能是登录页 / WAF 页 / 空响应）
+  const sig = classifySignal(text, { status });
+  if (sig.outcome === OUTCOME.ALREADY) return { done: true, result: { ok: true, message: '今日已签到，无需重复', detail: snippet } };
+  if (sig.outcome === OUTCOME.SUCCESS) {
+    return { done: true, result: { ok: true, message: '签到成功：' + text.replace(/\s+/g, ' ').slice(0, 120), detail: snippet } };
+  }
+  if (sig.outcome === OUTCOME.NEED_LOGIN || /wp-login|请先登录|登录后查看/i.test(text)) {
+    return definitive('登录已失效，请重新获取 Cookie', sig, snippet);
+  }
+  if (sig.outcome === OUTCOME.CAPTCHA) return definitive('遇到人机验证，请在浏览器完成验证后重试', sig, snippet);
+  if (sig.outcome === OUTCOME.WAF) return definitive('遇到网站安全防护（WAF），请在浏览器完成验证后重试', sig, snippet);
+  return { done: false, reason: `响应不是 JSON（HTTP ${status}）：${text.replace(/\s+/g, ' ').slice(0, 120)}` };
+}
+
+function definitive(message, sig, detail) {
+  return { done: true, result: { ok: false, message, outcome: (sig && sig.outcome) || '', detail } };
+}
+
 export const hutue = {
   id: 'hutue',
   name: '糊涂鳄',
-  desc: '糊涂鳄资源站每日签到（WordPress）。支持 hutue.cn 与 dj.hutue.cn，Cookie 方式。',
+  desc: '糊涂鳄资源站每日签到（WordPress/RiPro 悬浮窗）。支持 hutue.cn 与 dj.hutue.cn，自动发现签到接口。',
   execution: 'server', // 默认云端执行（用面板保存的 Cookie）；扩展在线时自动走中继用用户网络
   domain: 'dj.hutue.cn', // 默认域名；实际按账号的 site_url 动态决定
-  // 浏览器端签到脚本：在用户浏览器中运行，自动携带登录 Cookie
-  // 入参 params：{ base_url }；返回 { ok, message }
-  browserScript: `async (params) => {
-    const base = (params.base_url || '').replace(/\\/+$/, '');
-    if (!base) return { ok: false, message: '未配置站点地址' };
-    const ajaxUrl = base + '/wp-admin/admin-ajax.php';
-    // 先试首页的 user_qiandao，不行再试用户中心的 xb_user_qiandao
-    const actions = ['user_qiandao', 'xb_user_qiandao'];
-    let lastMsg = '';
-    for (const action of actions) {
-      let resp;
-      try {
-        const body = new URLSearchParams({ action });
-        resp = await fetch(ajaxUrl, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-          body: body.toString(),
-        });
-      } catch (e) {
-        lastMsg = '网络请求失败：' + (e.message || 'fetch 异常');
-        continue;
-      }
-      let data;
-      // 先读 text 再 JSON.parse：resp.json() 失败后 body 已被消费，不能再调 resp.text()
-      let rawText = '';
-      try {
-        rawText = await resp.text();
-      } catch {
-        lastMsg = '读取网站响应失败（HTTP ' + resp.status + '）';
-        continue;
-      }
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        // 非 JSON 可能是登录页或 WAF
-        if (/wp-login|请先登录|登录/.test(rawText) && rawText.length < 5000) {
-          return { ok: false, message: '登录已失效，请重新获取 Cookie' };
-        }
-        lastMsg = '网站返回非 JSON（HTTP ' + resp.status + '）：' + rawText.slice(0, 120);
-        continue;
-      }
-      const msg = String(data.msg || '');
-      if (data.status == 1) return { ok: true, message: '签到成功：' + msg };
-      // status 非 1：看 msg 判断是已签到还是失败
-      if (/已签到|已经签|重复|明天/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
-      if (/登录|login/i.test(msg)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
-      lastMsg = msg || '签到失败（status=' + data.status + '）';
-    }
-    return { ok: false, message: lastMsg || '签到失败' };
-  }`,
   fields: [
     {
       key: 'site_url',
@@ -97,48 +165,122 @@ export const hutue = {
       placeholder: '留空用默认；扩展会自动抓取',
     },
   ],
-  tips: '先在浏览器中登录 hutue 站点 → 用扩展「一键发送到签到面板」→ 面板会自动识别并弹出填写框 → 确认保存。hutue.cn 和 dj.hutue.cn 是两个独立站点，需要分别添加账号。',
+  tips: '先在浏览器中登录站点（右侧会出现签到悬浮窗）→ 用扩展「一键发送到签到面板」→ 面板会自动识别并保存。面板会自动从站点页面里发现悬浮窗真正使用的签到接口，主题升级也不易失效。hutue.cn 和 dj.hutue.cn 是两个独立站点，需要分别添加账号。',
 
-  // 服务端执行（备用）：直接 POST 到 admin-ajax.php
-  async run(creds) {
+  async run(creds, ctx = {}) {
     const base = normBase(creds.site_url);
     if (!base) throw new Error('站点地址未配置');
     const cookie = String(creds.cookie || '').trim();
     if (!cookie) throw new Error('Cookie 未配置');
-    const ua = String(creds.user_agent || '').trim() || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
+    const ua = String(creds.user_agent || '').trim() || DEFAULT_UA;
 
-    const actions = ['user_qiandao', 'xb_user_qiandao'];
-    let lastErr = null;
-    for (const action of actions) {
+    const headers = {
+      'User-Agent': ua,
+      Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      Referer: base + '/',
+      Cookie: cookie,
+    };
+
+    // ---- ① 发现：抓首页，找悬浮窗用的 ajax 入口 / action / nonce ----
+    let ajaxUrl = base + '/wp-admin/admin-ajax.php';
+    const seenActions = [];
+    const seenRoutes = [];
+    let nonce = '';
+    try {
+      const res = await fetch(base + '/', { headers });
+      const html = await res.text();
+      const d = discoverSignin(base, html);
+      if (d.ajaxUrl) ajaxUrl = d.ajaxUrl;
+      for (const a of d.actions) seenActions.push(a);
+      for (const r of d.routes) seenRoutes.push(r);
+      nonce = d.nonce;
+
+      // 首页本身若是验证码/登录页，直接给出明确结论，不再瞎试
+      const sig = classifySignal(html, { status: res.status });
+      if (sig.outcome === OUTCOME.CAPTCHA) {
+        const e = new Error('站点要求人机验证，请在浏览器完成验证后重新获取 Cookie');
+        e.outcome = OUTCOME.CAPTCHA;
+        throw e;
+      }
+      if (/wp-login\.php|请先登录|登录后查看/.test(html) && !/wp-admin\/admin-ajax\.php/.test(html)) {
+        const e = new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
+        e.outcome = OUTCOME.NEED_LOGIN;
+        throw e;
+      }
+    } catch (e) {
+      // 只有「明确结论」才中断；普通网络失败继续走兜底 action 尝试
+      if (e && e.outcome) throw e;
+    }
+
+    // ---- ② 组装尝试列表：上次命中的 action 优先 → 本次页面发现的 → 兜底 ----
+    const remembered = ctx && ctx.meta && ctx.meta.hutue_action ? String(ctx.meta.hutue_action) : '';
+    const ordered = [];
+    if (remembered) ordered.push(remembered);
+    for (const a of seenActions) if (!ordered.includes(a)) ordered.push(a);
+    for (const a of FALLBACK_ACTIONS) if (!ordered.includes(a)) ordered.push(a);
+
+    const attempts = [];
+    for (const action of ordered) {
+      if (nonce) attempts.push({ action, nonce });
+      attempts.push({ action, nonce: '' });
+      if (attempts.length >= MAX_ATTEMPTS) break;
+    }
+
+    // 带 nonce 的排前面（命中率更高），但同一个 action 的无 nonce 版本也要留机会
+    attempts.sort((a, b) => (b.nonce ? 1 : 0) - (a.nonce ? 1 : 0));
+
+    // ---- ③ 依次尝试：成功即返回；负面结论记录下来，全部试完再抛最有信息量的那个 ----
+    let lastReason = '';
+    let definitiveFail = null;
+    for (const t of attempts.slice(0, MAX_ATTEMPTS)) {
+      let raw = '';
+      let status = 0;
       try {
-        const res = await fetch(base + '/wp-admin/admin-ajax.php', {
+        const body = new URLSearchParams({ action: t.action, ...(t.nonce ? { nonce: t.nonce } : {}) });
+        const res = await fetch(ajaxUrl, {
           method: 'POST',
           headers: {
-            'User-Agent': ua,
+            ...headers,
+            Accept: 'application/json, text/plain, */*',
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'X-Requested-With': 'XMLHttpRequest',
             Referer: base + '/',
-            Cookie: cookie,
           },
-          body: new URLSearchParams({ action }).toString(),
+          body: body.toString(),
         });
-        const text = await res.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch {
-          if (/wp-login/i.test(text)) throw new Error('登录已失效，请重新获取 Cookie');
-          throw new Error('网站返回非 JSON（HTTP ' + res.status + '）');
-        }
-        const msg = String(data.msg || '');
-        if (data.status == 1) return { ok: true, message: '签到成功：' + msg };
-        if (/已签到|已经签|重复|明天/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
-        if (/登录|login/i.test(msg)) throw new Error('登录已失效，请重新获取 Cookie');
-        lastErr = new Error(msg || '签到失败（status=' + data.status + '）');
+        status = res.status;
+        raw = await res.text();
       } catch (e) {
-        lastErr = e;
+        lastReason = `请求 ${t.action} 失败：${String((e && e.message) || e).slice(0, 120)}`;
+        continue;
       }
+
+      const verdict = judgeSigninResponse(raw, status);
+      if (verdict.done) {
+        const r = verdict.result;
+        if (r.ok) {
+          // 记住命中的 action + 是否要带 nonce，下次优先，减少盲试
+          if (ctx && ctx.meta) {
+            ctx.meta.hutue_action = t.action;
+            ctx.meta.hutue_use_nonce = !!t.nonce;
+          }
+          return r;
+        }
+        if (!definitiveFail) definitiveFail = r;
+        lastReason = `${t.action}：${r.message}`;
+        continue;
+      }
+      lastReason = `${t.action}：${verdict.reason}`;
     }
-    throw lastErr || new Error('签到失败');
+
+    if (definitiveFail) {
+      const err = new Error(definitiveFail.message);
+      err.detail = definitiveFail.detail;
+      err.outcome = definitiveFail.outcome;
+      throw err;
+    }
+    const routeHint = seenRoutes.length ? `（页面里发现 REST 路由 ${seenRoutes[0]}，该站可能改用 REST 签到，请告知开发者）` : '';
+    throw new Error('签到失败：' + (lastReason || '未识别到成功标识') + routeHint);
   },
 };

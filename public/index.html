@@ -5,18 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>签到面板</title>
 <style>
-  /* 自定义时间选择器：深色主题，上下按钮 */
-  .tp { display:inline-flex; align-items:stretch; gap:2px; background:#0d1322; border:1px solid var(--line); border-radius:10px; padding:4px; }
-  .tp-col { display:flex; flex-direction:column; align-items:center; }
-  .tp-btn { background:transparent; border:0; color:var(--muted); font-size:10px; line-height:1; padding:3px 8px; cursor:pointer; border-radius:6px; }
-  .tp-btn:hover { background:var(--accent-dim); color:var(--accent2); }
-  .tp-val { font-size:15px; font-weight:600; color:var(--text); text-align:center; min-width:28px; padding:2px 0; font-variant-numeric:tabular-nums; }
-  .tp-sep { display:flex; align-items:center; color:var(--muted2); font-weight:600; padding:0 1px; }
-  .tp-clear { background:transparent; border:0; color:var(--muted2); cursor:pointer; font-size:12px; padding:4px 6px; border-radius:6px; }
-  .tp-clear:hover { color:var(--fail); background:var(--fail-dim); }
-  /* 全局时间选择器（大号） */
-  .tp-large .tp-val { font-size:22px; min-width:40px; }
-  .tp-large .tp-btn { font-size:12px; padding:5px 12px; }
+  /* 时间选择器样式统一放在样式表末尾，确保能覆盖通用 button 规则 */
   :root {
     --bg:#0b0f1a; --bg2:#0f1524;
     --card:#151d31; --card2:#1a2340;
@@ -178,6 +167,52 @@
   .empty .icon { font-size:40px; margin-bottom:12px; opacity:.6; }
 
   /* 响应式 */
+  /* ---------- 时间选择器（胶囊 + 浮层 / 设置页内嵌滚轮） ---------- */
+  .tp-chip { display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border-radius:999px;
+             background:var(--card2); border:1px solid var(--line); color:var(--text); font-size:13px;
+             font-weight:600; font-variant-numeric:tabular-nums; cursor:pointer; box-shadow:none;
+             transition:border-color .15s, box-shadow .15s; white-space:nowrap; }
+  .tp-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
+  .tp-chip.is-follow { color:var(--muted); font-weight:500; }
+  .tp-chip .tp-dot { width:6px; height:6px; border-radius:50%; background:var(--muted2); flex:none; }
+  .tp-chip:not(.is-follow) .tp-dot { background:var(--accent2); box-shadow:0 0 0 3px var(--accent-dim); }
+
+  .tpx-pop { position:fixed; z-index:70; width:238px; padding:12px; border-radius:14px;
+             background:var(--card); border:1px solid var(--line2); box-shadow:var(--shadow); }
+  .tpx-pop.hidden { display:none; }
+  .tpx-head { text-align:center; margin-bottom:10px; }
+  .tpx-preview { font-size:26px; font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums; }
+  .tpx-preview b { color:var(--text); }
+  .tpx-preview i { color:var(--accent2); font-style:normal; padding:0 2px; }
+  .tpx-cols { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .tpx-col { display:flex; flex-direction:column; gap:4px; }
+  .tpx-label { font-size:10.5px; color:var(--muted2); text-align:center; letter-spacing:1px; }
+  .tpx-list { position:relative; height:150px; overflow-y:auto; border:1px solid var(--line);
+              border-radius:10px; background:#0c1224; padding:4px; scrollbar-width:thin; }
+  .tpx-list::-webkit-scrollbar { width:6px; }
+  .tpx-list::-webkit-scrollbar-thumb { background:var(--line2); border-radius:3px; }
+  .tpx-opt { display:block; width:100%; padding:6px 0; margin:0; border:0; border-radius:8px;
+             background:transparent; color:var(--muted); font-size:13px; font-weight:500;
+             box-shadow:none; font-variant-numeric:tabular-nums; cursor:pointer; transition:background .12s, color .12s; }
+  .tpx-opt:hover { transform:none; box-shadow:none; background:var(--accent-dim); color:var(--text); }
+  .tpx-opt.sel { background:var(--accent); color:#fff; font-weight:700; box-shadow:none; }
+  .tpx-opt.sel:hover { background:var(--accent); color:#fff; }
+  .tpx-foot { display:flex; gap:8px; margin-top:10px; }
+  .tpx-foot button { padding:8px; border-radius:9px; font-size:12.5px; box-shadow:none; }
+  .tpx-follow { background:transparent; border:1px solid var(--line2); color:var(--muted); }
+  .tpx-follow:hover { transform:none; box-shadow:none; color:var(--fail); border-color:var(--fail); background:var(--fail-dim); }
+  .tpx-done { background:var(--accent); border:0; color:#fff; font-weight:600; }
+  .tpx-done:hover { transform:none; box-shadow:none; background:var(--accent2); }
+
+  /* 设置页内嵌形态 */
+  .tpx-inline { display:block; }
+  .tpx-inline .tpx-head { margin-bottom:8px; }
+  .tpx-inline .tpx-cols { max-width:300px; margin:0 auto; }
+  .tpx-inline .tpx-list { height:138px; }
+
+  /* 账号列表里的时间单元格 */
+  .sched-cell { display:flex; align-items:center; gap:6px; justify-content:center; }
+
   @media (max-width:640px) {
     .wrap { padding:16px 12px 60px; }
     .card { padding:16px; }
@@ -395,7 +430,7 @@
         <h2>签到时间</h2>
         <p class="muted">Worker 每分钟唤醒一次，到达设定的时间才执行签到。修改即时生效，无需重新部署。</p>
         <div class="row">
-          <div style="flex:1"><label>每天执行时间</label><div id="sched-tp" class="tp tp-large" style="width:100%;justify-content:center"></div></div>
+          <div style="flex:1"><label>每天执行时间</label><div id="sched-tp"></div></div>
           <div style="flex:2"><label>时区</label><select id="sched-tz"></select></div>
         </div>
         <button id="btn-save-sched">保存时间设置</button>
@@ -568,43 +603,123 @@ document.querySelectorAll('.tabs button').forEach((b) => {
   };
 });
 
-// ---------- 自定义时间选择器（深色主题，上下按钮） ----------
-// 渲染到 container，返回 { get(), set(hhmm) }
-function renderTimePicker(container, initial) {
+// ---------- 时间选择器（胶囊 + 浮层 / 设置页内嵌滚轮） ----------
+// 两种形态：opts.inline=true → 内嵌时/分两列滚轮（设置页）；否则 → 紧凑胶囊，点开浮层（账号列表）
+// 返回 { get(), set(hhmm), setFollow(bool) }；用户改动时在 container 上派发 'tp-change'，点“跟随全局”派发 'tp-follow'
+let _tpxPop = null;
+function _tpxPopover() {
+  if (_tpxPop) return _tpxPop;
+  const el = document.createElement('div');
+  el.className = 'tpx-pop hidden';
+  document.body.appendChild(el);
+  document.addEventListener('click', (e) => {
+    if (!el.classList.contains('hidden') && !el.contains(e.target) && !e.target.closest('.tp-chip')) el.classList.add('hidden');
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') el.classList.add('hidden'); });
+  _tpxPop = el;
+  return el;
+}
+
+function renderTimePicker(container, initial, opts = {}) {
   let h = 8, m = 0;
-  if (initial) {
-    const p = String(initial).split(':');
+  let follow = !!opts.follow;
+  const pad = (n) => String(n).padStart(2, '0');
+  const setHM = (v) => {
+    const p = String(v || '').split(':');
     h = Math.max(0, Math.min(23, parseInt(p[0], 10) || 0));
     m = Math.max(0, Math.min(59, parseInt(p[1], 10) || 0));
-  }
-  const pad = (n) => String(n).padStart(2, '0');
-  container.innerHTML = `
-    <div class="tp-col"><button class="tp-btn" data-a="hu">▲</button><div class="tp-val" data-v="h">${pad(h)}</div><button class="tp-btn" data-a="hd">▼</button></div>
-    <div class="tp-sep">:</div>
-    <div class="tp-col"><button class="tp-btn" data-a="mu">▲</button><div class="tp-val" data-v="m">${pad(m)}</div><button class="tp-btn" data-a="md">▼</button></div>`;
-  const vh = container.querySelector('[data-v="h"]');
-  const vm = container.querySelector('[data-v="m"]');
-  const update = () => { vh.textContent = pad(h); vm.textContent = pad(m); };
-  container.querySelectorAll('.tp-btn').forEach((b) => {
-    b.onclick = (e) => {
-      e.stopPropagation();
-      const a = b.dataset.a;
-      if (a === 'hu') h = (h + 1) % 24;
-      else if (a === 'hd') h = (h + 23) % 24;
-      else if (a === 'mu') m = (m + 1) % 60;
-      else if (a === 'md') m = (m + 59) % 60;
-      update();
-      container.dispatchEvent(new CustomEvent('tp-change', { bubbles: true }));
+  };
+  setHM(initial);
+  const time = () => `${pad(h)}:${pad(m)}`;
+
+  const colHTML = (key, from, to, sel, label) => {
+    let s = `<div class="tpx-col"><div class="tpx-label">${label}</div><div class="tpx-list" data-key="${key}">`;
+    for (let i = from; i <= to; i++) {
+      const v = pad(i);
+      s += `<button type="button" class="tpx-opt${v === sel ? ' sel' : ''}" data-k="${key}" data-v="${v}">${v}</button>`;
+    }
+    return s + '</div></div>';
+  };
+  const wheelHTML = () => `<div class="tpx-head"><span class="tpx-preview"><b data-pv="h">${pad(h)}</b><i>:</i><b data-pv="m">${pad(m)}</b></span></div>
+    <div class="tpx-cols">${colHTML('h', 0, 23, pad(h), '时')}${colHTML('m', 0, 59, pad(m), '分')}</div>`;
+
+  const center = (root) => {
+    for (const k of ['h', 'm']) {
+      const list = root.querySelector(`.tpx-list[data-key="${k}"]`);
+      const sel = list && list.querySelector('.tpx-opt.sel');
+      if (list && sel) list.scrollTop = Math.max(0, sel.offsetTop - list.clientHeight / 2 + sel.clientHeight / 2);
+    }
+  };
+  const bindWheel = (root, onChange) => {
+    root.querySelectorAll('.tpx-opt').forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const v = parseInt(b.dataset.v, 10);
+        if (b.dataset.k === 'h') h = v; else m = v;
+        b.parentElement.querySelectorAll('.tpx-opt').forEach((x) => x.classList.remove('sel'));
+        b.classList.add('sel');
+        const pvH = root.querySelector('[data-pv="h"]');
+        const pvM = root.querySelector('[data-pv="m"]');
+        if (pvH) pvH.textContent = pad(h);
+        if (pvM) pvM.textContent = pad(m);
+        center(root);
+        if (onChange) onChange();
+      };
+    });
+    requestAnimationFrame(() => center(root));
+  };
+
+  if (opts.inline) {
+    container.classList.add('tpx-inline');
+    container.innerHTML = wheelHTML();
+    bindWheel(container);
+    return {
+      get: time,
+      set: (v) => { setHM(v); container.innerHTML = wheelHTML(); bindWheel(container); },
     };
-  });
+  }
+
+  // 胶囊形态（账号列表）
+  container.innerHTML = '<button type="button" class="tp-chip"><span class="tp-dot"></span><span class="tp-text"></span></button>';
+  const chip = container.querySelector('.tp-chip');
+  const updChip = () => {
+    chip.classList.toggle('is-follow', follow);
+    chip.querySelector('.tp-text').textContent = follow ? `跟随 ${time()}` : time();
+  };
+  updChip();
+
+  const pop = _tpxPopover();
+  const open = () => {
+    pop.innerHTML = wheelHTML() + `<div class="tpx-foot"><button type="button" class="tpx-follow">跟随全局</button><button type="button" class="tpx-done">完成</button></div>`;
+    bindWheel(pop, () => {
+      follow = false;
+      updChip();
+      container.dispatchEvent(new CustomEvent('tp-change', { bubbles: true }));
+    });
+    pop.querySelector('.tpx-follow').onclick = (e) => {
+      e.stopPropagation();
+      follow = true;
+      pop.classList.add('hidden');
+      updChip();
+      container.dispatchEvent(new CustomEvent('tp-follow', { bubbles: true }));
+    };
+    pop.querySelector('.tpx-done').onclick = (e) => { e.stopPropagation(); pop.classList.add('hidden'); };
+    pop.classList.remove('hidden');
+    const r = chip.getBoundingClientRect();
+    const w = 238;
+    const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
+    let top = r.bottom + 8;
+    if (top + 330 > window.innerHeight) top = Math.max(8, r.top - 338);
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    requestAnimationFrame(() => center(pop));
+  };
+  chip.onclick = (e) => { e.stopPropagation(); open(); };
+
   return {
-    get: () => `${pad(h)}:${pad(m)}`,
-    set: (hhmm) => {
-      const p = String(hhmm || '').split(':');
-      h = Math.max(0, Math.min(23, parseInt(p[0], 10) || 0));
-      m = Math.max(0, Math.min(59, parseInt(p[1], 10) || 0));
-      update();
-    },
+    get: time,
+    set: (v) => { setHM(v); updChip(); },
+    setFollow: (v) => { follow = !!v; updChip(); },
   };
 }
 
@@ -622,7 +737,7 @@ async function loadSchedule() {
     const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
     $('sched-line').textContent = `每天 ${displayTime}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
     // 自定义时间选择器
-    if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime);
+    if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { inline: true });
     else schedPicker.set(displayTime);
     if (!$('sched-tz').options.length) {
       $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option ${z === s.tz ? 'selected' : ''}>${z}</option>`).join('');
@@ -922,18 +1037,99 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
   };
 }
 
+// 取可注册域（后两段）用于站点匹配，如 www.52pojie.cn → 52pojie.cn
+function regDomain(host) {
+  const parts = String(host || '').toLowerCase().split('.').filter(Boolean);
+  return parts.length >= 2 ? parts.slice(-2).join('.') : parts.join('.');
+}
+
 // 按域名猜测站点（扩展一键发送用）
+// 优先用站点元数据里登记的目标域名，新接入的站点无需改这里就能自动匹配。
 function guessSiteByDomain(domain) {
   const d = (domain || '').toLowerCase();
-  if (d.includes('nodeseek.com')) return 'nodeseek';
-  if (d.includes('52pojie.cn')) return 'wuaipojie';
-  if (d.includes('kanxue.com')) return 'kanxue';
-  if (d.includes('v2ex.com')) return 'v2ex';
-  if (d.includes('akile')) return 'akile';
-  if (d.includes('quark.cn')) return 'quark';
-  if (d.includes('cloud.189.cn')) return 'cloud189';
-  if (d.includes('hutue.cn')) return 'hutue';
+  if (!d) return '';
+  const rd = regDomain(d);
+  const hit = (SITES || []).find((s) => s.domain && regDomain(s.domain) === rd);
+  if (hit) return hit.id;
+  // 关键词兜底（域名与登记域名不一致的情况）
+  const kw = [['nodeseek', 'nodeseek'], ['52pojie', 'wuaipojie'], ['kanxue', 'kanxue'], ['v2ex', 'v2ex'], ['akile', 'akile'], ['quark', 'quark'], ['189.cn', 'cloud189'], ['hutue', 'hutue']];
+  for (const [k, id] of kw) if (d.includes(k)) return id;
   return '';
+}
+
+// 一键发送后：自动建/改账号 → 立刻试跑一次 → 展示清晰分解（不需要用户再点保存）
+async function autoApplyCookies(siteId, d) {
+  const s = SITES.find((x) => x.id === siteId);
+  if (!s) return toast('未知站点');
+  const cookie = String(d.cookies || '');
+  const ua = String(d.userAgent || '');
+  const list = Array.isArray(d.cookieList) ? d.cookieList : [];
+  const ls = d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {};
+  const names = (list.length ? list.map((c) => c.name) : cookie.split(';').map((x) => x.trim().split('=')[0])).filter(Boolean);
+  const needUA = (s.fields || []).some((f) => f.key === 'user_agent');
+  // 除 Cookie/UA 外还有别的必填项（如 Discuz 的论坛地址）时，交给原对话框补充
+  const missing = (s.fields || []).filter((f) => f.required && f.key !== 'cookie' && !(f.key === 'user_agent' && ua));
+  if (missing.length) return openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua });
+  if (needUA && !ua) return openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: '' });
+
+  const existing = cookieCapableAccounts(siteId);
+  let accountId = null;
+  let actionText = '';
+  try {
+    if (existing.length === 1) {
+      const { account } = await api('/api/accounts/' + existing[0].id);
+      const creds = account.creds || {};
+      creds.cookie = cookie;
+      if (ua && needUA) creds.user_agent = ua;
+      await api('/api/accounts/' + existing[0].id, 'PUT', { creds });
+      accountId = existing[0].id;
+      actionText = '已更新账号「' + existing[0].name + '」的 Cookie 与 UA';
+    } else if (existing.length > 1) {
+      // 同站点有多个账号，交给用户选（保留原有对话框）
+      return openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua });
+    } else {
+      const creds = { cookie };
+      if (ua) creds.user_agent = ua;
+      const r = await api('/api/accounts', 'POST', { name: s.name, site: siteId, creds });
+      accountId = r.id;
+      actionText = '已新建账号「' + s.name + '」';
+    }
+  } catch (e) {
+    return toast('保存失败：' + e.message);
+  }
+  showExtApplied(s, d, { names, ls, actionText, accountId });
+}
+
+// 展示「已自动保存」的清晰分解，并实时显示试跑结果
+function showExtApplied(s, d, info) {
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  const rows = info.names.map((n) => `<code>${esc(n)}</code>`).join(' ');
+  bg.innerHTML = `<div class="modal"><h2>✅ 已自动保存到面板</h2>
+    <p class="muted">${esc(info.actionText)}</p>
+    <div class="tips">
+      <b>站点</b>：${esc(s.name)}<br>
+      <b>域名</b>：${esc(d.domain || '-')}<br>
+      <b>Cookie</b>：${info.names.length} 个 — ${rows}<br>
+      <b>User-Agent</b>：${d.userAgent ? esc('已带（' + String(d.userAgent).slice(0, 40) + '…）') : '未带'}<br>
+      <b>localStorage</b>：${Object.keys(info.ls).length} 项
+    </div>
+    <div id="ext-run-result" class="tips">正在试跑一次…</div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px"><button id="ext-ok">知道了</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#ext-ok').onclick = () => bg.remove();
+  const box = bg.querySelector('#ext-run-result');
+  (async () => {
+    try {
+      const r = await api('/api/accounts/' + info.accountId + '/run', 'POST');
+      const st = (r.result && r.result.status) || (r.ok ? 'ok' : 'fail');
+      const msg = (r.result && r.result.message) || '';
+      box.innerHTML = `<b>试跑结果</b>：${st === 'ok' ? '✅ 成功' : st === 'skip' ? '⏭️ 已跳过' : '❌ 失败'} — ${esc(msg)}`;
+      loadAccounts();
+    } catch (e) {
+      box.innerHTML = `<b>试跑失败</b>：${esc(e.message)}`;
+    }
+  })();
 }
 
 // 扩展域名未匹配时，让用户手动选站点
@@ -980,7 +1176,8 @@ async function checkCookieHash() {
       // 域名没匹配上，让用户手动选站点
       return openCookieSitePicker(d.cookies, d.domain || '', d.userAgent || '');
     }
-    return openCookieApplyDialog(siteId, d.cookies, d.domain || '', { userAgent: d.userAgent || '' });
+    // 自动建/改账号 + 试跑 + 清晰分解，全程无需用户手动点保存
+    return autoApplyCookies(siteId, d);
   }
   // 小书签格式：#ck=...
   const m = location.hash.match(/#ck=([A-Za-z0-9\-_]+)/);
@@ -1057,18 +1254,19 @@ async function loadAccounts() {
     const site = SITES.find((s) => s.id === a.site);
     const siteExec = site ? (site.execution || 'server') : 'server';
     const effExec = execOverride || siteExec;
-    const execBadge = effExec === 'browser'
-      ? `<span class="badge" style="background:#e8f4fd;color:#1a73e8" title="扩展在您的浏览器中执行完整签到（您的网络）">🌐 浏览器</span>`
-      : effExec === 'relay'
-      ? `<span class="badge" style="background:#fef3e2;color:#e8710a" title="Worker 逻辑 + 经扩展用您的本地网络执行（中继代理）">🔀 中继</span>`
+    // 浏览器模式已并入本地中继：对外统一显示为「本地网络」，避免两个名字其实是同一件事
+    const isLocalExec = effExec === 'browser' || effExec === 'relay';
+    const execBadge = isLocalExec
+      ? `<span class="badge" style="background:#e8f4fd;color:#1a73e8" title="借你的本地网络发请求（逻辑仍在 Worker），可绕过云端 IP / 人机验证限制。需浏览器扩展在线。">🌐 本地网络</span>`
       : `<span class="badge" style="background:#f0f4f8;color:#5f6368" title="Worker 直接请求（云端 IP）">☁️ 云端</span>`;
-    const execName = effExec === 'browser' ? '浏览器' : effExec === 'relay' ? '中继代理' : '云端';
-    const siteExecName = siteExec === 'browser' ? '浏览器' : siteExec === 'relay' ? '中继代理' : '云端';
+    const execName = isLocalExec ? '本地网络' : '云端';
+    const siteLocalExec = siteExec === 'browser' || siteExec === 'relay';
+    const siteExecName = siteLocalExec ? '本地网络' : '云端';
     const execTitle = execOverride ? `（已手动设为${execName}，点击切换）` : `（跟随站点默认：${siteExecName}，点击可手动覆盖）`;
     return `
     <tr>
       <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
-      <td><div style="display:flex;align-items:center;gap:4px;justify-content:center"><div class="tp" data-tp-acc="${a.id}" title="独立签到时间，点✕跟随全局(${GLOBAL_HOUR})"></div>${schedHour ? `<button class="ghost sm" data-sched-clear="${a.id}" title="跟随全局" style="padding:2px 6px">✕</button>` : ''}</div></td>
+      <td><div class="sched-cell"><div data-tp-acc="${a.id}" title="点击设置该账号的独立签到时间（跟随全局：${GLOBAL_HOUR}）"></div></div></td>
       <td>${statusBadge}</td>
       <td class="msg">${(() => { const m = a.last_msg || ''; return (m.includes('浏览器模式') || m.includes('请确保扩展')) ? '-' : esc(m || '-'); })()}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
@@ -1081,32 +1279,29 @@ async function loadAccounts() {
     </tr>`;
   }).join('');
 
-  // 账号独立时间：自定义选择器，上下按钮调整，变更后自动保存
+  // 账号独立时间：胶囊 + 浮层选择，改动即自动保存
   tb.querySelectorAll('[data-tp-acc]').forEach((el) => {
     const accId = el.dataset.tpAcc;
     const row = accounts.find((x) => String(x.id) === String(accId));
     let initHour = '';
     try { initHour = JSON.parse(row?.meta || '{}').sched_hour || ''; } catch { /* 忽略 */ }
-    const picker = renderTimePicker(el, initHour || GLOBAL_HOUR);
-    // 如果没有独立时间，显示全局时间但标记为跟随
-    if (!initHour) el.style.opacity = '0.55';
+    const picker = renderTimePicker(el, initHour || GLOBAL_HOUR, { follow: !initHour });
     el.addEventListener('tp-change', async () => {
       const v = picker.get();
       try {
         await api('/api/accounts/' + accId + '/schedule', 'PUT', { hour: v });
-        toast('签到时间已保存：' + v);
+        toast('已设置独立签到时间：' + v);
+      } catch (e) { toast(e.message); }
+      loadAccounts();
+    });
+    el.addEventListener('tp-follow', async () => {
+      try {
+        await api('/api/accounts/' + accId + '/schedule', 'PUT', { hour: '' });
+        toast('已改为跟随全局时间');
       } catch (e) { toast(e.message); }
       loadAccounts();
     });
   });
-  // "跟随全局"清空按钮
-  tb.querySelectorAll('[data-sched-clear]').forEach((b) => (b.onclick = async () => {
-    try {
-      await api('/api/accounts/' + b.dataset.schedClear + '/schedule', 'PUT', { hour: '' });
-      toast('已设为跟随全局');
-    } catch (e) { toast(e.message); }
-    loadAccounts();
-  }));
 
   tb.querySelectorAll('[data-atoggle]').forEach((b) => (b.onclick = async () => {
     const [id, key] = b.dataset.atoggle.split(':');

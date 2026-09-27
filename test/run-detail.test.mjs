@@ -87,7 +87,8 @@ await t('runner：站点返回的 detail 写入 runs', async () => {
   const db = fakeDbRunner();
   const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
   const credsEnc = await encryptJSON(env, db, { cookie: 'a=1', random: '试试手气（随机）' });
-  const account = { id: 7, site: 'nodeseek', name: 'NS测试', creds: credsEnc, meta: '{}', enabled: 1 };
+  // nodeseek 默认 browser 执行，扩展离线时会被跳过；这里强制云端执行以验证 detail 写入
+  const account = { id: 7, site: 'nodeseek', name: 'NS测试', creds: credsEnc, meta: '{"execution":"server"}', enabled: 1 };
 
   const origFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
@@ -111,7 +112,7 @@ await t('runner：抛错时 e.detail 也写入 runs', async () => {
   const db = fakeDbRunner();
   const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
   const credsEnc = await encryptJSON(env, db, { cookie: 'a=1' });
-  const account = { id: 8, site: 'nodeseek', name: 'NS测试2', creds: credsEnc, meta: '{}', enabled: 1 };
+  const account = { id: 8, site: 'nodeseek', name: 'NS测试2', creds: credsEnc, meta: '{"execution":"server"}', enabled: 1 };
   const origFetch = globalThis.fetch;
   globalThis.fetch = async () => ({
     status: 200,

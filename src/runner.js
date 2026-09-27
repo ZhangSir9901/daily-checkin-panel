@@ -23,17 +23,24 @@ export async function runAccount(env, account) {
     if (!site) throw new Error('未知站点：' + account.site);
 
     // ---- 执行模式解析 ----
-    // 手动覆盖（面板切换）：browser=强制浏览器 / relay=强制中继 / server=强制云端直连 / ''=自动
-    // 自动：站点默认 browser→扩展处理（跳过）；站点默认 server→扩展在线时自动中继，否则云端直连
+    // 手动覆盖（面板切换）：relay=强制中继 / server=强制云端直连 / browser=同 relay（历史值） / ''=自动
+    // 自动：扩展在线则走本地网络中继，否则（站点默认 server）云端直连。
+    //
+    // 说明：原「浏览器模式」已并入本地中继。MV3 禁止 new Function，扩展无法执行面板下发的脚本，
+    // 所以站点逻辑仍保留在 Worker，只把 HTTP 请求交给扩展在用户本地网络中发出（带用户 Cookie）。
+    // 这样吾爱破解/NodeSeek/V2EX/看雪/Discuz 等依赖本地 IP + Cookie 的站点能真正自动签到。
     const manual = meta.execution || '';
     const siteDefault = site.execution || 'server';
     let useRelay = false;
     let skipReason = '';
 
-    if (manual === 'browser' || (manual === '' && siteDefault === 'browser')) {
-      skipReason = '浏览器模式：请确保扩展已安装，它会自动执行';
-    } else if (manual === 'relay') {
-      useRelay = true; // 强制中继
+    const wantsLocalNetwork = manual === 'relay' || manual === 'browser' || (manual === '' && siteDefault === 'browser');
+    if (wantsLocalNetwork) {
+      const { isRelayAvailable } = await import('./lib/relay.js');
+      useRelay = await isRelayAvailable(db);
+      if (!useRelay) {
+        skipReason = '需要浏览器扩展在线（本地网络中继）。请安装并打开扩展；或在面板把该账号切到「云端执行」。';
+      }
     } else if (manual === 'server') {
       useRelay = false; // 强制云端直连
     } else if (manual === '' && siteDefault === 'server') {

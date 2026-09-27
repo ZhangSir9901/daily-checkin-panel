@@ -10,17 +10,9 @@ import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
 import { shouldRun, validHour, validTime, validTz, accountHour } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
+import { verifyExternalRequest } from './lib/ext-auth.js';
 
-// 校验外部 API Key：支持 Cloudflare Secret（旧）或面板设置中的 Key（新，可在 UI 查看/修改）
-async function checkExternalKey(env, apiKey) {
-  if (!apiKey) return false;
-  if (env.EXTERNAL_API_KEY && apiKey === env.EXTERNAL_API_KEY) return true;
-  try {
-    const saved = await getSetting(env.DB, 'external_api_key');
-    if (saved && apiKey === saved) return true;
-  } catch { /* 忽略 */ }
-  return false;
-}
+// 外部请求鉴权已迁移到 src/lib/ext-auth.js（API Key + HMAC 签名 + 防重放）。
 
 const SESSION_TTL_MS = 7 * 864e5;
 
@@ -57,9 +49,21 @@ async function authed(env, req) {
   return true;
 }
 
+// 请求体只能读一次（流不可重放），这里缓存原始文本：
+// 既供 JSON 解析，又供扩展请求的签名校验（签名要覆盖 body）。
+const RAW_BODY = new WeakMap();
+async function readBodyRaw(req) {
+  if (RAW_BODY.has(req)) return RAW_BODY.get(req);
+  let text = '';
+  try { text = await req.text(); } catch { text = ''; }
+  RAW_BODY.set(req, text);
+  return text;
+}
+
 async function readBody(req) {
+  const text = await readBodyRaw(req);
   try {
-    return await req.json();
+    return JSON.parse(text);
   } catch {
     return {};
   }
@@ -77,6 +81,21 @@ async function createSession(env) {
 async function handleApi(req, env, url) {
   const path = url.pathname;
   const method = req.method.toUpperCase();
+
+  // 扩展/外部请求鉴权：API Key +（可选）HMAC 签名与防重放。
+  // 通过后顺手记下扩展活跃时间，用于面板展示「扩展在线」状态。
+  // 返回 null 表示放行；否则返回应直接发回的 401 Response。
+  const extGuard = async () => {
+    const r = await verifyExternalRequest(req, env, env.DB, { getRawBody: () => readBodyRaw(req) });
+    if (!r.ok) return json({ error: r.error || '鉴权失败' }, r.status || 401);
+    const now = Date.now();
+    try {
+      await setSetting(env.DB, 'ext_last_seen', String(now));
+      // 只在确实带了签名时更新，否则会把「上次成功签名」的时间抹掉
+      if (r.signed) await setSetting(env.DB, 'ext_last_signed', String(now));
+    } catch { /* 忽略 */ }
+    return null;
+  };
 
   // ---- 公开接口 ----
   if (path === '/api/status' && method === 'GET') {
@@ -104,10 +123,8 @@ async function handleApi(req, env, url) {
 
   // ---- 外部上报接口（VM 定时任务 / 浏览器扩展用 API Key 认证，不走 session） ----
   if (path === '/api/external/report' && method === 'POST') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const { account_id, status, message, detail, duration_ms } = await readBody(req);
     const acc = await env.DB.prepare('SELECT id, site, name FROM accounts WHERE id = ?').bind(Number(account_id)).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
@@ -138,10 +155,8 @@ async function handleApi(req, env, url) {
   // ---- 外部查询账号状态（VM 跑之前检查是否启用） ----
   const mExtAcc = path.match(/^\/api\/external\/account\/(\d+)$/);
   if (mExtAcc && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const acc = await env.DB.prepare('SELECT id, site, name, enabled FROM accounts WHERE id = ?').bind(Number(mExtAcc[1])).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
     return json({ id: acc.id, site: acc.site, name: acc.name, enabled: !!acc.enabled });
@@ -151,10 +166,8 @@ async function handleApi(req, env, url) {
   // 面板是唯一凭据源：用户在面板更新 Cookie 后，VM 下次运行自动取到最新值，无需手动同步文件
   const mExtCreds = path.match(/^\/api\/external\/account\/(\d+)\/creds$/);
   if (mExtCreds && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const acc = await env.DB.prepare('SELECT id, site, name, enabled, creds FROM accounts WHERE id = ?').bind(Number(mExtCreds[1])).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
     let creds = {};
@@ -171,187 +184,109 @@ async function handleApi(req, env, url) {
 
   // ---- 外部查询 NodeSeek 模式（VM 用） ----
   if (path === '/api/external/nodeseek-mode' && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const mode = (await getSetting(env.DB, 'nodeseek_mode')) || 'random';
     return json({ mode });
   }
 
   // ---- 扩展连接检查（无副作用，不消费任务） ----
   if (path === '/api/external/ping' && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     return json({ ok: true, version: '2.2', time: Date.now() });
   }
 
-  // ---- 浏览器扩展获取待执行任务 ----
-  // 扩展每小时调用一次，获取所有 browser 模式、已启用、到执行时间的账号
-  // 返回每个任务的签到脚本（在用户浏览器中运行，使用用户网络 + 自动携带 Cookie）
+  // ---- 浏览器扩展：任务已并入「本地网络中继」，这里不再下发脚本 ----
+  // 浏览器模式（含站点默认 browser 的吾爱破解 / NodeSeek / V2EX / 看雪 / Discuz）统一走中继：
+  // 站点逻辑仍在 Worker，HTTP 请求由扩展在用户本地网络中执行（见 runner.js），
+  // 既解决了 MV3 无法执行面板脚本的问题，也避免与中继重复执行。
+  // 若站点需要人工过人机验证，请用面板上的「打开验证页」，验证后重新「一键发送」刷新 Cookie。
   if (path === '/api/external/browser-jobs' && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
-    const globalTime = (await getSetting(env.DB, 'schedule_time')) || '08';
-    const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
-    let lastMap = {};
-    try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
-    const now = new Date();
-    const { results } = await env.DB.prepare('SELECT id, site, name, meta, creds FROM accounts WHERE enabled = 1').all();
-    const jobs = [];
-    let changed = false;
-    for (const acc of results || []) {
-      const site = getSite(acc.site);
-      if (!site) continue;
-      // 有效执行模式：账号覆盖 > 站点默认
-      let execMode = site.execution || 'server';
-      let meta = {};
-      try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
-      if (meta.execution === 'server' || meta.execution === 'browser') execMode = meta.execution;
-      if (execMode !== 'browser') continue;
-      // 检查是否到执行时间
-      const hour = accountHour(acc.meta, globalTime);
-      const lastKey = lastMap[String(acc.id)];
-      const { run, key } = shouldRun(now, hour, tz, lastKey);
-      if (!run) continue;
-      // 获取浏览器脚本
-      const bs = getBrowserScript(acc.site);
-      if (!bs || !bs.script) continue;
-      // 组装参数（站点相关，不含敏感信息）
-      const params = {};
-      let domain = bs.domain;
-      if (acc.site === 'nodeseek') {
-        // 签到模式：账号开关 > 全局设置
-        const t = meta.toggles ? meta.toggles.random : undefined;
-        if (t != null) params.random = !!t;
-        else params.random = ((await getSetting(env.DB, 'nodeseek_mode')) || 'random') === 'random';
-      }
-      if (acc.site === 'misign') {
-        try {
-          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
-          params.base_url = String(creds.base_url || '').trim();
-          if (params.base_url) {
-            try { domain = new URL(params.base_url).hostname; } catch { /* 忽略 */ }
-          }
-        } catch { /* 忽略 */ }
-      }
-      if (acc.site === 'hutue') {
-        try {
-          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
-          let u = String(creds.site_url || '').trim();
-          if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u;
-          params.base_url = u.replace(/\/+$/, '');
-          if (params.base_url) {
-            try { domain = new URL(params.base_url).hostname; } catch { /* 忽略 */ }
-          }
-        } catch { /* 忽略 */ }
-      }
-      if (acc.site === 'kanxue') {
-        try {
-          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
-          if (creds.csrf_token) params.csrf_token = String(creds.csrf_token);
-        } catch { /* 忽略 */ }
-      }
-      if (acc.site === 'v2board') {
-        try {
-          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
-          params.domain = String(creds.domain || '').trim();
-          params.email = String(creds.email || '').trim();
-          params.password = String(creds.password || '');
-          if (params.domain) {
-            try { domain = new URL(params.domain.startsWith('http') ? params.domain : 'https://' + params.domain).hostname; } catch { /* 忽略 */ }
-          }
-        } catch { /* 忽略 */ }
-      }
-      if (acc.site === 'akile') {
-        try {
-          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
-          params.token = String(creds.token || '').trim();
-        } catch { /* 忽略 */ }
-      }
-      if (!domain) continue; // 没有目标域名无法执行
-      jobs.push({
-        account_id: acc.id,
-        site: acc.site,
-        site_name: site.name,
-        domain,
-        script: bs.script,
-        params,
-        navigate_url: bs.navigateUrl || '', // 扩展先导航到此 URL（模拟手动），再执行脚本检查页面
-      });
-      // 标记已领取任务，避免重复下发（扩展上报后也会更新 last_run，这里先占位）
-      lastMap[String(acc.id)] = key;
-      changed = true;
-    }
-    if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap));
+    const deny = await extGuard();
+    if (deny) return deny;
+    return json({ jobs: [] });
+  }
 
-    // 手动任务队列：面板"执行"按钮为 browser 模式账号加入的即时任务
-    // 清理 24 小时前的过期任务，防止堆积
-    try {
-      await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE created_at < ?')
-        .bind(Date.now() - 86400000).run().catch(() => {});
-    } catch { /* 忽略 */ }
-    try {
-      const { results: manualJobs } = await env.DB.prepare(
-        'SELECT account_id FROM browser_manual_jobs ORDER BY created_at LIMIT 20'
-      ).all();
-      const manualIds = (manualJobs || []).map((j) => j.account_id);
-      if (manualIds.length > 0) {
-        // 查询这些账号的信息
-        const placeholders = manualIds.map(() => '?').join(',');
-        const { results: manualAccs } = await env.DB.prepare(
-          `SELECT id, site, name, meta, creds FROM accounts WHERE id IN (${placeholders}) AND enabled = 1`
-        ).bind(...manualIds).all();
-        for (const acc of manualAccs || []) {
-          // 避免重复（已在定时任务中）
-          if (jobs.some((j) => j.account_id === acc.id)) continue;
-          const site = getSite(acc.site);
-          if (!site) continue;
-          const bs = getBrowserScript(acc.site);
-          if (!bs || !bs.script) continue;
-          let meta = {};
-          try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
-          const params = {};
-          let domain = bs.domain;
-          if (acc.site === 'nodeseek') {
-            const t = meta.toggles ? meta.toggles.random : undefined;
-            if (t != null) params.random = !!t;
-            else params.random = ((await getSetting(env.DB, 'nodeseek_mode')) || 'random') === 'random';
-          }
-          if (acc.site === 'hutue') {
-            try {
-              const creds = await decryptJSON(env, env.DB, acc.creds) || {};
-              let u = String(creds.site_url || '').trim();
-              if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u;
-              params.base_url = u.replace(/\/+$/, '');
-              if (params.base_url) {
-                try { domain = new URL(params.base_url).hostname; } catch { /* 忽略 */ }
-              }
-            } catch { /* 忽略 */ }
-          }
-          // misign/kanxue 等需要 creds 参数的站点，复用上面的逻辑（简化：只处理通用情况）
-          if (domain) {
-            jobs.push({
-              account_id: acc.id,
-              site: acc.site,
-              site_name: site.name,
-              domain,
-              script: bs.script,
-              params,
-              manual: true, // 标记为手动任务，扩展执行后需通知面板删除队列记录
-              navigate_url: bs.navigateUrl || '', // 扩展先导航到此 URL（模拟手动），再执行脚本
-            });
-          }
-        }
-        // 注意：不立即删除，等扩展上报结果后再删（通过 /api/external/report 的 account_id 匹配）
-      }
-    } catch { /* 忽略，手动队列不影响主流程 */ }
+  // ---- 一次性交接码（扩展 → 面板）----
+  // 扩展不再把整包 Cookie 塞进 URL：先 POST 到这里暂存，URL 里只带一个短码，
+  // 面板页面用短码取回。好处是登录凭据不再进入浏览器地址栏 / 历史记录。
+  if (path === '/api/external/handoff' && method === 'POST') {
+    const deny = await extGuard();
+    if (deny) return deny;
+    const { domain, cookies, cookieList, userAgent, localStorage, stats } = await readBody(req);
+    if (!cookies || !String(cookies).trim()) return json({ error: '没有可交接的 Cookie' }, 400);
+    const code = randomHex(16);
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO handoffs(code, payload, created_at, expires_at, used) VALUES(?,?,?,?,0)')
+      .bind(code, JSON.stringify({
+        domain: String(domain || ''),
+        cookies: String(cookies),
+        cookieList: Array.isArray(cookieList) ? cookieList.slice(0, 300) : [],
+        userAgent: String(userAgent || ''),
+        localStorage: localStorage && typeof localStorage === 'object' ? localStorage : {},
+        stats: stats && typeof stats === 'object' ? stats : {},
+        ts: now,
+      }), now, now + 5 * 60 * 1000).run();
+    await env.DB.prepare('DELETE FROM handoffs WHERE expires_at < ?').bind(now - 3600000).run().catch(() => {});
+    return json({ ok: true, code, expires_in: 300 });
+  }
 
-    return json({ jobs });
+  // 面板页面凭短码取回交接内容：一次性 + 5 分钟过期 + 取完即作废
+  if (path.startsWith('/api/handoff/') && method === 'GET') {
+    const code = decodeURIComponent(path.slice('/api/handoff/'.length));
+    if (!/^[A-Za-z0-9]{16,64}$/.test(code)) return json({ error: '交接码格式不正确' }, 400);
+    const row = await env.DB.prepare('SELECT code, payload, expires_at, used FROM handoffs WHERE code = ?').bind(code).first();
+    if (!row) return json({ error: '交接码不存在或已被使用，请在扩展里重新发送' }, 404);
+    if (row.used) return json({ error: '交接码已使用过，请在扩展里重新发送' }, 410);
+    if (row.expires_at < Date.now()) return json({ error: '交接码已过期，请在扩展里重新发送' }, 410);
+    await env.DB.prepare('UPDATE handoffs SET used = 1 WHERE code = ?').bind(row.code).run();
+    let payload = {};
+    try { payload = JSON.parse(row.payload); } catch { /* 忽略 */ }
+    return json({ ok: true, payload });
+  }
+
+  // ---- 扩展报到：上报版本 / UA / 能力，面板据此显示「扩展在线 + 版本」----
+  if (path === '/api/external/hello' && method === 'POST') {
+    const deny = await extGuard();
+    if (deny) return deny;
+    const { version, ua, capabilities } = await readBody(req);
+    const info = {
+      version: String(version || '').slice(0, 24),
+      ua: String(ua || '').slice(0, 200),
+      capabilities: Array.isArray(capabilities) ? capabilities.slice(0, 20).map(String) : [],
+      last_seen: Date.now(),
+    };
+    await setSetting(env.DB, 'ext_status', JSON.stringify(info));
+    return json({ ok: true, server_version: '2.3' });
+  }
+
+  // ---- 扩展领取面板下发的指令（登录协助等）----
+  if (path === '/api/external/commands' && method === 'GET') {
+    const deny = await extGuard();
+    if (deny) return deny;
+    const { results } = await env.DB.prepare(
+      "SELECT id, kind, account_id, domain, login_url, payload FROM ext_commands WHERE status = 'pending' ORDER BY created_at LIMIT 5"
+    ).all();
+    return json({
+      commands: (results || []).map((c) => {
+        let payload = {};
+        try { payload = JSON.parse(c.payload || '{}'); } catch { /* 忽略 */ }
+        return { id: c.id, kind: c.kind, account_id: c.account_id, domain: c.domain || '', login_url: c.login_url || '', payload };
+      }),
+    });
+  }
+
+  // 扩展回传指令执行结果
+  if (path.startsWith('/api/external/commands/') && path.endsWith('/result') && method === 'POST') {
+    const deny = await extGuard();
+    if (deny) return deny;
+    const cid = path.slice('/api/external/commands/'.length, -'/result'.length);
+    const { status, result } = await readBody(req);
+    const st = status === 'done' ? 'done' : 'failed';
+    await env.DB.prepare("UPDATE ext_commands SET status=?, result=?, updated_at=? WHERE id=? AND status='pending'")
+      .bind(st, String(result || '').slice(0, 500), Date.now(), cid).run();
+    return json({ ok: true });
   }
 
   // ---- 诊断：中继队列状态（需要登录） ----
@@ -390,10 +325,8 @@ async function handleApi(req, env, url) {
 
   // Worker 提交中继请求
   if (path === '/api/external/relay' && method === 'POST') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const { url, method, headers, body, options } = await readBody(req);
     if (!url || !/^https?:\/\//i.test(String(url))) {
       return json({ error: 'url 非法' }, 400);
@@ -421,10 +354,8 @@ async function handleApi(req, env, url) {
   // Worker 查询中继结果（轮询）
   const mRelayGet = path.match(/^\/api\/external\/relay\/([A-Za-z0-9_]+)$/);
   if (mRelayGet && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const job = await env.DB.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(mRelayGet[1]).first();
     if (!job) return json({ error: '任务不存在' }, 404);
     if (job.status === 'pending') return json({ status: 'pending' });
@@ -441,10 +372,8 @@ async function handleApi(req, env, url) {
 
   // 扩展轮询待执行的中继任务
   if (path === '/api/external/relay-pending' && method === 'GET') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     // 记录扩展最后轮询时间，用于判断扩展是否在线（自动中继）
     await setSetting(env.DB, 'relay_last_poll', String(Date.now())).catch(() => {});
     const { results } = await env.DB.prepare(
@@ -465,10 +394,8 @@ async function handleApi(req, env, url) {
   // 扩展回传中继结果
   const mRelayResult = path.match(/^\/api\/external\/relay\/([A-Za-z0-9_]+)\/result$/);
   if (mRelayResult && method === 'POST') {
-    const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!(await checkExternalKey(env, apiKey))) {
-      return json({ error: '无效的 API Key' }, 401);
-    }
+    const deny = await extGuard();
+    if (deny) return deny;
     const { status, headers, body_base64, error } = await readBody(req);
     const now = Date.now();
     if (error) {
@@ -573,16 +500,7 @@ async function handleApi(req, env, url) {
         const m = JSON.parse(acc.meta || '{}');
         if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
       } catch { /* 忽略 */ }
-      if (execMode === 'browser') {
-        // 加入手动任务队列，扩展"立即执行"或下次轮询时执行
-        await env.DB.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)')
-          .bind(acc.id, Date.now()).run().catch(() => {});
-        // 写一条日志，让用户在日志里能看到任务已入队
-        await env.DB.prepare(
-          'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
-        ).bind(acc.id, acc.site, acc.name, 'skip', '已加入扩展待办', '等待浏览器扩展执行（点击扩展「▶ 立即执行待办签到」或等每小时自动轮询）', 0, Date.now()).run().catch(() => {});
-        return json({ ok: true, result: { status: 'ok', message: `${site?.name || acc.site} 已加入扩展待办。请点击浏览器扩展的「▶ 立即执行待办签到」，或等待扩展自动执行（每小时）。` } });
-      }
+      // 浏览器模式已并入本地中继：直接执行，扩展在线即走用户本地网络（见 runner.js）
       const r = await runAccount(env, acc);
       return json({ ok: r.status === 'ok', result: r });
     }
@@ -804,6 +722,57 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
+  // ---- 扩展连接状态（面板展示用）----
+  if (path === '/api/ext-status' && method === 'GET') {
+    const lastSeen = parseInt((await getSetting(env.DB, 'ext_last_seen')) || '0', 10) || 0;
+    const lastSigned = parseInt((await getSetting(env.DB, 'ext_last_signed')) || '0', 10) || 0;
+    let info = {};
+    try { info = JSON.parse((await getSetting(env.DB, 'ext_status')) || '{}'); } catch { /* 忽略 */ }
+    let pending = 0;
+    try {
+      const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM ext_commands WHERE status = 'pending'").first();
+      pending = (row && row.n) || 0;
+    } catch { /* 忽略 */ }
+    return json({
+      online: !!lastSeen && Date.now() - lastSeen < 120000,
+      last_seen_ago_sec: lastSeen ? Math.floor((Date.now() - lastSeen) / 1000) : null,
+      version: info.version || '',
+      ua: info.ua || '',
+      capabilities: info.capabilities || [],
+      signed_recently: !!lastSigned && Date.now() - lastSigned < 600000,
+      require_sign: (await getSetting(env.DB, 'ext_require_sign')) === '1',
+      pending_commands: pending,
+    });
+  }
+
+  // ---- 扩展签名策略开关（默认关闭以兼容旧版扩展）----
+  if (path === '/api/ext-security' && method === 'GET') {
+    return json({ require_sign: (await getSetting(env.DB, 'ext_require_sign')) === '1' });
+  }
+  if (path === '/api/ext-security' && method === 'PUT') {
+    const { require_sign } = await readBody(req);
+    await setSetting(env.DB, 'ext_require_sign', require_sign ? '1' : '0');
+    return json({ ok: true, require_sign: !!require_sign });
+  }
+
+  // ---- 让扩展帮某个账号打开登录页（登录/过验证后自动把新 Cookie 交接回面板）----
+  if (path.startsWith('/api/accounts/') && path.endsWith('/assist') && method === 'POST') {
+    const id = Number(path.slice('/api/accounts/'.length, -'/assist'.length));
+    const acc = await env.DB.prepare('SELECT id, site, name FROM accounts WHERE id = ?').bind(id).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    const meta = siteMeta().find((s) => s.id === acc.site) || {};
+    const login = meta.login || {};
+    const loginUrl = login.url || (meta.domain ? 'https://' + meta.domain + '/' : '');
+    if (!loginUrl) return json({ error: '该站点没有登记登录地址，请手动在浏览器打开站点登录后再用扩展抓取' }, 400);
+    const cid = 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO ext_commands(id, kind, account_id, domain, login_url, payload, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
+      .bind(cid, 'open_login', id, meta.domain || '', loginUrl,
+        JSON.stringify({ site: acc.site, name: acc.name, captcha: login.captcha || 'maybe', note: login.note || '' }),
+        'pending', now, now).run();
+    return json({ ok: true, command_id: cid, login_url: loginUrl, captcha: login.captcha || 'maybe', note: login.note || '' });
+  }
+
   return json({ error: '未知接口' }, 404);
 }
 
@@ -813,7 +782,7 @@ export default {
       const url = new URL(req.url);
       await ensureSchema(env.DB);
       if (url.pathname.startsWith('/api/')) return await handleApi(req, env, url);
-      // 扩展下载：动态生成 zip，把当前面板地址注入进去（扩展自动带出面板地址）
+      // 扩展下载：动态生成 zip，把当前面板地址注入进去（扩展自动带出面板地址；API Key 仍需手动填）
       if (url.pathname === '/cookie-helper-extension.zip') return await handleExtZip(req, env);
       if (url.pathname === '/cookie-plugin-2.2.zip') return await handleExtZip(req, env);
       // 非 API 请求交给静态资源（public 目录）
@@ -852,7 +821,7 @@ export default {
               const m = JSON.parse(acc.meta || '{}');
               if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
             } catch { /* 忽略 */ }
-            if (execMode === 'browser') continue;
+            // 浏览器模式已并入本地中继：不再跳过，由 runAccount 决定（扩展在线走本地网络，离线则记 skip）
             const hour = accountHour(acc.meta, globalTime);
             const lastKey = lastMap[String(acc.id)];
             const { run, key } = shouldRun(now, hour, tz, lastKey);

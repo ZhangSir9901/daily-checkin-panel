@@ -10,6 +10,8 @@
 //
 // extract 的点路径：如 data.token；也支持 data.list.0.id。
 
+import { classifySignal, needsHuman, OUTCOME } from '../lib/signals.js';
+
 function subst(str, vars) {
   return String(str == null ? '' : str).replace(/\{\{\s*([\w$]+)\s*\}\}/g, (_, k) =>
     vars[k] == null ? '' : String(vars[k])
@@ -79,11 +81,20 @@ export async function runHttpSteps(steps) {
     }
 
     const expectStatus = parseInt(st.expect_status || '200', 10);
-    if (res.status !== expectStatus) {
-      throw new Error(`${name}：状态码 ${res.status}，期望 ${expectStatus}。响应前 200 字符：${text.slice(0, 200)}`);
+    // 统一识别网站反馈：登录失效 / 验证码 / WAF / 已签到 都能给出可操作结论，
+    // 而不是只报一个生硬的状态码。很多站点重复签到会返回非预期内容，这里不该算失败。
+    const sig = classifySignal(text, { status: res.status });
+    const already = sig.outcome === OUTCOME.ALREADY; // 「今日已签到」不是错误
+    const snippet = `响应前 200 字符：${text.slice(0, 200)}`;
+    const blocked = needsHuman(sig.outcome) ? `${name}：${sig.label}。${snippet}` : '';
+
+    if (res.status !== expectStatus && !already) {
+      if (blocked) throw new Error(blocked);
+      throw new Error(`${name}：状态码 ${res.status}，期望 ${expectStatus}。${snippet}`);
     }
-    if (st.expect_contains && !text.includes(st.expect_contains)) {
-      throw new Error(`${name}：响应不包含期望内容「${st.expect_contains}」。响应前 200 字符：${text.slice(0, 200)}`);
+    if (st.expect_contains && !text.includes(st.expect_contains) && !already) {
+      if (blocked) throw new Error(blocked);
+      throw new Error(`${name}：响应不包含期望内容「${st.expect_contains}」。${snippet}`);
     }
   }
   const varDesc = Object.keys(vars).length ? `（提取变量：${Object.keys(vars).join('、')}）` : '';

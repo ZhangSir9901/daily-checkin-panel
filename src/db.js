@@ -45,6 +45,34 @@ const MIGRATIONS = [
     account_id INTEGER NOT NULL,
     created_at INTEGER NOT NULL
   )`).run(),
+  // v7：handoffs（扩展→面板的「一次性交接码」：Cookie 整包改为服务端暂存，
+  // 只在 URL 里放一个短码，避免登录凭据进入浏览器历史/地址栏/被第三方资源带走）
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS handoffs (
+    code TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used INTEGER NOT NULL DEFAULT 0
+  )`).run(),
+  // v8：api_nonces（扩展签名请求的防重放记录）
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS api_nonces (
+    nonce TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+  )`).run(),
+  // v9：ext_commands（面板 → 扩展的指令通道：打开登录页/刷新 Cookie 等）
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS ext_commands (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    account_id INTEGER,
+    domain TEXT,
+    login_url TEXT,
+    payload TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'pending',
+    result TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run(),
+  async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_ext_cmd_status ON ext_commands(status, created_at)').run(),
 ];
 
 export async function ensureSchema(db) {

@@ -232,4 +232,44 @@ await t('nodeseek：失败时错误带 detail', async () => {
   assert.match(err.detail || '', /网站返回.*参数错误/);
 });
 
+await t('52pojie：签到成功后附带吾爱币/威望（参考 Discuz 签到脚本的积分反馈）', async () => {
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const raw = (bytes, status = 200) => ({
+      status, headers: { get: () => null }, text: async () => '',
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+    // 注意：apply 的 URL 里也带 referer=%2Fportal.php，需先判 do=apply
+    if (u.includes('ac=credit')) return raw(te.encode('<html><em>吾爱币:</em>123<em>威望:</em>45<em>热心值:</em>7</html>'));
+    if (u.includes('do=apply')) return raw(te.encode('<html>恭喜，签到成功，获得吾爱币</html>'));
+    if (u.includes('portal.php')) return raw(te.encode(PJ_HOME_CLEAN));
+    throw new Error('unexpected fetch: ' + u);
+  };
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' });
+  assert.equal(r.ok, true);
+  assert.match(r.message, /签到成功/);
+  assert.match(r.message, /吾爱币 123/);
+  assert.match(r.message, /威望 45/);
+  assert.match(r.message, /热心值 7/);
+});
+
+await t('52pojie：GBK 页面按 GBK 解码，网站回馈不乱码', async () => {
+  // '恭喜签到成功' 的 GBK 字节（utf8 解码会成乱码，gbk 解码正常）
+  const GBK = Uint8Array.from([0xB9, 0xA7, 0xCF, 0xB2, 0xC7, 0xA9, 0xB5, 0xBD, 0xB3, 0xC9, 0xB9, 0xA6]);
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const raw = (bytes) => ({
+      status: 200, headers: { get: () => null }, text: async () => '',
+      arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    });
+    if (u.includes('do=apply')) return raw(GBK);
+    if (u.includes('portal.php')) return raw(te.encode('<html>论坛首页</html>'));
+    throw new Error('unexpected fetch: ' + u);
+  };
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' });
+  assert.equal(r.ok, true);
+  assert.match(r.message, /恭喜签到成功/, '实际：' + r.message);
+  assert.ok(!/ï¿½|\uFFFD/.test(r.message), '不应出现替换字符');
+});
+
 console.log(`\n${n} 组通过`);

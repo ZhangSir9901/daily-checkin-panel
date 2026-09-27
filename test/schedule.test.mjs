@@ -14,30 +14,35 @@ t('北京时间整点判断', () => {
   assert.equal(p.hour, '08');
 });
 
-t('到达整点且未跑过 → 执行', () => {
-  const r = shouldRun(D0830, '08', 'Asia/Shanghai', null);
+t('到达设定分钟且未跑过 → 执行（含分钟键）', () => {
+  const r = shouldRun(D0830, '08:30', 'Asia/Shanghai', null);
   assert.equal(r.run, true);
-  assert.equal(r.key, '2026-09-27 08');
+  assert.equal(r.key, '2026-09-27 08:30');
 });
 
-t('本小时已跑过 → 跳过', () => {
-  const r = shouldRun(D0830, '08', 'Asia/Shanghai', '2026-09-27 08');
+t('纯小时格式按整点匹配：08:30 未到 08:00 → 跳过', () => {
+  const r = shouldRun(D0830, '08', 'Asia/Shanghai', null);
   assert.equal(r.run, false);
 });
 
-t('未到整点 → 跳过', () => {
-  const r = shouldRun(D0830, '09', 'Asia/Shanghai', null);
+t('该分钟已跑过 → 跳过', () => {
+  const r = shouldRun(D0830, '08:30', 'Asia/Shanghai', '2026-09-27 08:30');
   assert.equal(r.run, false);
+});
+
+t('未到设定时间 → 跳过', () => {
+  assert.equal(shouldRun(D0830, '09:00', 'Asia/Shanghai', null).run, false);
+  assert.equal(shouldRun(D0830, '08:29', 'Asia/Shanghai', null).run, false);
 });
 
 t('UTC 时区换算', () => {
-  // 同一时刻 UTC 是 00:30，设 00 点应执行
-  const r = shouldRun(D0830, '00', 'UTC', null);
+  // 同一时刻 UTC 是 00:30，设 00:30 应执行
+  const r = shouldRun(D0830, '00:30', 'UTC', null);
   assert.equal(r.run, true);
 });
 
 t('非法时区回退上海', () => {
-  const r = shouldRun(D0830, '08', 'Invalid/TZ', null);
+  const r = shouldRun(D0830, '08:30', 'Invalid/TZ', null);
   assert.equal(r.run, true);
 });
 

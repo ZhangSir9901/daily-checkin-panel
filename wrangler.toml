@@ -10,13 +10,16 @@ compatibility_date = "2024-01-01"
 directory = "./public"
 not_found_handling = "single-page-application"
 
-# 每小时触发一次，Worker 内按「签到时间设置」（默认北京时间 08:00）判断是否执行
-# 时间在面板网页「设置」里修改，无需重新部署
+# 每分钟触发一次：Worker 内部再按「签到时间设置」（默认 08:00）比对小时+分钟，
+# 到点且该时刻没跑过才真正执行（见 src/schedule.js 的 shouldRun），因此不会重复签到。
+# 频率必须至少到「分钟」，否则面板里的 08:30 这类分钟级时间不会生效。
+# 时间/时区都在面板网页「设置」里改，无需重新部署。
 [triggers]
 crons = ["* * * * *"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "daily-checkin-panel"
-# 由 Cloudflare 仪表盘创建的 D1 数据库（daily-checkin-panel），填入其 database_id
+# 由 Cloudflare 仪表盘 / wrangler d1 create 创建的 D1 数据库，填入其 database_id。
+# 下面的值是原作者的库，你自己部署时**必须换成你自己的 database_id**，否则会连不上。
 database_id = "23a3455d-69d7-49ec-a71f-4440dff9957c"

@@ -1,13 +1,14 @@
 // 签到面板 Cookie 助手 - 后台执行引擎
 // 每小时从面板获取 browser 模式的待执行任务，在用户浏览器中完成签到（使用用户网络），上报结果。
 
-// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 __PANEL_URL__ 占位符）
+// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 https://daily-checkin-panel.guo527029137.workers.dev 占位符）
 const DEFAULT_PANEL_URL = '__PANEL_URL__';
 
 const ALARM_NAME = 'checkin-jobs';
-const CHECK_INTERVAL_MIN = 60; // 每小时检查一次（签到任务）
+const CHECK_INTERVAL_MIN = 5; // 每 5 分钟领一次待办签到任务（面板点“执行”后无需等一小时）
 const RELAY_ALARM = 'relay-poll';
 const RELAY_INTERVAL_MIN = 0.25; // 中继代理 15 秒轮询一次（任务来时快速响应）
+const RELAY_JOB_TIMEOUT_MS = 45000; // 单个中继任务硬超时，超时也要回传，避免任务永久卡在 pending
 
 // 获取面板地址和 API Key
 async function getConfig() {
@@ -45,17 +46,78 @@ async function reportResult(panelUrl, apiKey, accountId, status, message, durati
   }).catch(() => { /* 上报失败不阻塞 */ });
 }
 
+// 原生页面巡检：不依赖 eval / new Function（MV3 已禁止），用于读取网站真实反馈。
+// 返回 { ok, message } 或 null。
+async function inspectPage(tabId) {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const title = document.title || '';
+      const bodyText = (document.body && document.body.innerText) || '';
+      const html = document.documentElement ? document.documentElement.innerHTML : '';
+      const all = bodyText + '\n' + html;
+      const compact = bodyText.replace(/\s+/g, ' ').trim();
+
+      // 1) 人机验证 / 验证码 / WAF：优先判定——这些页面里往往也夹带「签到」字样
+      const CAPTCHA = ['验证码', '人机验证', '安全验证', '请完成验证', '滑动验证', '滑块', '智能验证', 'slidercaptcha', 'geetest', '极验', 'recaptcha', 'hcaptcha', 'turnstile', 'cf_chl', 'challenge-platform', 'Just a moment', 'checking your browser', 'turing.captcha.qcloud.com', 'TCaptcha', 'CaptchaAId', 'ibex'];
+      if (CAPTCHA.some((m) => all.includes(m))) {
+        return { ok: false, message: '遇到人机验证/安全验证（验证码/滑块），需人工验证后重试｜页面：' + title };
+      }
+      const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'Access Denied', '403 Forbidden', '请求被拦截'];
+      if (WAF.some((m) => all.includes(m))) {
+        return { ok: false, message: '遇到网站安全防护（WAF），请在浏览器完成验证后重试｜页面：' + title };
+      }
+      // 2) 签到成功
+      if (/任务已完成|签到成功|打卡成功|签到完毕|签到完成|已连续签到|领取成功|成功领取|恭喜.{0,12}(获得|领到|签到)|获得.{0,10}(鸡腿|积分|金币|铜币|银币|AK|币|空间|MB|GB|M|G)/.test(all)) {
+        return { ok: true, message: '签到成功｜' + (compact.slice(0, 120) || title) };
+      }
+      // 3) 今日已签到（Discuz 重复申请会返回「您已完成过此任务」）
+      if (/今日已签到|今天已签到|已经签到|已签到|重复签到|请勿重复|无需重复|下期再来|已完成过此任务|已领取/.test(all)) {
+        return { ok: true, message: '今日已签到，无需重复' };
+      }
+      // 4) 未登录
+      if (/需要先登录|请先登录|还未登录|请登录后|登录已失效|登录失效|请重新登录|未登录/.test(all)) {
+        return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+      }
+      return { ok: false, message: '未识别到成功标识｜页面：' + title + '｜' + compact.slice(0, 140) };
+    },
+  });
+  return (results && results[0] && results[0].result) || null;
+}
+
+// 尝试执行面板下发的脚本字符串。
+// 注意：MV3 禁止 new Function / eval，多数情况下这里会失败——失败时由调用方回退到原生巡检。
+async function runPanelScript(tabId, job) {
+  const execPromise = chrome.scripting.executeScript({
+    target: { tabId },
+    func: (scriptStr, params) => {
+      const fn = new Function('params', `return (${scriptStr})(params)`);
+      return fn(params);
+    },
+    args: [job.script, job.params || {}],
+  });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('脚本执行超时（60秒）')), 60000)
+  );
+  const results = await Promise.race([execPromise, timeoutPromise]);
+  return (results && results[0] && results[0].result) || null;
+}
+
 // 在目标域名的标签页中执行签到脚本
 async function executeJob(job) {
   const startMs = Date.now();
   let tab = null;
+  let created = false;
   try {
+    // 与 popup 保持一致：缺域名时直接报错，避免误开 https://undefined/ 标签页
+    if (!job.domain) throw new Error('任务缺少目标域名');
     // 找一个该域名的已存在标签页，复用；没有则新建隐藏标签页
     const tabs = await chrome.tabs.query({ url: `*://${job.domain}/*` });
     if (tabs.length > 0) {
       tab = tabs[0];
     } else {
       tab = await chrome.tabs.create({ url: `https://${job.domain}/`, active: false });
+      created = true;
       // 等待页面加载完成
       await new Promise((resolve) => {
         const listener = (tabId, info) => {
@@ -85,24 +147,20 @@ async function executeJob(job) {
       await new Promise((r) => setTimeout(r, 2000));
     }
 
-    // 在页面上下文中执行签到脚本
-    // 脚本是面板下发的自包含 async 函数，入参为 params，返回 { ok, message }
-    const execPromise = chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (scriptStr, params) => {
-        const fn = new Function('params', `return (${scriptStr})(params)`);
-        return fn(params);
-      },
-      args: [job.script, job.params || {}],
-    });
-    // 60秒超时保护，防止脚本卡死
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('脚本执行超时（60秒）')), 60000)
-    );
-    const results = await Promise.race([execPromise, timeoutPromise]);
-
-    const result = results && results[0] && results[0].result;
-    if (!result) throw new Error('脚本无返回结果');
+    // 执行签到。
+    // MV3 禁止 new Function / eval，面板下发的脚本字符串通常无法执行；
+    // 因此：有 navigate_url 的任务直接对目标页做原生巡检；否则先试面板脚本，拿不到结果就回退原生巡检。
+    let result = null;
+    if (!job.navigate_url && job.script) {
+      try {
+        result = await runPanelScript(tab.id, job);
+      } catch (e) {
+        console.log('[签到面板] 面板脚本执行失败，回退原生巡检：', e.message || e);
+        result = null;
+      }
+    }
+    if (!result) result = await inspectPage(tab.id);
+    if (!result) throw new Error('无法读取页面内容（标签页可能已关闭或被重定向）');
 
     return {
       status: result.ok ? 'ok' : 'fail',
@@ -116,8 +174,10 @@ async function executeJob(job) {
       durationMs: Date.now() - startMs,
     };
   } finally {
-    // 如果是我们新建的标签页，执行完关闭（复用的则保留）
-    // 简单起见：不自动关闭，避免打断用户正在看的页面
+    // 只关闭“我们自己新建”的标签页（复用的、用户正在看的保留），避免每次签到累积一堆隐藏标签页
+    if (created && tab && tab.id) {
+      chrome.tabs.remove(tab.id).catch(() => {});
+    }
   }
 }
 
@@ -277,7 +337,11 @@ async function runRelay() {
   for (const job of jobs) {
     try {
       console.log(`[签到面板] 中继请求：${job.method} ${job.url}`);
-      const result = await executeRelayJob(job);
+      // 硬超时：即使页面 fetch 或注入挂起，也必须回传结果，否则任务会永久卡在队列
+      const result = await Promise.race([
+        executeRelayJob(job),
+        new Promise((resolve) => setTimeout(() => resolve({ error: `中继执行超时（${RELAY_JOB_TIMEOUT_MS / 1000}秒），已放弃该请求` }), RELAY_JOB_TIMEOUT_MS)),
+      ]);
       await submitRelayResult(panelUrl, apiKey, job.id, result);
     } catch (e) {
       console.error(`[签到面板] 中继任务 ${job.id} 失败:`, e);

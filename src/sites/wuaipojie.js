@@ -15,7 +15,7 @@
 // 3. 遇到 WAF 页时模块会明确报错提示重新验证，不会静默失败。
 
 const WAF_MARKS = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中', 'Please enable JavaScript'];
-const SIGNED_MARKS = ['今日已签到', '今日已签', '已经签到', '已完成', '下期再来', 'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´']; // 后两项为 GBK 被误作 Latin1 解码时的特征
+const SIGNED_MARKS = ['今日已签到', '今日已签', '已经签到', '已完成', '您已完成过此任务', '下期再来', 'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´']; // 后两项为 GBK 被误作 Latin1 解码时的特征
 const SUCCESS_MARKS = ['签到成功', '打卡成功', '恭喜', '获得', '吾爱币', '热心值'];
 const PAUSED_MARKS = ['暂停签到', '签到暂停', '暂停每日签到', '签到功能维护'];
 const LOGIN_MARKS = ['请先登录', '需要先登录', '请登录后'];
@@ -33,6 +33,55 @@ async function fetchDualText(url, init) {
 function has(texts, marks) {
   const all = texts.utf8 + '\n' + texts.gbk;
   return marks.some((m) => all.includes(m));
+}
+
+// 去掉脚本/标签，得到可读的页面纯文本（用于「网站反馈」展示网站真实回馈）
+// 52pojie 页面是 GBK：同一段字节用 utf8 解码会得到带替换字符(U+FFFD)的乱码。
+// 判据：utf8 解码出现替换字符、而 gbk 解码没有 → 按 GBK 取文本，
+// 否则保留 utf8（UTF-8 页面不会被误判）。不能用「谁的中文更多」——GBK 错解 UTF-8
+// 也会得到一批汉字乱码，反而会选错。
+function pickText(texts) {
+  const u = (texts && texts.utf8) || '';
+  const g = (texts && texts.gbk) || '';
+  if (!u) return g;
+  if (u.includes('\uFFFD') && !g.includes('\uFFFD')) return g;
+  return u;
+}
+
+function clean(texts) {
+  const t = pickText(texts) || '';
+  return t.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// 签到后顺带读一次积分页，把「吾爱币 / 威望 / 热心值」带进日志（参考 Discuz 任务签到脚本做法）
+// 纯 best-effort：读不到就返回空串，不影响签到结果
+async function creditSuffix(headers) {
+  try {
+    const page = await fetchDualText('https://www.52pojie.cn/home.php?mod=spacecp&ac=credit', { headers });
+    assertNoWaf(page);
+    const t = clean(page);
+    const pick = (label) => {
+      const m = t.match(new RegExp(label + '\\s*[:：]?\\s*(\\d+)'));
+      return m ? m[1] : '';
+    };
+    const parts = [];
+    const coin = pick('吾爱币');
+    const credit = pick('威望');
+    const hot = pick('热心值');
+    if (coin) parts.push(`吾爱币 ${coin}`);
+    if (credit) parts.push(`威望 ${credit}`);
+    if (hot) parts.push(`热心值 ${hot}`);
+    return parts.length ? '（当前 ' + parts.join('，') + '）' : '';
+  } catch {
+    return '';
+  }
+}
+
+// 从页面里挑出与签到相关的一句话，作为真实网站回馈
+function pickLine(texts) {
+  const text = clean(texts);
+  const m = text.match(/[^\s]{0,20}(任务已完成|签到成功|打卡成功|已签到|已经签到|恭喜|下期再来|获得[^\s]{0,10})[^\s]{0,30}/);
+  return (m ? m[0] : text.slice(0, 120)).trim();
 }
 
 function assertNoWaf(texts) {
@@ -80,7 +129,7 @@ export const wuaipojie = {
   ],
   tips: '关键：① 先用浏览器打开 www.52pojie.cn，完成滑块/安全验证并登录；② F12 复制完整 Cookie（必须含 wzws_cid，有时还有 wzws_sid）；③ User-Agent 填抓包浏览器的完整 UA，必须一致。Cookie 遇到 WAF 失效时面板会明确提示，重新用浏览器验证一次并更新 Cookie 即可。',
 
-  async run(creds, ctx) {
+  async run(creds, ctx = {}) {
     const cookie = String(creds.cookie || '').trim();
     const ua = String(creds.user_agent || '').trim();
     if (!cookie) throw new Error('Cookie 未配置');
@@ -102,7 +151,8 @@ export const wuaipojie = {
       throw new Error('论坛官方暂停签到（开放注册期间），等恢复后再试');
     }
     if (has(home, SIGNED_MARKS)) {
-      return { ok: true, message: '今日已签到，无需重复' };
+      const suffix = await creditSuffix(baseHeaders);
+      return { ok: true, message: '今日已签到，无需重复：' + pickLine(home) + suffix, detail: '网站返回：' + clean(home).slice(0, 300) };
     }
     if (has(home, LOGIN_MARKS) || (/mod=logging/i.test(home.utf8) && !/mod=space/i.test(home.utf8))) {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
@@ -112,7 +162,7 @@ export const wuaipojie = {
     let url = 'https://www.52pojie.cn/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php';
     let final = null;
     // 中继模式下无法使用 redirect:'manual'（opaqueredirect 响应头不可读），改用 follow 让浏览器自动跟随
-    const redirectMode = ctx.relayDb ? 'follow' : 'manual';
+    const redirectMode = ctx && ctx.relayDb ? 'follow' : 'manual';
     for (let i = 0; i < 4; i++) {
       const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: redirectMode });
       assertNoWaf({ utf8, gbk });
@@ -128,10 +178,12 @@ export const wuaipojie = {
     if (!final) throw new Error('签到失败：重定向次数过多');
 
     if (has(final, SUCCESS_MARKS)) {
-      return { ok: true, message: '签到成功' };
+      const suffix = await creditSuffix(baseHeaders);
+      return { ok: true, message: '签到成功：' + pickLine(final) + suffix, detail: '网站返回：' + clean(final).slice(0, 300) };
     }
     if (has(final, SIGNED_MARKS)) {
-      return { ok: true, message: '今日已签到，无需重复' };
+      const suffix = await creditSuffix(baseHeaders);
+      return { ok: true, message: '今日已签到，无需重复：' + pickLine(final) + suffix, detail: '网站返回：' + clean(final).slice(0, 300) };
     }
     if (has(final, LOGIN_MARKS)) {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
