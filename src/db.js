@@ -21,6 +21,22 @@ const MIGRATIONS = [
   async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_runs_account ON runs(account_id, created_at DESC)').run(),
   // v3：runs.detail（网站原始回馈，日志页"网站回馈"展示用）
   async (db) => ensureColumn(db, 'runs', 'detail', 'TEXT'),
+  // v4：relay_jobs（本地网络中继代理：Worker 把 HTTP 请求发给浏览器扩展，用用户本地网络执行）
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS relay_jobs (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    method TEXT NOT NULL DEFAULT 'GET',
+    headers TEXT NOT NULL DEFAULT '{}',
+    body TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resp_status INTEGER,
+    resp_headers TEXT,
+    resp_body TEXT,
+    error TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run(),
+  async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_relay_status ON relay_jobs(status, created_at)').run(),
 ];
 
 export async function ensureSchema(db) {

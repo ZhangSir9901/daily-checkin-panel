@@ -2,7 +2,9 @@
 // 每小时从面板获取 browser 模式的待执行任务，在用户浏览器中完成签到（使用用户网络），上报结果。
 
 const ALARM_NAME = 'checkin-jobs';
-const CHECK_INTERVAL_MIN = 60; // 每小时检查一次
+const CHECK_INTERVAL_MIN = 60; // 每小时检查一次（签到任务）
+const RELAY_ALARM = 'relay-poll';
+const RELAY_INTERVAL_MIN = 0.25; // 中继代理 15 秒轮询一次（任务来时快速响应）
 
 // 获取面板地址和 API Key
 async function getConfig() {
@@ -128,20 +130,139 @@ async function runJobs() {
   }
 }
 
+// ============ 本地网络中继代理 ============
+// Worker 把 HTTP 请求存入面板队列，扩展用用户本地网络执行后回传响应。
+// 这样 Worker 端的站点逻辑可以使用用户本地 IP，绕过 CF/Worker IP 限制。
+
+// base64 ↔ Uint8Array
+function b64ToBytes(b64) {
+  const s = atob(b64);
+  const arr = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) arr[i] = s.charCodeAt(i);
+  return arr;
+}
+function bytesToB64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+
+// 获取待执行的中继任务
+async function fetchRelayJobs(panelUrl, apiKey) {
+  const resp = await fetch(panelUrl + '/api/external/relay-pending', {
+    headers: { 'X-Api-Key': apiKey },
+  });
+  if (!resp.ok) throw new Error('HTTP ' + resp.status);
+  const data = await resp.json();
+  return data.jobs || [];
+}
+
+// 回传中继结果
+async function submitRelayResult(panelUrl, apiKey, jobId, result) {
+  await fetch(panelUrl + '/api/external/relay/' + jobId + '/result', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+    body: JSON.stringify(result),
+  }).catch(() => { /* 忽略 */ });
+}
+
+// 在目标域名的页面上下文中执行单个 HTTP 请求（携带用户 Cookie）
+async function executeRelayJob(job) {
+  const url = new URL(job.url);
+  const domain = url.hostname;
+  let tab = null;
+  let created = false;
+  try {
+    const tabs = await chrome.tabs.query({ url: `*://${domain}/*` });
+    if (tabs.length > 0) {
+      tab = tabs[0];
+    } else {
+      tab = await chrome.tabs.create({ url: `https://${domain}/`, active: false });
+      created = true;
+      await new Promise((resolve) => {
+        const listener = (tabId, info) => {
+          if (tabId === tab.id && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(resolve, 15000);
+      });
+    }
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (url, method, headers, bodyB64) => {
+        const b64ToBytes = (b64) => {
+          const s = atob(b64);
+          const arr = new Uint8Array(s.length);
+          for (let i = 0; i < s.length; i++) arr[i] = s.charCodeAt(i);
+          return arr;
+        };
+        const bytesToB64 = (bytes) => {
+          let s = '';
+          for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+          return btoa(s);
+        };
+        const init = { method, headers, credentials: 'include' };
+        if (bodyB64) init.body = b64ToBytes(bodyB64);
+        const resp = await fetch(url, init);
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        const h = {};
+        resp.headers.forEach((v, k) => { h[k] = v; });
+        return { status: resp.status, headers: h, body_base64: bytesToB64(buf) };
+      },
+      args: [job.url, job.method, job.headers || {}, job.body_base64 || null],
+    });
+
+    const r = results && results[0] && results[0].result;
+    if (!r) throw new Error('无返回结果');
+    return { status: r.status, headers: r.headers, body_base64: r.body_base64 };
+  } catch (e) {
+    return { error: String(e.message || e).slice(0, 500) };
+  } finally {
+    // 复用的标签页保留，自己新建的关闭（避免堆积）
+    if (created && tab && tab.id) {
+      chrome.tabs.remove(tab.id).catch(() => {});
+    }
+  }
+}
+
+// 中继轮询主循环
+async function runRelay() {
+  const { panelUrl, apiKey } = await getConfig();
+  if (!panelUrl || !apiKey) return;
+  let jobs;
+  try {
+    jobs = await fetchRelayJobs(panelUrl, apiKey);
+  } catch {
+    return; // 面板不可达时静默
+  }
+  for (const job of jobs) {
+    console.log(`[签到面板] 中继请求：${job.method} ${job.url}`);
+    const result = await executeRelayJob(job);
+    await submitRelayResult(panelUrl, apiKey, job.id, result);
+  }
+}
+
 // 定时器
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) runJobs();
+  if (alarm.name === RELAY_ALARM) runRelay();
 });
 
 // 扩展安装/启动时设置定时器
 chrome.runtime.onInstalled.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: CHECK_INTERVAL_MIN });
+  chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
   // 安装后立即跑一次（方便验证）
   setTimeout(runJobs, 5000);
 });
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(ALARM_NAME, { periodInMinutes: CHECK_INTERVAL_MIN });
+  chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
 });
 
 // popup 手动触发

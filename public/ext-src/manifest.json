@@ -1,1 +1,24 @@
-{"action":{"default_popup":"popup.html","default_title":"签到面板助手"},"background":{"service_worker":"background.js"},"description":"签到面板浏览器执行引擎：在您的网络中自动完成签到，支持 Cookie 一键获取","host_permissions":["<all_urls>"],"manifest_version":3,"name":"签到面板助手","permissions":["cookies","activeTab","scripting","storage","alarms","tabs"],"version":"2.0"}
+{
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "签到面板助手"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "description": "签到面板本地网络代理：在您的网络中自动执行签到，支持 Cookie 一键获取",
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "manifest_version": 3,
+  "name": "签到面板助手",
+  "permissions": [
+    "cookies",
+    "activeTab",
+    "scripting",
+    "storage",
+    "alarms",
+    "tabs"
+  ],
+  "version": "2.1"
+}

@@ -970,9 +970,13 @@ async function loadAccounts() {
     const siteExec = site ? (site.execution || 'server') : 'server';
     const effExec = execOverride || siteExec;
     const execBadge = effExec === 'browser'
-      ? `<span class="badge" style="background:#e8f4fd;color:#1a73e8" title="在您的浏览器中执行（使用您的网络）">🌐 浏览器</span>`
-      : `<span class="badge" style="background:#f0f4f8;color:#5f6368" title="在云端执行">☁️ 云端</span>`;
-    const execTitle = execOverride ? `（已手动设为${effExec === 'browser' ? '浏览器' : '云端'}，点击切换）` : `（跟随站点默认：${siteExec === 'browser' ? '浏览器' : '云端'}，点击可手动覆盖）`;
+      ? `<span class="badge" style="background:#e8f4fd;color:#1a73e8" title="扩展在您的浏览器中执行完整签到（您的网络）">🌐 浏览器</span>`
+      : effExec === 'relay'
+      ? `<span class="badge" style="background:#fef3e2;color:#e8710a" title="Worker 逻辑 + 经扩展用您的本地网络执行（中继代理）">🔀 中继</span>`
+      : `<span class="badge" style="background:#f0f4f8;color:#5f6368" title="Worker 直接请求（云端 IP）">☁️ 云端</span>`;
+    const execName = effExec === 'browser' ? '浏览器' : effExec === 'relay' ? '中继代理' : '云端';
+    const siteExecName = siteExec === 'browser' ? '浏览器' : siteExec === 'relay' ? '中继代理' : '云端';
+    const execTitle = execOverride ? `（已手动设为${execName}，点击切换）` : `（跟随站点默认：${siteExecName}，点击可手动覆盖）`;
     return `
     <tr>
       <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
@@ -1027,7 +1031,13 @@ async function loadAccounts() {
     const id = b.dataset.exec;
     try {
       const r = await api('/api/accounts/' + id + '/execution', 'PUT', {});
-      toast(r.execution === 'browser' ? '已切换为浏览器执行（您的网络）' : r.execution === 'server' ? '已切换为云端执行' : '已恢复跟随站点默认');
+      const msgs = {
+        browser: '已切换为浏览器执行（扩展在您的网络中跑完整签到）',
+        relay: '已切换为中继代理（Worker 逻辑 + 您的本地网络）',
+        server: '已切换为云端执行（Worker 直接请求）',
+        default: '已恢复跟随站点默认',
+      };
+      toast(msgs[r.execution] || '已切换');
     } catch (e) { toast('切换失败：' + e.message); }
     loadAccounts();
   }));

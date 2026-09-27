@@ -236,6 +236,113 @@ async function handleApi(req, env, url) {
     return json({ jobs });
   }
 
+  // ---- 本地网络中继代理 ----
+  // Worker 把 HTTP 请求存入队列，浏览器扩展用用户本地网络执行后回传响应。
+  // 适用于：站点逻辑复杂、希望逻辑保留在 Worker，但需要用户本地 IP 的场景。
+  //
+  // POST /api/external/relay { url, method, headers, body } → { job_id }
+  //   body 为 base64（可空）；headers 为对象
+  // GET /api/external/relay/:id → { status: pending|done|failed, response?, error? }
+  //   response: { status, headers, body_base64 }
+  // GET /api/external/relay-pending → { jobs: [{ id, url, method, headers, body_base64 }] }（扩展轮询）
+  // POST /api/external/relay/:id/result { status, headers, body_base64 } 或 { error }
+  //   扩展执行完成后回传
+
+  // Worker 提交中继请求
+  if (path === '/api/external/relay' && method === 'POST') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!(await checkExternalKey(env, apiKey))) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const { url, method, headers, body } = await readBody(req);
+    if (!url || !/^https?:\/\//i.test(String(url))) {
+      return json({ error: 'url 非法' }, 400);
+    }
+    const id = 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+    const now = Date.now();
+    await env.DB.prepare(
+      'INSERT INTO relay_jobs(id, url, method, headers, body, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
+    ).bind(
+      id,
+      String(url),
+      String(method || 'GET').toUpperCase(),
+      JSON.stringify(headers || {}),
+      body ? String(body) : null, // base64
+      'pending',
+      now,
+      now
+    ).run();
+    // 清理 10 分钟前的旧任务（避免表无限增长）
+    await env.DB.prepare("DELETE FROM relay_jobs WHERE created_at < ?").bind(now - 600000).run().catch(() => {});
+    return json({ job_id: id });
+  }
+
+  // Worker 查询中继结果（轮询）
+  const mRelayGet = path.match(/^\/api\/external\/relay\/([A-Za-z0-9_]+)$/);
+  if (mRelayGet && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!(await checkExternalKey(env, apiKey))) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const job = await env.DB.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(mRelayGet[1]).first();
+    if (!job) return json({ error: '任务不存在' }, 404);
+    if (job.status === 'pending') return json({ status: 'pending' });
+    if (job.status === 'failed') return json({ status: 'failed', error: job.error || '执行失败' });
+    return json({
+      status: 'done',
+      response: {
+        status: job.resp_status,
+        headers: JSON.parse(job.resp_headers || '{}'),
+        body_base64: job.resp_body || '',
+      },
+    });
+  }
+
+  // 扩展轮询待执行的中继任务
+  if (path === '/api/external/relay-pending' && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!(await checkExternalKey(env, apiKey))) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const { results } = await env.DB.prepare(
+      "SELECT id, url, method, headers, body FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 10"
+    ).all();
+    return json({
+      jobs: (results || []).map((j) => ({
+        id: j.id,
+        url: j.url,
+        method: j.method,
+        headers: JSON.parse(j.headers || '{}'),
+        body_base64: j.body || null,
+      })),
+    });
+  }
+
+  // 扩展回传中继结果
+  const mRelayResult = path.match(/^\/api\/external\/relay\/([A-Za-z0-9_]+)\/result$/);
+  if (mRelayResult && method === 'POST') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!(await checkExternalKey(env, apiKey))) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const { status, headers, body_base64, error } = await readBody(req);
+    const now = Date.now();
+    if (error) {
+      await env.DB.prepare("UPDATE relay_jobs SET status='failed', error=?, updated_at=? WHERE id=? AND status='pending'")
+        .bind(String(error).slice(0, 500), now, mRelayResult[1]).run();
+    } else {
+      await env.DB.prepare("UPDATE relay_jobs SET status='done', resp_status=?, resp_headers=?, resp_body=?, updated_at=? WHERE id=? AND status='pending'")
+        .bind(
+          Number(status) || 0,
+          JSON.stringify(headers || {}),
+          body_base64 ? String(body_base64) : '',
+          now,
+          mRelayResult[1]
+        ).run();
+    }
+    return json({ ok: true });
+  }
+
   if (!(await authed(env, req))) return json({ error: '未登录' }, 401);
 
   // ---- 登录后接口 ----
@@ -288,7 +395,7 @@ async function handleApi(req, env, url) {
       let execMode = site?.execution || 'server';
       try {
         const m = JSON.parse(acc.meta || '{}');
-        if (m.execution === 'server' || m.execution === 'browser') execMode = m.execution;
+        if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
       } catch { /* 忽略 */ }
       if (execMode === 'browser') {
         return json({ ok: false, result: { status: 'fail', message: `${site?.name || acc.site} 为浏览器执行模式（使用您的网络），请确保浏览器扩展已安装并打开，它会自动执行。` } });
@@ -368,7 +475,10 @@ async function handleApi(req, env, url) {
   }
 
   // 账号执行模式切换：PUT /api/accounts/:id/execution
-  // 在 跟随默认 → browser → server → 跟随默认 之间循环
+  // 在 跟随默认 → browser → relay → server → 跟随默认 之间循环
+  // browser：扩展在用户浏览器中执行完整签到脚本（用户网络）
+  // relay：Worker 保留站点逻辑，HTTP 经扩展用用户本地网络执行（中继代理）
+  // server：Worker 直接请求（云端 IP）
   const mExec = path.match(/^\/api\/accounts\/(\d+)\/execution$/);
   if (mExec && method === 'PUT') {
     const id = Number(mExec[1]);
@@ -377,8 +487,8 @@ async function handleApi(req, env, url) {
     let meta = {};
     try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
     const cur = meta.execution || '';
-    // 循环：'' → 'browser' → 'server' → ''
-    const next = cur === '' ? 'browser' : cur === 'browser' ? 'server' : '';
+    // 循环：'' → 'browser' → 'relay' → 'server' → ''
+    const next = cur === '' ? 'browser' : cur === 'browser' ? 'relay' : cur === 'relay' ? 'server' : '';
     if (next === '') delete meta.execution;
     else meta.execution = next;
     await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')

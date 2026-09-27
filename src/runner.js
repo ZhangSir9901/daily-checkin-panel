@@ -21,8 +21,19 @@ export async function runAccount(env, account) {
   try {
     const site = getSite(account.site);
     if (!site) throw new Error('未知站点：' + account.site);
+    // 执行模式：账号覆盖 > 站点默认
+    let execMode = site.execution || 'server';
+    if (meta.execution === 'server' || meta.execution === 'browser' || meta.execution === 'relay') {
+      execMode = meta.execution;
+    }
+    if (execMode === 'browser') {
+      throw new Error('浏览器模式：请确保扩展已安装，它会自动执行');
+    }
     const creds = await decryptJSON(env, db, account.creds);
-    const res = await site.run(creds, { env, db, account, meta });
+    // 中继模式：传入 relayDb，站点模块用 relayFetch 经扩展走用户本地网络
+    const ctx = { env, db, account, meta };
+    if (execMode === 'relay') ctx.relayDb = db;
+    const res = await site.run(creds, ctx);
     status = res.ok ? 'ok' : 'fail';
     message = String(res.message || '').slice(0, 800);
     detail = String(res.detail || '').slice(0, 800);
