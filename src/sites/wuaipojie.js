@@ -184,22 +184,27 @@ export const wuaipojie = {
     // 早期版本拿「暂停签到 / 今日已签到」这类词扫整个首页，结果把一个正常可签的账号
     // 报成「论坛官方暂停签到，等恢复后再试」——所以这里绝不能再凭首页文本下签到结论。
     // 注：中继模式下 runner.js 会透明替换 global fetch，站点代码无需改动
-    let home, pauseHint = '';
-    try {
-      home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
-      assertNoWaf(home, home.res.status);
-      // 首页公告里提到暂停时，只当作「线索」留到最后当提示，不能当结论
-      pauseHint = has(home, PAUSED_MARKS)
-        ? '（注：门户页公告提到暂停签到，若确实暂停请等恢复）'
-        : '';
-    } catch (e) {
-      // 预检超时/中继失败：直接验证是否已签到，避免误报
-      if (/超时|timeout|中继|abort|network/i.test(e.message || '')) {
-        if (await verifySigned()) {
-          return { ok: true, message: '今日已签到（预检超时后验证确认：签到完毕）' };
+    // 优化：中继模式下跳过 portal.php 预检（省一次中继往返，52pojie 本来就慢）；
+    // WAF 检测移到签到页做，签到页有 WAF 同样能识别。
+    const isRelay = !!(ctx && ctx.relayDb);
+    let home = null, pauseHint = '';
+    if (!isRelay) {
+      try {
+        home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
+        assertNoWaf(home, home.res.status);
+        // 首页公告里提到暂停时，只当作「线索」留到最后当提示，不能当结论
+        pauseHint = has(home, PAUSED_MARKS)
+          ? '（注：门户页公告提到暂停签到，若确实暂停请等恢复）'
+          : '';
+      } catch (e) {
+        // 预检超时/中继失败：直接验证是否已签到，避免误报
+        if (/超时|timeout|中继|abort|network/i.test(e.message || '')) {
+          if (await verifySigned()) {
+            return { ok: true, message: '今日已签到（预检超时后验证确认：签到完毕）' };
+          }
         }
+        throw e;
       }
-      throw e;
     }
 
     // ② 签到（手动跟随重定向，最多 3 跳）
@@ -238,11 +243,12 @@ export const wuaipojie = {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
     }
     if (has(final, SUCCESS_MARKS)) {
-      const suffix = await creditSuffix(baseHeaders);
+      // 中继模式下跳过积分页（省一次中继往返，52pojie 本来就慢；积分只是展示用）
+      const suffix = isRelay ? '' : await creditSuffix(baseHeaders);
       return { ok: true, message: '签到成功：' + pickLine(final) + suffix, detail: '网站返回：' + clean(final).slice(0, 300) };
     }
     if (has(final, SIGNED_MARKS)) {
-      const suffix = await creditSuffix(baseHeaders);
+      const suffix = isRelay ? '' : await creditSuffix(baseHeaders);
       return { ok: true, message: '今日已签到，无需重复：' + pickLine(final) + suffix, detail: '网站返回：' + clean(final).slice(0, 300) };
     }
     if (has(final, LOGIN_MARKS)) {

@@ -211,7 +211,7 @@
   .row-hint { margin-top:5px; font-size:11px; line-height:1.5; color:var(--warn);
               max-width:230px; }
   .row-hint::before { content:"⚠️ "; }
-  .row-pills { margin-top:5px; display:flex; flex-wrap:wrap; gap:4px; }
+  .row-pills { margin-top:8px; display:flex; flex-wrap:wrap; gap:4px; justify-content:center; }
   /* 提示不再占一整行：改成一个小红标，鼠标移上去才弹出来（见 #_tip） */
   .hint-dot { display:inline-flex; align-items:center; justify-content:center; flex:none;
               width:16px; height:16px; border-radius:50%; font-size:11px; font-weight:700; line-height:1;
@@ -233,8 +233,11 @@
   th.c, td.c { text-align:center; }
   td.c { white-space:nowrap; }
   .site-cell { min-width:140px; text-align:center; }
-  /* nowrap：否则「徽章 + 切换 + 红标」会折行，红标孤零零掉到下面一行像杂物 */
-  .site-line { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:nowrap; margin-top:6px; }
+  .site-cell b { display:block; font-size:14px; margin-bottom:8px; }
+  /* 徽章+切换：允许换行，避免窄屏下「切换」被挤成两行 */
+  .site-line { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; margin-top:0; }
+  .site-line .ghost.sm { white-space:nowrap; flex-shrink:0; }
+  .site-line .badge { flex-shrink:0; }
   /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
   td.msg { width:100%; min-width:160px; max-width:280px; }
   .msg-main { font-size:12.5px; line-height:1.5;
