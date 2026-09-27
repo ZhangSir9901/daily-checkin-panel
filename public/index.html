@@ -996,7 +996,10 @@ $('btn-save').onclick = async () => {
     creds = { steps };
   } else {
     creds = {};
-    document.querySelectorAll('#f-fields [data-k]').forEach((el) => (creds[el.dataset.k] = el.value.trim()));
+    document.querySelectorAll('#f-fields [data-k]').forEach((el) => {
+      // 密码原样保存（首尾空格可能是密码的一部分），其他字段去首尾空格
+      creds[el.dataset.k] = el.type === 'password' ? el.value : el.value.trim();
+    });
   }
   const payload = { name: $('f-name').value.trim(), site: siteId, creds };
   try {
