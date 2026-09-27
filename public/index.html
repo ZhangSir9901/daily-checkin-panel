@@ -812,6 +812,28 @@ function guessSiteByDomain(domain) {
   return '';
 }
 
+// 扩展域名未匹配时，让用户手动选站点
+function openCookieSitePicker(cookie, domain, userAgent) {
+  const cookieSites = SITES.filter((s) => s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie'));
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  bg.innerHTML = `<div class="modal"><h2>选择站点</h2>
+    <p class="muted">来自域名：<b>${esc(domain)}</b>，未能自动识别，请手动选择：</p>
+    <label>站点</label>
+    <select id="cksp-site">${cookieSites.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="ghost" id="cksp-cancel">取消</button>
+      <button id="cksp-ok">下一步</button>
+    </div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector('#cksp-cancel').onclick = () => bg.remove();
+  bg.querySelector('#cksp-ok').onclick = () => {
+    const siteId = bg.querySelector('#cksp-site').value;
+    bg.remove();
+    openCookieApplyDialog(siteId, cookie, domain, { userAgent });
+  };
+}
+
 // 小书签/扩展跳回面板时（#ck=... 或 #ext-cookies=...）
 async function checkCookieHash() {
 // 扩展格式：#ext-cookies=base64({domain, cookies, userAgent, ts})
@@ -823,7 +845,10 @@ async function checkCookieHash() {
     if (!d || !d.cookies) return toast('扩展没有读取到 Cookie');
     // 按域名自动匹配站点
     const siteId = guessSiteByDomain(d.domain || '');
-    if (!siteId) return toast(`无法识别域名 ${d.domain} 对应的站点，请手动添加账号后粘贴 Cookie`);
+    if (!siteId) {
+      // 域名没匹配上，让用户手动选站点
+      return openCookieSitePicker(d.cookies, d.domain || '', d.userAgent || '');
+    }
     return openCookieApplyDialog(siteId, d.cookies, d.domain || '', { userAgent: d.userAgent || '' });
   }
   // 小书签格式：#ck=...
