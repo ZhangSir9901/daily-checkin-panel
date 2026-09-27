@@ -782,6 +782,10 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
         const accCreds = account.creds || {};
         if ((s.fields || []).some((f) => f.key === 'cookie') || accCreds.cookie !== undefined) {
           accCreds.cookie = cookie;
+          // 扩展带了 UA 且站点有 user_agent 字段时一并更新（吾爱等站点要求配对）
+          if (extra && extra.userAgent && (s.fields || []).some((f) => f.key === 'user_agent')) {
+            accCreds.user_agent = extra.userAgent;
+          }
         } else if (account.site === 'http') {
           let h = {};
           try { h = JSON.parse(accCreds.headers || '{}'); } catch { /* 忽略 */ }
@@ -797,14 +801,14 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
 
 // 小书签/扩展跳回面板时（#ck=... 或 #ext-cookies=...）
 async function checkCookieHash() {
-  // 扩展格式：#ext-cookies=base64({domain, cookies, ts})
+  // 扩展格式：#ext-cookies=base64({domain, cookies, userAgent, ts})
   const me = location.hash.match(/#ext-cookies=([A-Za-z0-9+/=]+)/);
   if (me) {
     history.replaceState(null, '', location.pathname);
     let d;
     try { d = JSON.parse(decodeURIComponent(escape(atob(me[1])))); } catch (e) { return toast('扩展 Cookie 数据解析失败'); }
     if (!d || !d.cookies) return toast('扩展没有读取到 Cookie');
-    return openCookieApplyDialog('', d.cookies, d.domain || '');
+    return openCookieApplyDialog('', d.cookies, d.domain || '', { userAgent: d.userAgent || '' });
   }
   // 小书签格式：#ck=...
   const m = location.hash.match(/#ck=([A-Za-z0-9\-_]+)/);
