@@ -50,23 +50,37 @@ export const wuaipojie = {
   // 入参 params：{}；返回 { ok, message }
   browserScript: `async (params) => {
     const base = 'https://www.52pojie.cn';
+    const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中'];
+    const isWaf = (t) => WAF.some((m) => t.includes(m));
     // ① 检查是否已签到
-    const portalResp = await fetch(base + '/portal.php', { credentials: 'include' });
+    let portalResp;
+    try {
+      portalResp = await fetch(base + '/portal.php', { credentials: 'include' });
+    } catch (e) {
+      return { ok: false, message: '网络请求失败：' + (e.message || 'fetch 异常') };
+    }
     const portalText = await portalResp.text();
+    if (isWaf(portalText)) return { ok: false, message: '遇到安全验证（WAF）：请在浏览器中打开 www.52pojie.cn 完成验证后重试' };
     if (/今日已签到/.test(portalText)) return { ok: true, message: '今日已签到，无需重复' };
     if (/请先登录|member.php\\?mod=logging/.test(portalText) && !/退出/.test(portalText)) {
       return { ok: false, message: '登录已失效，请重新获取 Cookie' };
     }
     // ② 执行签到
-    const signResp = await fetch(base + '/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php', {
-      credentials: 'include',
-      headers: { 'Referer': base + '/portal.php' },
-    });
+    let signResp;
+    try {
+      signResp = await fetch(base + '/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php', {
+        credentials: 'include',
+        headers: { 'Referer': base + '/portal.php' },
+      });
+    } catch (e) {
+      return { ok: false, message: '签到请求失败：' + (e.message || 'fetch 异常') };
+    }
     const text = await signResp.text();
+    if (isWaf(text)) return { ok: false, message: '签到时遇到安全验证（WAF）：请在浏览器中完成验证后重试' };
     if (/签到成功|打卡成功|恭喜|获得.*吾爱币/.test(text)) return { ok: true, message: '签到成功' };
     if (/今日已签到|已经签到|下期再来/.test(text)) return { ok: true, message: '今日已签到，无需重复' };
     if (/请先登录/.test(text)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
-    return { ok: false, message: '签到失败：未识别到成功标识' };
+    return { ok: false, message: '签到失败：未识别到成功标识（HTTP ' + signResp.status + '）' };
   }`,
   fields: [
     {
