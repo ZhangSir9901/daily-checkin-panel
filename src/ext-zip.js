@@ -123,10 +123,13 @@ export async function handleExtZip(req, env) {
   }
 
   const zipBytes = buildZip(files);
+  // 文件名用 RFC 5987 编码支持中文
+  const fileName = 'cookie插件2.2.zip';
+  const encodedName = encodeURIComponent(fileName).replace(/['()]/g, escape);
   return new Response(zipBytes, {
     headers: {
       'Content-Type': 'application/zip',
-      'Content-Disposition': 'attachment; filename="cookie-helper-extension.zip"',
+      'Content-Disposition': `attachment; filename="cookie-plugin-2.2.zip"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'no-store',
     },
   });

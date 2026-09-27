@@ -813,6 +813,7 @@ export default {
       if (url.pathname.startsWith('/api/')) return await handleApi(req, env, url);
       // 扩展下载：动态生成 zip，把当前面板地址注入进去（扩展自动带出面板地址）
       if (url.pathname === '/cookie-helper-extension.zip') return await handleExtZip(req, env);
+      if (url.pathname === '/cookie-plugin-2.2.zip') return await handleExtZip(req, env);
       // 非 API 请求交给静态资源（public 目录）
       if (env.ASSETS) {
         const res = await env.ASSETS.fetch(req);
