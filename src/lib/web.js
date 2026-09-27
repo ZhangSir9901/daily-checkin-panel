@@ -60,7 +60,13 @@ async function readJson(res) {
   try {
     j = await res.json();
   } catch {
-    throw new Error(`接口异常（HTTP ${res.status}），稍后重试`);
+    // JSON 解析失败：把网站实际返回的内容带出来，而不是只显示"失败"
+    let raw = '';
+    try { raw = await res.text(); } catch { /* 忽略 */ }
+    raw = String(raw || '').slice(0, 500);
+    const err = new Error(`网站返回非 JSON（HTTP ${res.status}）：${raw || '空响应'}`);
+    err.detail = raw;
+    throw err;
   }
   return j;
 }

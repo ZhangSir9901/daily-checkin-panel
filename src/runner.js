@@ -42,7 +42,20 @@ export async function runAccount(env, account) {
       useRelay = await isRelayAvailable(db);
     }
 
-    if (skipReason) throw new Error(skipReason);
+    if (skipReason) {
+      // 浏览器模式定时跳过：不记为失败，记为跳过
+      const duration = Date.now() - t0;
+      const now = Date.now();
+      await db
+        .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
+        .bind(account.id, account.site, account.name, 'skip', skipReason, '', duration, now)
+        .run();
+      await db
+        .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
+        .bind('skip', skipReason, now, JSON.stringify(meta), now, account.id)
+        .run();
+      return { status: 'skip', message: skipReason, duration_ms: duration };
+    }
 
     const creds = await decryptJSON(env, db, account.creds);
     const ctx = { env, db, account, meta };
@@ -95,13 +108,16 @@ export async function runAll(env, { manual = false } = {}) {
 
   let ok = 0;
   let fail = 0;
+  let skip = 0;
   const lines = [];
 
   for (const acc of accounts) {
     const r = await runAccount(env, acc);
     if (r.status === 'ok') ok++;
+    else if (r.status === 'skip') skip++;
     else fail++;
-    lines.push(`${r.status === 'ok' ? '✅' : '❌'} ${acc.name}：${r.message}`);
+    const icon = r.status === 'ok' ? '✅' : r.status === 'skip' ? '⏭️' : '❌';
+    lines.push(`${icon} ${acc.name}：${r.message}`);
     // 账号之间稍作间隔，降低被目标站点限流的概率
     await sleep(1200);
   }
