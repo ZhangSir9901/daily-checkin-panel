@@ -5,18 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>签到面板</title>
 <style>
-  /* 时间选择器美化：原生 time 输入框的上下调节按钮更明显 */
-  input[type="time"] {
-    font-variant-numeric: tabular-nums;
-    cursor: pointer;
-  }
-  input[type="time"]::-webkit-calendar-picker-indicator {
-    cursor: pointer;
-    opacity: 0.7;
-  }
-  input[type="time"]::-webkit-inner-spin-button {
-    opacity: 1;
-  }
+  /* 自定义时间选择器：深色主题，上下按钮 */
+  .tp { display:inline-flex; align-items:stretch; gap:2px; background:#0d1322; border:1px solid var(--line); border-radius:10px; padding:4px; }
+  .tp-col { display:flex; flex-direction:column; align-items:center; }
+  .tp-btn { background:transparent; border:0; color:var(--muted); font-size:10px; line-height:1; padding:3px 8px; cursor:pointer; border-radius:6px; }
+  .tp-btn:hover { background:var(--accent-dim); color:var(--accent2); }
+  .tp-val { font-size:15px; font-weight:600; color:var(--text); text-align:center; min-width:28px; padding:2px 0; font-variant-numeric:tabular-nums; }
+  .tp-sep { display:flex; align-items:center; color:var(--muted2); font-weight:600; padding:0 1px; }
+  .tp-clear { background:transparent; border:0; color:var(--muted2); cursor:pointer; font-size:12px; padding:4px 6px; border-radius:6px; }
+  .tp-clear:hover { color:var(--fail); background:var(--fail-dim); }
+  /* 全局时间选择器（大号） */
+  .tp-large .tp-val { font-size:22px; min-width:40px; }
+  .tp-large .tp-btn { font-size:12px; padding:5px 12px; }
   :root {
     --bg:#0b0f1a; --bg2:#0f1524;
     --card:#151d31; --card2:#1a2340;
@@ -395,7 +395,7 @@
         <h2>签到时间</h2>
         <p class="muted">Worker 每分钟唤醒一次，到达设定的时间才执行签到。修改即时生效，无需重新部署。</p>
         <div class="row">
-          <div style="flex:1"><label>每天执行时间</label><input type="time" id="sched-hour" step="60" style="width:100%;font-size:18px;padding:10px;text-align:center"></div>
+          <div style="flex:1"><label>每天执行时间</label><div id="sched-tp" class="tp tp-large" style="width:100%;justify-content:center"></div></div>
           <div style="flex:2"><label>时区</label><select id="sched-tz"></select></div>
         </div>
         <button id="btn-save-sched">保存时间设置</button>
@@ -568,10 +568,51 @@ document.querySelectorAll('.tabs button').forEach((b) => {
   };
 });
 
+// ---------- 自定义时间选择器（深色主题，上下按钮） ----------
+// 渲染到 container，返回 { get(), set(hhmm) }
+function renderTimePicker(container, initial) {
+  let h = 8, m = 0;
+  if (initial) {
+    const p = String(initial).split(':');
+    h = Math.max(0, Math.min(23, parseInt(p[0], 10) || 0));
+    m = Math.max(0, Math.min(59, parseInt(p[1], 10) || 0));
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  container.innerHTML = `
+    <div class="tp-col"><button class="tp-btn" data-a="hu">▲</button><div class="tp-val" data-v="h">${pad(h)}</div><button class="tp-btn" data-a="hd">▼</button></div>
+    <div class="tp-sep">:</div>
+    <div class="tp-col"><button class="tp-btn" data-a="mu">▲</button><div class="tp-val" data-v="m">${pad(m)}</div><button class="tp-btn" data-a="md">▼</button></div>`;
+  const vh = container.querySelector('[data-v="h"]');
+  const vm = container.querySelector('[data-v="m"]');
+  const update = () => { vh.textContent = pad(h); vm.textContent = pad(m); };
+  container.querySelectorAll('.tp-btn').forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const a = b.dataset.a;
+      if (a === 'hu') h = (h + 1) % 24;
+      else if (a === 'hd') h = (h + 23) % 24;
+      else if (a === 'mu') m = (m + 1) % 60;
+      else if (a === 'md') m = (m + 59) % 60;
+      update();
+      container.dispatchEvent(new CustomEvent('tp-change', { bubbles: true }));
+    };
+  });
+  return {
+    get: () => `${pad(h)}:${pad(m)}`,
+    set: (hhmm) => {
+      const p = String(hhmm || '').split(':');
+      h = Math.max(0, Math.min(23, parseInt(p[0], 10) || 0));
+      m = Math.max(0, Math.min(59, parseInt(p[1], 10) || 0));
+      update();
+    },
+  };
+}
+
 // ---------- 签到时间设置 ----------
 const TZ_OPTS = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney'];
 const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'UTC': 'UTC 时间' };
 let GLOBAL_HOUR = '08'; // 全局签到时间（整点小时），账号独立时间为空时跟随它
+let schedPicker = null;
 
 async function loadSchedule() {
   try {
@@ -580,8 +621,9 @@ async function loadSchedule() {
     // 规范化显示：旧的 "08" 显示为 "08:00"
     const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
     $('sched-line').textContent = `每天 ${displayTime}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
-    // time 输入框需要 HH:MM 格式
-    $('sched-hour').value = displayTime;
+    // 自定义时间选择器
+    if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime);
+    else schedPicker.set(displayTime);
     if (!$('sched-tz').options.length) {
       $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option ${z === s.tz ? 'selected' : ''}>${z}</option>`).join('');
     } else $('sched-tz').value = s.tz;
@@ -590,11 +632,9 @@ async function loadSchedule() {
 
 $('btn-save-sched').onclick = async () => {
   try {
-    // 全角转半角
-    const toHalf = (s) => String(s || '').replace(/[０-９：]/g, (c) => c === '：' ? ':' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-    const v = toHalf($('sched-hour').value).trim();
+    const v = schedPicker ? schedPicker.get() : '08:00';
     await api('/api/schedule', 'PUT', { time: v, tz: $('sched-tz').value });
-    toast('时间设置已保存'); loadSchedule();
+    toast('时间设置已保存'); loadSchedule(); loadAccounts();
   } catch (e) { toast(e.message); }
 };
 
@@ -1023,7 +1063,7 @@ async function loadAccounts() {
     return `
     <tr>
       <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
-      <td><div style="display:flex;align-items:center;gap:4px;justify-content:center"><input type="time" step="60" class="sm" data-sched="${a.id}" value="${esc(schedHour)}" title="独立签到时间，清空则跟随全局(${GLOBAL_HOUR})" style="width:80px;text-align:center;padding:4px">${schedHour ? `<button class="ghost sm" data-sched-clear="${a.id}" title="跟随全局" style="padding:2px 6px">✕</button>` : ''}</div></td>
+      <td><div style="display:flex;align-items:center;gap:4px;justify-content:center"><div class="tp" data-tp-acc="${a.id}" title="独立签到时间，点✕跟随全局(${GLOBAL_HOUR})"></div>${schedHour ? `<button class="ghost sm" data-sched-clear="${a.id}" title="跟随全局" style="padding:2px 6px">✕</button>` : ''}</div></td>
       <td>${statusBadge}</td>
       <td class="msg">${(() => { const m = a.last_msg || ''; return (m.includes('浏览器模式') || m.includes('请确保扩展')) ? '-' : esc(m || '-'); })()}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
@@ -1036,33 +1076,23 @@ async function loadAccounts() {
     </tr>`;
   }).join('');
 
-  tb.querySelectorAll('[data-sched]').forEach((sel) => {
-    const save = async () => {
-      // 全角转半角
-      const toHalf = (s) => String(s || '').replace(/[０-９：]/g, (c) => c === '：' ? ':' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
-      const v = toHalf(sel.value).trim();
-      // 验证：空=跟随全局，或 HH:MM 格式（如 08:30），也兼容旧的纯小时 "08"
-      if (v !== '' && !/^(\d{1,2})(:\d{1,2})?$/.test(v)) {
-        toast('时间格式错误，请用 HH:MM（如 08:30），空为跟随全局');
-        return;
-      }
-      if (v !== '') {
-        const parts = v.split(':');
-        const h = parseInt(parts[0], 10);
-        const m = parts[1] ? parseInt(parts[1], 10) : 0;
-        if (h < 0 || h > 23 || m < 0 || m > 59) {
-          toast('时间无效：小时 0-23，分钟 0-59');
-          return;
-        }
-      }
+  // 账号独立时间：自定义选择器，上下按钮调整，变更后自动保存
+  tb.querySelectorAll('[data-tp-acc]').forEach((el) => {
+    const accId = el.dataset.tpAcc;
+    const row = accounts.find((x) => String(x.id) === String(accId));
+    let initHour = '';
+    try { initHour = JSON.parse(row?.meta || '{}').sched_hour || ''; } catch { /* 忽略 */ }
+    const picker = renderTimePicker(el, initHour || GLOBAL_HOUR);
+    // 如果没有独立时间，显示全局时间但标记为跟随
+    if (!initHour) el.style.opacity = '0.55';
+    el.addEventListener('tp-change', async () => {
+      const v = picker.get();
       try {
-        await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: v });
-        toast('签到时间已保存');
+        await api('/api/accounts/' + accId + '/schedule', 'PUT', { hour: v });
+        toast('签到时间已保存：' + v);
       } catch (e) { toast(e.message); }
       loadAccounts();
-    };
-    sel.onchange = save;
-    sel.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sel.blur(); } };
+    });
   });
   // "跟随全局"清空按钮
   tb.querySelectorAll('[data-sched-clear]').forEach((b) => (b.onclick = async () => {

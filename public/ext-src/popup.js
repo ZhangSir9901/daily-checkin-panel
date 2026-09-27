@@ -126,8 +126,9 @@ $('btn-run-now').onclick = async () => {
 
     status(`找到 ${jobs.length} 个任务，开始执行…`, '');
     for (const job of jobs) {
-      status(`正在执行：${job.site_name || job.domain}…`, '');
-      const r = await executeJobInPopup(job);
+      const jobName = job.site_name || job.domain;
+      status(`正在执行：${jobName}…`, '');
+      const r = await executeJobInPopup(job, (s) => status(`${jobName}：${s}`, ''));
       // 上报结果
       try {
         const repResp = await fetch(panelUrl + '/api/external/report', {
@@ -161,17 +162,23 @@ $('btn-run-now').onclick = async () => {
 };
 
 // 在弹窗上下文中执行单个签到任务（复用目标域名标签页，携带用户 Cookie）
-async function executeJobInPopup(job) {
+// onStep: 步骤回调，用于显示详细进度
+async function executeJobInPopup(job, onStep) {
   const startMs = Date.now();
+  const step = (msg) => { if (onStep) onStep(msg); };
   try {
     if (!job.domain) throw new Error('任务缺少目标域名');
     if (!job.script) throw new Error('任务缺少签到脚本');
+    step('查找标签页…');
     const tabs = await chrome.tabs.query({ url: `*://${job.domain}/*` });
     let tab;
     if (tabs.length > 0) {
       tab = tabs[0];
+      step('复用已有标签页…');
     } else {
+      step('打开新标签页…');
       tab = await chrome.tabs.create({ url: `https://${job.domain}/`, active: false });
+      step('等待页面加载…');
       await new Promise((resolve) => {
         const listener = (tabId, info) => {
           if (tabId === tab.id && info.status === 'complete') {
@@ -183,6 +190,7 @@ async function executeJobInPopup(job) {
         setTimeout(resolve, 15000);
       });
     }
+    step('注入签到脚本…');
     // 脚本执行加 60 秒超时，防止卡死
     const execPromise = chrome.scripting.executeScript({
       target: { tabId: tab.id },
@@ -193,10 +201,12 @@ async function executeJobInPopup(job) {
       },
       args: [job.script, job.params || {}],
     });
+    step('执行签到中…');
     const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('脚本执行超时（60秒）')), 60000)
     );
     const results = await Promise.race([execPromise, timeoutPromise]);
+    step('解析结果…');
     const result = results && results[0] && results[0].result;
     if (!result) throw new Error('脚本无返回结果');
     return {

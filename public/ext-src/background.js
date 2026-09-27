@@ -71,7 +71,7 @@ async function executeJob(job) {
 
     // 在页面上下文中执行签到脚本
     // 脚本是面板下发的自包含 async 函数，入参为 params，返回 { ok, message }
-    const results = await chrome.scripting.executeScript({
+    const execPromise = chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (scriptStr, params) => {
         const fn = new Function('params', `return (${scriptStr})(params)`);
@@ -79,6 +79,11 @@ async function executeJob(job) {
       },
       args: [job.script, job.params || {}],
     });
+    // 60秒超时保护，防止脚本卡死
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('脚本执行超时（60秒）')), 60000)
+    );
+    const results = await Promise.race([execPromise, timeoutPromise]);
 
     const result = results && results[0] && results[0].result;
     if (!result) throw new Error('脚本无返回结果');
