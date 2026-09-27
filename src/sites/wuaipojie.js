@@ -24,7 +24,8 @@ const BLOCK_RE = /reason:UrlACL|Client IP:\s*[\d.:a-f]+|eventID:\s*\d+-[\d.]+-\d
 // 面板也因此显示「未签到」——必须按已签到处理。
 const SIGNED_MARKS = [
   '今日已签到', '今日已签', '已经签到', '已签到', '签到完毕', '签到完成', '已完成签到',
-  '已完成', '您已完成过此任务', '您已完成', '今日任务已完成', '无需重复', '无需再签',
+  '已完成', '您已完成过此任务', '您已完成', '您已经完成', '已经完成了', '今日任务已完成',
+  '无需重复', '无需再签', '请等待下次刷新',
   '下期再来', '明天再来',
   'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´', // GBK 被误作 Latin1 解码时的特征
 ];
@@ -164,20 +165,18 @@ export const wuaipojie = {
       Cookie: cookie,
     };
 
-    // ① 预检首页
+    // ① 预检首页：**只看 WAF**。
+    // 注意：portal.php 是门户页，上面除了博客卡片，还有论坛的最新帖标题 + 「最新公告」块。
+    // 实测该页的公告里就写着「开放注册期间论坛暂停签到」，而帖子标题里什么都可能有。
+    // 早期版本拿「暂停签到 / 今日已签到」这类词扫整个首页，结果把一个正常可签的账号
+    // 报成「论坛官方暂停签到，等恢复后再试」——所以这里绝不能再凭首页文本下签到结论。
     // 注：中继模式下 runner.js 会透明替换 global fetch，站点代码无需改动
     const home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
     assertNoWaf(home, home.res.status);
-    if (has(home, PAUSED_MARKS)) {
-      throw new Error('论坛官方暂停签到（开放注册期间），等恢复后再试');
-    }
-    if (has(home, SIGNED_MARKS)) {
-      const suffix = await creditSuffix(baseHeaders);
-      return { ok: true, message: '今日已签到，无需重复：' + pickLine(home) + suffix, detail: '网站返回：' + clean(home).slice(0, 300) };
-    }
-    if (has(home, LOGIN_MARKS) || (/mod=logging/i.test(home.utf8) && !/mod=space/i.test(home.utf8))) {
-      throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
-    }
+    // 首页公告里提到暂停时，只当作「线索」留到最后当提示，不能当结论
+    const pauseHint = has(home, PAUSED_MARKS)
+      ? '（注：门户页的公告里有一条「' + (clean(home).match(/[^\s]{0,12}暂停签到[^\s]{0,20}/) || ['暂停签到'])[0] + '」，若确实暂停了请等恢复后再试）'
+      : '';
 
     // ② 签到（手动跟随重定向，最多 3 跳）
     let url = 'https://www.52pojie.cn/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php';
@@ -198,6 +197,12 @@ export const wuaipojie = {
     }
     if (!final) throw new Error('签到失败：重定向次数过多');
 
+    // 判定只看签到页（home.php?mod=task）——这页的文字都是任务本身的，不会被帖子标题污染
+    const finalText = pickText(final);
+    const hasLoginForm = /name=["']loginform["']/i.test(finalText) || /action=["'][^"']*logging\.php/i.test(finalText);
+    if (hasLoginForm && !has(final, SIGNED_MARKS) && !has(final, SUCCESS_MARKS)) {
+      throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
+    }
     if (has(final, SUCCESS_MARKS)) {
       const suffix = await creditSuffix(baseHeaders);
       return { ok: true, message: '签到成功：' + pickLine(final) + suffix, detail: '网站返回：' + clean(final).slice(0, 300) };
@@ -209,9 +214,12 @@ export const wuaipojie = {
     if (has(final, LOGIN_MARKS)) {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');
     }
+    if (has(final, PAUSED_MARKS)) {
+      throw new Error('论坛官方暂停签到：' + pickLine(final) + '。等恢复后再试。');
+    }
     throw new Error(
-      `签到失败：未识别到成功标识（HTTP ${final.status}），` +
-        pickText(final).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 160)
+      `签到失败：未识别到成功标识（HTTP ${final.status}）${pauseHint}，` +
+        finalText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 200)
     );
   },
 };

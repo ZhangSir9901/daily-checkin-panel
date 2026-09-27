@@ -52,7 +52,8 @@
                background:linear-gradient(180deg, var(--accent), var(--accent2)); }
   .muted { color:var(--muted); font-size:13px; line-height:1.6; }
   .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
-  .topbar-right { display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  /* 右侧只留一行：[扩展状态] [退出]，竖排会把「退出」顶到上面、把顶栏拉高 */
+  .topbar-right { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
   /* 首页右上角：扩展在线状态（在「退出」下方） */
   #ext-state { display:inline-flex; align-items:center; gap:6px; padding:4px 12px;
                border-radius:20px; font-size:12px; font-weight:600; white-space:nowrap;
@@ -64,7 +65,6 @@
   #ext-state.off { background:rgba(147,160,189,.12); color:var(--muted); border-color:var(--line); }
   #ext-state.wait { background:var(--accent-dim); color:var(--accent2); }
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
-  #ext-state-sub { font-size:11px; color:var(--muted); max-width:260px; text-align:right; line-height:1.4; }
   #sched-line { display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
                 background:var(--accent-dim); border:1px solid rgba(91,140,255,.25);
                 border-radius:20px; font-size:12px; color:var(--accent2); }
@@ -192,17 +192,71 @@
   .ck-more-body { padding:2px 14px 14px; border-top:1px solid var(--line); }
 
   /* 签到时间一行布局（紧凑） */
-  .sched-row { display:flex; flex-wrap:wrap; gap:14px; align-items:flex-end; }
-  .sched-row .sched-field { display:flex; flex-direction:column; gap:6px; }
-  .sched-row .sched-field > label { margin:0; }
-  .sched-row select { margin:0; min-width:190px; }
-  .sched-row button { margin:0; }
+  /* 签到时间控制条：单独一条浅底区域，宽度不够时整组换行，
+     不会像以前那样把标题挤歪、或者按钮掉到下面显得散。 */
+  .sched-bar { margin-top:14px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px;
+               padding:14px 16px; border-radius:var(--radius-sm);
+               background:rgba(91,140,255,.05); border:1px solid var(--line); }
+  .sched-bar .sched-field { display:flex; flex-direction:column; gap:7px; }
+  .sched-bar .sched-field > label { margin:0; font-size:12px; color:var(--muted2); font-weight:500; }
+  .sched-bar select { margin:0; min-width:176px; }
+  .sched-bar button { margin:0; }
+  .sched-tip { align-self:center; margin-left:auto; font-size:11.5px; color:var(--muted2); }
+  @media (max-width:720px) { .sched-tip { display:none; } }
   /* 账号行里的小提示（站点推荐 / 网站回馈的操作建议） */
+  /* 旧的内联提示段（已改成 .hint-dot + #_tip 气泡，保留以防旧缓存页面用上） */
   .row-hint { margin-top:5px; font-size:11px; line-height:1.5; color:var(--warn);
               max-width:230px; }
   .row-hint::before { content:"⚠️ "; }
   .row-pills { margin-top:5px; display:flex; flex-wrap:wrap; gap:4px; }
-  .msg-hint { margin-top:5px; font-size:11.5px; line-height:1.55; color:var(--warn); }
+  /* 提示不再占一整行：改成一个小红标，鼠标移上去才弹出来（见 #_tip） */
+  .hint-dot { display:inline-flex; align-items:center; justify-content:center; flex:none;
+              width:16px; height:16px; border-radius:50%; font-size:11px; font-weight:700; line-height:1;
+              background:rgba(255,107,107,.16); color:#ff8181; border:1px solid rgba(255,107,107,.45);
+              cursor:help; user-select:none; transition:background .15s, transform .15s; }
+  .hint-dot:hover { background:rgba(255,107,107,.32); transform:scale(1.1); }
+  .hint-dot.ok { background:rgba(63,208,138,.16); color:#5cdd9e; border-color:rgba(63,208,138,.45); }
+  .hint-dot.ok:hover { background:rgba(63,208,138,.3); }
+
+  /* 全局悬停提示气泡。用 fixed 单一元素而不是 CSS ::after：
+     表格外面套了 overflow:auto，绝对定位的气泡会被裁掉。 */
+  #_tip { position:fixed; z-index:9999; max-width:300px; padding:9px 12px; border-radius:10px;
+          background:#151b2b; border:1px solid var(--line2); color:var(--text);
+          font-size:12px; line-height:1.65; box-shadow:0 12px 32px rgba(0,0,0,.5);
+          opacity:0; pointer-events:none; transition:opacity .12s; }
+  #_tip.show { opacity:1; }
+
+  /* 表格里该居中的列居中（数值/徽章/开关/按钮） */
+  th.c, td.c { text-align:center; }
+  td.c { white-space:nowrap; }
+  .site-cell { min-width:188px; }
+  /* nowrap：否则「徽章 + 切换 + 红标」会折行，红标孤零零掉到下面一行像杂物 */
+  .site-line { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-top:6px; }
+  /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
+  td.msg { width:100%; min-width:240px; max-width:460px; }
+  .msg-main { font-size:13px; line-height:1.6;
+              display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .msg-line { display:flex; align-items:flex-start; gap:7px; }
+  .msg-raw { margin-top:5px; font-size:11px; line-height:1.5; color:var(--muted2);
+             border-left:2px solid var(--line2); padding-left:8px; word-break:break-word;
+             display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+  /* 扩展下载区：常驻可见（之前塞进折叠里，用户根本找不到） */
+  .ext-box { margin-top:16px; padding:14px 16px; border-radius:var(--radius-sm);
+             background:rgba(91,140,255,.06); border:1px solid rgba(91,140,255,.22); }
+  .ext-box-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .ext-box-head h3 { margin:0; font-size:14px; }
+  .ext-box-head .grow { flex:1 1 auto; }
+  .ext-box > p { margin:8px 0 0; font-size:12.5px; line-height:1.7; color:var(--muted); }
+  /* 步骤用 ol + counter，比「一整段 <br>」的行距和缩进稳得多 */
+  .steps { margin:10px 0 0; padding:0; list-style:none; counter-reset:st; }
+  .steps > li { position:relative; padding:5px 0 5px 30px; font-size:12.5px; line-height:1.7; color:var(--muted); }
+  .steps > li::before { counter-increment:st; content:counter(st); position:absolute; left:0; top:6px;
+                        width:19px; height:19px; border-radius:50%; background:rgba(91,140,255,.18);
+                        color:var(--accent2); font-size:11px; font-weight:600;
+                        display:flex; align-items:center; justify-content:center; }
+  .steps kbd { background:rgba(255,255,255,.08); border:1px solid var(--line); border-radius:5px;
+               padding:1px 5px; font-size:11.5px; font-family:inherit; }
   .msg-hint::before { content:"💡 "; }
   /* 粘贴内容分解面板 */
   .ckb { margin-top:12px; padding:12px 14px; border-radius:12px;
@@ -325,11 +379,10 @@
     <div class="topbar">
       <div><h1>签到面板</h1><div class="muted" id="sched-line">自动签到时间加载中…</div></div>
       <div class="topbar-right">
-        <button class="ghost sm" id="btn-logout">退出</button>
-        <div id="ext-state" class="wait" title="点击检测一次扩展是否在线">
+        <div id="ext-state" class="wait" title="点击检测一次扩展是否在线；只有扩展在线，账号才能切到「本地网络」">
           <i></i><span id="ext-state-text">检测扩展状态…</span>
         </div>
-        <div id="ext-state-sub">扩展在线时才能切「本地网络」</div>
+        <button class="ghost sm" id="btn-logout">退出</button>
       </div>
     </div>
     <div class="tabs">
@@ -348,50 +401,49 @@
           </div>
         </div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>站点</th><th>签到时间</th><th>状态</th><th>网站反馈</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
+          <thead><tr><th>站点</th><th class="c">签到时间</th><th class="c">状态</th><th>网站反馈</th><th class="c">上次运行</th><th class="c">启用</th><th class="c">操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
       <div class="card">
-        <div class="row" style="justify-content:space-between;align-items:flex-end;">
-          <div>
-            <h2 style="margin:0">签到时间</h2>
-            <p class="muted" style="margin:6px 0 0">Worker 每分钟唤醒一次，到达设定的时间才执行签到。修改即时生效，无需重新部署。</p>
-          </div>
-          <div class="sched-row">
-            <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
-            <div class="sched-field"><label>时区</label><select id="sched-tz" class="sm"></select></div>
-            <button id="btn-save-sched" class="sm">保存</button>
-          </div>
+        <h2 style="margin:0">签到时间</h2>
+        <p class="muted" style="margin:6px 0 0">Worker 每分钟唤醒一次，到点才执行；改完即时生效，不用重新部署。
+          单个账号可以在「签到时间」那一列单独设时间，留空 = 跟随这里。</p>
+        <div class="sched-bar">
+          <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
+          <div class="sched-field"><label>时区</label><select id="sched-tz"></select></div>
+          <button id="btn-save-sched">保存</button>
+          <span class="sched-tip">点时间胶囊可展开时/分滚轮</span>
         </div>
-        <p class="muted" style="margin-top:10px">点时间胶囊可展开时/分滚轮；单个账号还能在「签到时间」那一列设自己的时间（留空 = 跟随这里）。</p>
       </div>
       <div class="card">
-        <h2>添加 / 更新账号（一步搞定）</h2>
-        <p class="muted">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
+        <h2 style="margin-bottom:6px">添加 / 更新账号</h2>
+        <p class="muted" style="margin:0">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
           面板会自动认出站点、自动填好 Cookie 和 User-Agent（<b>UA 不用自己找</b>），保存后立刻可用。</p>
-        <textarea id="ck-paste" rows="3" placeholder="在这里粘贴扩展复制的内容 —— 粘上就会自动识别并保存"></textarea>
-        <div class="row" style="margin:8px 0">
+        <textarea id="ck-paste" rows="3" style="margin-top:12px" placeholder="在这里粘贴扩展复制的内容 —— 粘上就会自动识别并保存"></textarea>
+        <div class="row" style="margin:12px 0 0">
           <button id="btn-parse-paste" type="button">✅ 粘贴并保存</button>
           <button class="ghost sm" id="btn-ck-pick" type="button">手动选站点保存</button>
         </div>
         <div id="ck-preview" class="hidden"></div>
 
-        <details class="ck-more">
-          <summary>🧩 还没装扩展？点这里下载并安装（推荐，一次装好永久省事）</summary>
-          <div class="ck-more-body">
-            <div class="tips">在目标网站登录状态下点一下扩展图标 → 「一键发送到签到面板」，自动打开面板并保存。<b>能读取 HttpOnly Cookie</b>，NodeSeek 这类站点也适用。支持 Chrome / Edge。<br>
-            💡 从本面板下载的扩展已<b>自动填入面板地址</b>（首次打开扩展即可看到），如需换面板可手动修改。</div>
-            <div class="row" style="margin:10px 0">
-              <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2（zip）</a>
-            </div>
-            <p class="muted">安装步骤：</p>
-            <p class="muted">1️⃣ 点击上方下载并解压 zip<br>
-            2️⃣ 浏览器地址栏输入 <b>chrome://extensions/</b>（Edge 用 <b>edge://extensions/</b>），打开「开发者模式」<br>
-            3️⃣ 点击「加载已解压的扩展程序」，选择解压后的 <b>文件夹</b>（不是 zip）<br>
-            4️⃣ 点扩展图标 → 在弹窗里填「API Key」（面板设置页复制）→ 点「🔌 面板连接检查」</p>
+        <div class="ext-box">
+          <div class="ext-box-head">
+            <h3>🧩 浏览器扩展 cookie插件2.2</h3>
+            <span id="ext-box-state" class="badge off">检测中…</span>
+            <span class="grow"></span>
+            <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2</a>
           </div>
-        </details>
+          <p>它干两件事：<b>① 一键取 Cookie</b>（能读到 HttpOnly，NodeSeek 这类站也行）；
+            <b>② 做「本地网络中继」</b>，让吾爱破解这些屏蔽机房 IP 的站点也能签到。</p>
+          <ol class="steps">
+            <li>点右侧「⬇️ 下载 cookie插件2.2」，得到 zip，解压到任意文件夹</li>
+            <li>浏览器地址栏输入 <kbd>chrome://extensions/</kbd>（Edge 用 <kbd>edge://extensions/</kbd>），打开右上角「开发者模式」</li>
+            <li>点「加载已解压的扩展程序」，选中解压出来的<b>文件夹</b>（不是 zip 本身）</li>
+            <li>点扩展图标 → 填「API Key」（在「设置」页复制）→ 点「🔌 面板连接检查」</li>
+          </ol>
+          <p style="font-size:11.5px;color:var(--muted2)">💡 从本面板下载的扩展已自动填好面板地址；以后改了域名，在扩展弹窗里同步改一下即可。</p>
+        </div>
 
       </div>
     </section>
@@ -450,6 +502,16 @@
         <h2>🔌 浏览器扩展</h2>
         <p class="muted">安装「cookie插件2.2」扩展后，它就是面板的<b>本地网络中继</b>：面板点「执行」时请求由扩展在您的浏览器里发出（用您的本机 IP 和登录态），因此能绕过 CF 网络的 IP 封禁与人机验证。扩展会自动挂长轮询接单，响应通常在 1 秒内。扩展需要下面的 API Key 才能连接面板。</p>
         <p class="muted">中继状态：<span id="relay-status" class="badge off">检测中…</span> <span class="muted" style="font-size:12px">扩展在线时，标记为「🌐 本地网络」的账号会经您的本机网络执行</span></p>
+        <div class="row" style="margin:12px 0 4px">
+          <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2</a>
+          <button class="ghost sm" id="btn-ext-help" type="button">📖 安装步骤</button>
+        </div>
+        <div id="ext-help" class="tips hidden" style="margin-top:8px">
+          1️⃣ 解压上面下载的 zip（得到一个文件夹）<br>
+          2️⃣ 打开 <b>chrome://extensions/</b>（Edge 用 <b>edge://extensions/</b>）→ 打开右上角「开发者模式」<br>
+          3️⃣ 点「加载已解压的扩展程序」→ 选中解压出来的那个<b>文件夹</b><br>
+          4️⃣ 点扩展图标，把下面生成的 API Key 填进去 → 点「🔌 面板连接检查」
+        </div>
         <label>API Key（扩展用）</label>
         <div style="display:flex;gap:8px">
           <input id="ext-api-key" type="text" readonly placeholder="点击生成" style="flex:1">
@@ -561,6 +623,44 @@ function fmtTime(ts) {
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+
+// ---------- 全局悬停提示气泡 ----------
+// 页面里带 data-tip 的元素（小红标等）鼠标移上去就弹出说明。
+// 用「一个 fixed 定位的元素」而不是 CSS ::after：账号表格外层套了 overflow:auto，
+// 绝对定位的气泡会被表格裁掉一半。
+function initTip() {
+  const tip = document.createElement('div');
+  tip.id = '_tip';
+  document.body.appendChild(tip);
+  const show = (el) => {
+    const text = el.getAttribute('data-tip');
+    if (!text) return;
+    tip.textContent = text;
+    tip.classList.add('show');
+    const r = el.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let left = r.left + r.width / 2 - w / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    let top = r.top - h - 8;
+    if (top < 8) top = Math.min(r.bottom + 8, window.innerHeight - h - 8);
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  };
+  const hide = () => tip.classList.remove('show');
+  document.addEventListener('mouseover', (e) => {
+    const el = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (el) show(el); else hide();
+  });
+  // 只在真的离开这个元素时才藏，否则在元素内部移动会闪
+  document.addEventListener('mouseout', (e) => {
+    const el = e.target.closest ? e.target.closest('[data-tip]') : null;
+    if (el && !(e.relatedTarget && el.contains(e.relatedTarget))) hide();
+  });
+  document.addEventListener('scroll', hide, true);
+  window.addEventListener('resize', hide);
+}
+initTip();
 
 // ---------- 视图切换 ----------
 function show(view) {
@@ -781,7 +881,12 @@ $('btn-save-sched').onclick = async () => {
   try {
     const v = schedPicker ? schedPicker.get() : '08:00';
     await api('/api/schedule', 'PUT', { time: v, tz: $('sched-tz').value });
-    toast('时间设置已保存'); loadSchedule(); loadAccounts();
+    // 必须先 await loadSchedule()：它把新的全局时间写进 GLOBAL_HOUR。
+    // 以前两个都不 await，loadAccounts() 往往先跑完，
+    // 于是「跟随全局」的账号仍然显示旧时间 —— 看着就像“改了全局时间，账号时间没跟着变”。
+    await loadSchedule();
+    await loadAccounts();
+    toast('已保存：全局时间 ' + v + '，跟随全局的账号已同步');
   } catch (e) { toast(e.message); }
 };
 
@@ -1255,7 +1360,11 @@ function execCellHTML(a, execOverride) {
   const pills = togglePills(a);
   return {
     isLocalExec,
-    html: `<b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button>${hint ? `<div class="row-hint">推荐：${esc(hint)}</div>` : ''}${pills}`,
+    html: `<b>${esc(a.name)}</b>`
+      + `<div class="site-line">${execBadge}`
+      + `<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button>`
+      + (hint ? `<span class="hint-dot" data-tip="推荐：${esc(hint)}">!</span>` : '')
+      + `</div>${pills}`,
   };
 }
 
@@ -1264,7 +1373,9 @@ function feedbackHint(msg, siteId, isLocalExec) {
   const m = String(msg || '');
   if (!m) return '';
   if (/UrlACL|Client IP|网宿|waf0(?!\d)/i.test(m) || /403 Forbidden/.test(m)) {
-    return '建议：该网站屏蔽了 CF 网络（机房 IP），请切换为「本地网络」签到；本地网络需安装并保持浏览器扩展在线';
+    return isLocalExec
+      ? '建议：已经是「本地网络」还是被拦，请先在浏览器打开该网站完成滑块/安全验证，再用扩展重新复制一次 Cookie（Cookie 里的验证凭证过期了）'
+      : '建议：该网站屏蔽了 CF 网络（机房 IP），请切换为「本地网络」签到；本地网络需安装并保持浏览器扩展在线';
   }
   if (/人机验证|验证码|captcha|turnstile|请先完成验证/i.test(m)) {
     return '建议：该网站需要人工验证，请在浏览器里登录/过一次验证，再点扩展图标重新获取 Cookie';
@@ -1330,16 +1441,21 @@ async function loadAccounts() {
     const rawMsg = String(a.last_msg || '');
     // 旧版本遗留的提示文案（已无意义），不展示
     const msg = (rawMsg.includes('浏览器模式') || rawMsg.includes('请确保扩展')) ? '' : rawMsg;
-    const hintText = feedbackHint(msg, a.site, isLocalExec);
+    // 网站原文（站点模块回传的 detail）：让人能直接对照网站到底说了什么
+    const rawText = String(a.last_detail || '').replace(/^网站返回：/, '').trim();
+    const rawShow = rawText && rawText !== msg ? rawText.slice(0, 220) : '';
+    // 红标提示要拿「反馈 + 网站原文」一起判：
+    // 比如吾爱的 message 只有「HTTP 403」，真正能认出是网宿 UrlACL 的关键词在原文里。
+    const hintText = feedbackHint(msg + '\n' + rawText, a.site, isLocalExec);
     return `
     <tr>
-      <td data-exec-cell="${a.id}">${execCell}</td>
-      <td><div class="sched-cell"><div data-tp-acc="${a.id}" title="点击设置该账号的独立签到时间（跟随全局：${GLOBAL_HOUR}）"></div></div></td>
-      <td>${statusBadge}</td>
-      <td class="msg">${msg ? esc(msg) : '-'}${hintText ? `<div class="msg-hint">${esc(hintText)}</div>` : ''}</td>
-      <td class="muted">${fmtTime(a.last_run_at)}</td>
-      <td><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
-      <td><div style="display:inline-flex;gap:6px;white-space:nowrap">
+      <td class="site-cell" data-exec-cell="${a.id}">${execCell}</td>
+      <td class="c"><div class="sched-cell"><div data-tp-acc="${a.id}" title="点击设置该账号的独立签到时间（跟随全局：${GLOBAL_HOUR}）"></div></div></td>
+      <td class="c">${statusBadge}</td>
+      <td class="msg"><div class="msg-line"><span class="msg-main">${msg ? esc(msg) : '-'}</span>${hintText ? `<span class="hint-dot" data-tip="${esc(hintText)}">!</span>` : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}</td>
+      <td class="muted c">${fmtTime(a.last_run_at)}</td>
+      <td class="c"><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
+      <td class="c"><div style="display:inline-flex;gap:6px;white-space:nowrap">
         <button class="ghost sm" data-run="${a.id}" title="执行签到" style="white-space:nowrap">执行</button>
         <button class="ghost sm" data-edit="${a.id}" title="编辑账号" style="white-space:nowrap">编辑</button>
         <button class="danger sm" data-del="${a.id}" title="删除账号" style="white-space:nowrap">删除</button>
@@ -1822,7 +1938,7 @@ let RELAY_ONLINE = false;
 let RELAY_VERSION = '';
 async function refreshExtState() {
   const home = $('ext-state');
-  const sub = $('ext-state-sub');
+  const boxState = $('ext-box-state');
   try {
     const s = await api('/api/relay-status', 'GET');
     RELAY_ONLINE = !!s.online;
@@ -1834,17 +1950,16 @@ async function refreshExtState() {
     home.className = RELAY_ONLINE ? 'on' : 'off';
     $('ext-state-text').textContent = RELAY_ONLINE ? '扩展在线（自动中继已启用）' : '扩展离线（本地网络不可用）';
   }
-  if (sub) {
-    sub.textContent = RELAY_ONLINE
-      ? '可切「本地网络」：请求经您的浏览器发出'
-      : '切「本地网络」需先安装并打开扩展';
-  }
   const el = $('relay-status');
   if (el) {
     el.className = RELAY_ONLINE ? 'badge ok' : 'badge off';
     el.textContent = RELAY_ONLINE
       ? `🟢 扩展在线（自动中继已启用）${RELAY_VERSION ? ' · v' + RELAY_VERSION : ''}`
       : '⚪ 扩展离线（走 CF 网络）';
+  }
+  if (boxState) {
+    boxState.className = RELAY_ONLINE ? 'badge ok' : 'badge off';
+    boxState.textContent = RELAY_ONLINE ? '已安装 · 在线' : '未检测到（点这里看状态）';
   }
   return RELAY_ONLINE;
 }
@@ -1864,6 +1979,7 @@ async function loadExtKey() {
   } catch (e) { /* 忽略 */ }
   await refreshExtState();
 }
+$('btn-ext-help').onclick = () => $('ext-help').classList.toggle('hidden');
 $('btn-gen-key').onclick = () => {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);

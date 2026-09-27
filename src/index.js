@@ -147,8 +147,8 @@ async function handleApi(req, env, url) {
     if (validStatus === 'ok') {
       rmeta.last_signin_date = dayInTz(new Date(), await scheduleTz(env.DB));
     }
-    await env.DB.prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
-      .bind(validStatus, message || '', Date.now(), JSON.stringify(rmeta), Date.now(), acc.id).run();
+    await env.DB.prepare('UPDATE accounts SET last_status=?, last_msg=?, last_detail=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
+      .bind(validStatus, message || '', detail || '', Date.now(), JSON.stringify(rmeta), Date.now(), acc.id).run();
     // 如果是手动任务队列中的，上报后删除（避免重复执行）
     await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE account_id = ?').bind(acc.id).run().catch(() => {});
     return json({ ok: true });
@@ -451,7 +451,7 @@ async function handleApi(req, env, url) {
   // 账号列表（不含凭据，含 meta 以便前端渲染站点独立开关）
   if (path === '/api/accounts' && method === 'GET') {
     const { results } = await env.DB.prepare(
-      'SELECT id, name, site, enabled, meta, last_status, last_msg, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
+      'SELECT id, name, site, enabled, meta, last_status, last_msg, last_detail, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
     ).all();
     const accounts = results || [];
     // 回填：今日有成功记录但 meta 缺 last_signin_date 的，补上（兼容旧数据）
@@ -467,17 +467,18 @@ async function handleApi(req, env, url) {
         ).bind(acc.id, dayStart).first();
         if (okRun) {
           m.last_signin_date = today;
-          // 同时把网站反馈补上（取今日最后一条成功的 message）
+          // 同时把网站反馈补上（取今日最后一条成功的 message + 网站原文）
           const lastOk = await env.DB.prepare(
-            "SELECT message FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? ORDER BY id DESC LIMIT 1"
+            "SELECT message, detail FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? ORDER BY id DESC LIMIT 1"
           ).bind(acc.id, dayStart).first();
           if (lastOk?.message) {
             acc.last_msg = lastOk.message;
             acc.last_status = 'ok';
+            acc.last_detail = lastOk.detail || '';
           }
           acc.meta = JSON.stringify(m);
-          await env.DB.prepare('UPDATE accounts SET meta=?, last_msg=?, last_status=?, updated_at=? WHERE id=?')
-            .bind(acc.meta, acc.last_msg, acc.last_status, Date.now(), acc.id).run();
+          await env.DB.prepare('UPDATE accounts SET meta=?, last_msg=?, last_status=?, last_detail=?, updated_at=? WHERE id=?')
+            .bind(acc.meta, acc.last_msg, acc.last_status, acc.last_detail || '', Date.now(), acc.id).run();
         }
       }
     }

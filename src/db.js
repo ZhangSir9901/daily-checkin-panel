@@ -73,6 +73,8 @@ const MIGRATIONS = [
     updated_at INTEGER NOT NULL
   )`).run(),
   async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_ext_cmd_status ON ext_commands(status, created_at)').run(),
+  // v10：accounts.last_detail（网站原始回馈，账号列表「网站反馈」列直接展示网站原话）
+  async (db) => ensureColumn(db, 'accounts', 'last_detail', 'TEXT'),
 ];
 
 export async function ensureSchema(db) {

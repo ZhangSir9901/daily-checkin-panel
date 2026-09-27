@@ -60,14 +60,42 @@ await t('hutue：首页无线索时用兜底 action', async () => {
 });
 
 // ---------- 3. 今日已签到 ----------
-await t('hutue：今天已经签到过了 → 成功且提示已签到', async () => {
+// 关键：网站反馈列要的是「网站真实原话」，所以这里必须逐字回传 msg，
+// 而不是我们自己的「今日已签到，无需重复」。
+await t('hutue：今天已经签到过了 → 成功且回传网站原话', async () => {
   mock((u) => {
     if (u.endsWith('/')) return { body: '<html>首页</html>' };
     return { body: JSON.stringify({ status: 0, msg: '今天已经签到过了' }) };
   });
   const r = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'c=x' }, { meta: {} });
   assert.equal(r.ok, true);
-  assert.match(r.message, /已签到/);
+  assert.equal(r.message, '今天已经签到过了');
+});
+
+// 线上现象：面板显示「签到成功：签到成功，赠送1积分」——前缀是我们自己拼的，
+// 既重复又不算真实反馈（积分数字还与站点实际奖励对不上）。
+await t('hutue：成功时逐字回传网站 msg，不拼任何前缀', async () => {
+  mock((u) => {
+    if (u.endsWith('/')) return { body: '<html>首页</html>' };
+    return { body: JSON.stringify({ status: 1, msg: '签到成功，赠送5积分' }) };
+  });
+  const r = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'c=x' }, { meta: {} });
+  assert.equal(r.ok, true);
+  assert.equal(r.message, '签到成功，赠送5积分');
+  assert.doesNotMatch(r.message, /^签到成功：/);
+});
+
+// 主题自带 action 永远优先：否则某个别的插件 action 先返回 status=1 就会被记住，
+// 以后每次都走它，网站反馈变成那个插件的话（奖励对不上本站）。
+await t('hutue：即使记住过别的 action，主题 action 仍排第一', async () => {
+  const calls = mock((u) => {
+    if (u.endsWith('/')) return { body: '<html>首页</html>' };
+    return { body: JSON.stringify({ status: 1, msg: '签到成功' }) };
+  });
+  const ctx = { meta: { hutue_action: 'user_qiandao' } };
+  await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'c=x' }, ctx);
+  const first = new URLSearchParams(calls.find((c) => c.method === 'POST').body).get('action');
+  assert.equal(first, 'xb_user_qiandao');
 });
 
 // ---------- 4. 登录失效 ----------

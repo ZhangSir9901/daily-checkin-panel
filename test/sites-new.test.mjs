@@ -149,18 +149,44 @@ await t('52pojie：已签到（签到完毕）算成功，不再报未识别', a
   assert.match(r.message, /已签到|签到完毕/);
 });
 
-await t('52pojie：签到完毕在首页预检就直接结束（不再打任务页）', async () => {
+// 线上真实现象（已确认根因）：门户页 portal.php 的「最新公告」块里常年挂着
+// 「开放注册期间论坛暂停签到」。早期实现拿「暂停签到」扫整个首页，
+// 把一个完全正常的账号报成「论坛官方暂停签到，等恢复后再试」，死活签不上。
+// 门户页还混着论坛最新帖标题，什么都可能出现，所以首页文本不能当签到结论。
+await t('52pojie：门户页公告写着「暂停签到」也不能误判，仍要去打签到页', async () => {
   const urls = [];
   mockFetch([
-    { match: (u) => u.includes('portal.php'), body: PJ_HOME_CLEAN + '签到完毕' },
+    { match: (u) => u.includes('mod=task'), body: '<html><a href="home.php?mod=task">每日签到</a> 任务已完成，恭喜获得 2 热心值</html>' },
+    { match: (u) => u.includes('portal.php'), body: PJ_HOME_CLEAN + '最新公告 开放注册期间论坛暂停签到、QQ登录绑定、下期开放注册时间' },
     { match: () => true, body: '<html>吾爱币 12</html>' },
   ]);
   const orig = globalThis.fetch;
   globalThis.fetch = async (url, init) => { urls.push(String(url)); return orig(url, init); };
   const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' });
   globalThis.fetch = orig;
+  assert.equal(r.ok, true, '公告不能把正常可签的账号判成暂停');
+  assert.ok(urls.some((u) => u.includes('mod=task')), '必须真的去打签到页');
+});
+
+await t('52pojie：门户页帖子标题里的「今日已签到」也不能当结论', async () => {
+  mockFetch([
+    { match: (u) => u.includes('mod=task'), body: '<html>任务已完成，恭喜获得 1 热心值</html>' },
+    { match: (u) => u.includes('portal.php'), body: PJ_HOME_CLEAN + '[经验] 今日已签到，快来领吾爱币吧' },
+    { match: () => true, body: '<html>吾爱币 12</html>' },
+  ]);
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' });
   assert.equal(r.ok, true);
-  assert.ok(!urls.some((u) => u.includes('mod=task')), '已签到就不该再打签到接口');
+  assert.match(r.message, /签到成功/);
+});
+
+await t('52pojie：签到页确实说暂停 → 给出暂停结论', async () => {
+  mockFetch([
+    { match: (u) => u.includes('mod=task'), body: '<html><b>每日签到</b> 本期签到功能维护中，暂停签到</html>' },
+    { match: (u) => u.includes('portal.php'), body: PJ_HOME_CLEAN },
+    { match: () => true, body: '<html>吾爱币 12</html>' },
+  ]);
+  const err = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }).catch((e) => e);
+  assert.match(err.message, /暂停签到/);
 });
 
 await t('52pojie：WAF 拦截提示', async () => {

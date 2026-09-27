@@ -25,7 +25,10 @@ const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 // 签到按钮 <a class="click-qiandao zzhuti_qd_1"> 的处理器在 xb-app.js：
 //   $.post(caozhuti.ajaxurl, { action: "xb_user_qiandao" }, ...) → 1 == n.status 为成功
 // 首页内联脚本里虽然有 ajaxurl，但不会写出 action 名，所以这个兜底顺序很重要（少打一次无用请求）。
-const FALLBACK_ACTIONS = ['xb_user_qiandao', 'user_qiandao', 'qiandao', 'user_checkin'];
+// 站点主题自己一定有的 action：永远放最高优先级，不靠猜也不靠记。
+const SITE_ACTIONS = ['xb_user_qiandao'];
+// 兜底 action 名（发现阶段与主题 action 都没命中时才用）
+const FALLBACK_ACTIONS = ['user_qiandao', 'qiandao', 'user_checkin'];
 const MAX_ATTEMPTS = 6; // 最多打几次，避免把站点打烦
 
 function normBase(u) {
@@ -111,10 +114,13 @@ export function judgeSigninResponse(raw, status) {
       j.status == 1 || j.code == 1 || j.ret == 1 || j.success === true ||
       (j.data && (j.data.status == 1 || j.data.success === true || j.data.code == 1));
     if (okFlag) {
-      return { done: true, result: { ok: true, message: '签到成功' + (msg ? `：${msg}` : ''), detail: snippet } };
+      // 直接用网站自己返回的那句话，不再拼「签到成功：」前缀。
+      // 面板「网站反馈」列要的就是网站真实反馈；拼前缀会变成
+      // 「签到成功：签到成功，赠送1积分」这种既重复又不算真实反馈的东西。
+      return { done: true, result: { ok: true, message: msg || '签到成功（网站未返回文字）', detail: snippet } };
     }
     const sig = classifySignal(msg || text, { status });
-    if (sig.outcome === OUTCOME.ALREADY) return { done: true, result: { ok: true, message: '今日已签到，无需重复', detail: snippet } };
+    if (sig.outcome === OUTCOME.ALREADY) return { done: true, result: { ok: true, message: msg || '今日已签到，无需重复', detail: snippet } };
     if (sig.outcome === OUTCOME.NEED_LOGIN) return definitive('登录已失效，请重新获取 Cookie', sig, snippet);
     if (sig.outcome === OUTCOME.CAPTCHA) return definitive('遇到人机验证，请在浏览器完成验证后重试', sig, snippet);
     if (sig.outcome === OUTCOME.WAF) return definitive('遇到网站安全防护（WAF），请在浏览器完成验证后重试', sig, snippet);
@@ -234,22 +240,28 @@ export const hutue = {
       if (e && e.outcome) throw e;
     }
 
-    // ---- ② 组装尝试列表：上次命中的 action 优先 → 本次页面发现的 → 兜底 ----
+    // ---- ② 组装尝试列表 ----
+    // 顺序：主题自己用的 action（最可信，两个站都是 xb-child 子主题）
+    //       → 上次命中的 → 本次页面发现的 → 其余兜底
+    // 为什么把主题 action 放最前：踩过的坑——如果某个别的插件 action 也返回 status=1，
+    // 一旦它先命中就会被记住（hutue_action），以后每次都走它，
+    // 网站反馈就变成那个插件的话（比如只给 1 点积分），跟本站的签到奖励对不上。
     const remembered = ctx && ctx.meta && ctx.meta.hutue_action ? String(ctx.meta.hutue_action) : '';
     const ordered = [];
-    if (remembered) ordered.push(remembered);
-    for (const a of seenActions) if (!ordered.includes(a)) ordered.push(a);
-    for (const a of FALLBACK_ACTIONS) if (!ordered.includes(a)) ordered.push(a);
+    const push = (a) => { if (a && !ordered.includes(a)) ordered.push(a); };
+    for (const a of SITE_ACTIONS) push(a);
+    push(remembered);
+    for (const a of seenActions) push(a);
+    for (const a of FALLBACK_ACTIONS) push(a);
 
+    // 同一个 action 的「带 nonce」版本优先，但不做全局排序——
+    // 全局按 nonce 排序会把首选 action 的无 nonce 版本挤到很后面。
     const attempts = [];
     for (const action of ordered) {
       if (nonce) attempts.push({ action, nonce });
       attempts.push({ action, nonce: '' });
       if (attempts.length >= MAX_ATTEMPTS) break;
     }
-
-    // 带 nonce 的排前面（命中率更高），但同一个 action 的无 nonce 版本也要留机会
-    attempts.sort((a, b) => (b.nonce ? 1 : 0) - (a.nonce ? 1 : 0));
 
     // ---- ③ 依次尝试：成功即返回；负面结论记录下来，全部试完再抛最有信息量的那个 ----
     let lastReason = '';

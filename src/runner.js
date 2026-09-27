@@ -114,8 +114,8 @@ export async function runAccount(env, account) {
     meta.last_signin_date = dayInTz(new Date(now), await scheduleTz(db));
   }
   await db
-    .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
-    .bind(status, message, now, JSON.stringify(meta), now, account.id)
+    .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_detail=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
+    .bind(status, message, detail || '', now, JSON.stringify(meta), now, account.id)
     .run();
 
   return { status, message, duration_ms: duration };
