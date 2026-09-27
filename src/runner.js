@@ -43,7 +43,7 @@ export async function runAccount(env, account) {
     }
 
     if (skipReason) {
-      // 浏览器模式定时跳过：不记为失败，记为跳过
+      // 浏览器模式定时跳过：不记为失败，记为跳过；不覆盖上次网站真实回馈
       const duration = Date.now() - t0;
       const now = Date.now();
       await db
@@ -51,8 +51,8 @@ export async function runAccount(env, account) {
         .bind(account.id, account.site, account.name, 'skip', skipReason, '', duration, now)
         .run();
       await db
-        .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
-        .bind('skip', skipReason, now, JSON.stringify(meta), now, account.id)
+        .prepare('UPDATE accounts SET last_status=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
+        .bind('skip', now, JSON.stringify(meta), now, account.id)
         .run();
       return { status: 'skip', message: skipReason, duration_ms: duration };
     }
