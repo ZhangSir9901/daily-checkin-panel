@@ -110,17 +110,24 @@ export async function handleExtZip(req, env) {
   const files = [];
 
   for (const name of fileNames) {
-    // 从公开的静态路径读取源文件（env.ASSETS 在部分部署中不可用，改用自请求）
-    const res = await fetch(origin + '/ext-src/' + name);
-    if (!res.ok) {
-      return new Response('扩展源文件缺失：' + name, { status: 500 });
+    let text = null;
+    // 优先用 ASSETS 直接读（避免自请求在某些环境下 404）
+    if (env.ASSETS) {
+      try {
+        const r = await env.ASSETS.fetch(new Request(origin + '/ext-src/' + name));
+        if (r.ok) text = await r.text();
+      } catch { /* 忽略，走自请求兜底 */ }
     }
-    let text = await res.text();
-    if (name === 'popup.js') {
-      // 替换所有占位符（注释和常量中都有）
-      text = text.split('__PANEL_URL__').join(origin);
+    // 兜底：自请求
+    if (text === null) {
+      const res = await fetch(origin + '/ext-src/' + name);
+      if (!res.ok) {
+        return new Response('扩展源文件缺失：' + name, { status: 500 });
+      }
+      text = await res.text();
     }
-    if (name === 'background.js') {
+    if (name === 'popup.js' || name === 'background.js') {
+      // 替换所有占位符
       text = text.split('__PANEL_URL__').join(origin);
     }
     files.push({ name, data: te.encode(text) });
