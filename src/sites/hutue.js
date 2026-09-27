@@ -21,7 +21,7 @@ export const hutue = {
   id: 'hutue',
   name: '糊涂鳄',
   desc: '糊涂鳄资源站每日签到（WordPress）。支持 hutue.cn 与 dj.hutue.cn，Cookie 方式。',
-  execution: 'browser', // 默认浏览器扩展执行（用户网络）
+  execution: 'server', // 默认云端执行（用面板保存的 Cookie）；扩展在线时自动走中继用用户网络
   domain: 'dj.hutue.cn', // 默认域名；实际按账号的 site_url 动态决定
   // 浏览器端签到脚本：在用户浏览器中运行，自动携带登录 Cookie
   // 入参 params：{ base_url }；返回 { ok, message }
@@ -47,15 +47,22 @@ export const hutue = {
         continue;
       }
       let data;
+      // 先读 text 再 JSON.parse：resp.json() 失败后 body 已被消费，不能再调 resp.text()
+      let rawText = '';
       try {
-        data = await resp.json();
+        rawText = await resp.text();
       } catch {
-        const t = await resp.text().catch(() => '');
+        lastMsg = '读取网站响应失败（HTTP ' + resp.status + '）';
+        continue;
+      }
+      try {
+        data = JSON.parse(rawText);
+      } catch {
         // 非 JSON 可能是登录页或 WAF
-        if (/wp-login|请先登录|登录/.test(t) && t.length < 5000) {
+        if (/wp-login|请先登录|登录/.test(rawText) && rawText.length < 5000) {
           return { ok: false, message: '登录已失效，请重新获取 Cookie' };
         }
-        lastMsg = '网站返回非 JSON（HTTP ' + resp.status + '）';
+        lastMsg = '网站返回非 JSON（HTTP ' + resp.status + '）：' + rawText.slice(0, 120);
         continue;
       }
       const msg = String(data.msg || '');
