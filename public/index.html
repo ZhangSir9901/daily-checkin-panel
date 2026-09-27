@@ -250,6 +250,7 @@
           <select id="ck-account" style="flex:1;margin:4px 0"></select>
         </div>
         <div class="row" style="margin:8px 0">
+          <button class="ghost sm ck-tab active" data-t="ext" type="button">🧩 扩展一键获取 ⭐</button>
           <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
           <button class="ghost sm ck-tab" data-t="addrbar" type="button">🔗 地址栏代码</button>
           <button class="ghost sm ck-tab" data-t="console" type="button">💻 控制台代码</button>
@@ -258,7 +259,15 @@
           <button class="ghost sm ck-tab" data-t="json" type="button">🧩 JSON 导入</button>
           <button class="ghost sm ck-tab" data-t="txt" type="button">📄 cookie.txt</button>
         </div>
-        <div id="ck-panel-bm" class="ck-panel">
+        <div id="ck-panel-ext" class="ck-panel">
+          <div class="tips">🌟 <b>推荐方式</b>：安装「签到面板 Cookie 助手」扩展，在目标网站登录状态下点一下扩展图标 → 「一键发送到签到面板」，自动打开面板并弹出确认框。<b>能读取 HttpOnly Cookie</b>，NodeSeek 这类站点也适用。</div>
+          <p class="muted">安装步骤：</p>
+          <p class="muted">1️⃣ 下载扩展文件夹（找 hani 要 <b>cookie-helper-extension.zip</b>）并解压<br>
+          2️⃣ Chrome 地址栏输入 <b>chrome://extensions/</b>，打开右上角「开发者模式」<br>
+          3️⃣ 点击「加载已解压的扩展程序」，选择解压后的文件夹<br>
+          4️⃣ 在目标网站点扩展图标 → 一键发送到面板</p>
+        </div>
+        <div id="ck-panel-bm" class="ck-panel hidden">
           <div class="row">
             <button class="ghost sm" id="btn-gen-bm" type="button">生成小书签</button>
           </div>
@@ -783,8 +792,18 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
   };
 }
 
-// 小书签跳回面板时（#ck=...）
+// 小书签/扩展跳回面板时（#ck=... 或 #ext-cookies=...）
 async function checkCookieHash() {
+  // 扩展格式：#ext-cookies=base64({domain, cookies, ts})
+  const me = location.hash.match(/#ext-cookies=([A-Za-z0-9+/=]+)/);
+  if (me) {
+    history.replaceState(null, '', location.pathname);
+    let d;
+    try { d = JSON.parse(decodeURIComponent(escape(atob(me[1])))); } catch (e) { return toast('扩展 Cookie 数据解析失败'); }
+    if (!d || !d.cookies) return toast('扩展没有读取到 Cookie');
+    return openCookieApplyDialog('', d.cookies, d.domain || '');
+  }
+  // 小书签格式：#ck=...
   const m = location.hash.match(/#ck=([A-Za-z0-9\-_]+)/);
   if (!m) return;
   history.replaceState(null, '', location.pathname);
