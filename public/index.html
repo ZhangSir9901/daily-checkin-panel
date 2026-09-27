@@ -206,9 +206,26 @@
                background:rgba(91,140,255,.05); border:1px solid var(--line); }
   .sched-bar .sched-field { display:flex; flex-direction:column; gap:7px; }
   .sched-bar .sched-field > label { margin:0; font-size:12px; color:var(--muted2); font-weight:500; }
-  .sched-bar select { margin:0; min-width:176px; background:var(--card2); border:1px solid var(--line);
-                  border-radius:999px; padding:5px 11px; font-size:13px; font-weight:600; color:var(--text); }
+  /* 时区选择器：和时间胶囊同风格 */
+  .tz-chip { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:5px 11px; border-radius:999px;
+             background:var(--card2); border:1px solid var(--line); color:var(--text); font-size:13px;
+             font-weight:600; cursor:pointer; box-shadow:none; white-space:nowrap; min-width:176px;
+             transition:border-color .15s, box-shadow .15s; }
+  .tz-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
+  .tz-chip .tz-arrow { font-size:10px; color:var(--muted); }
+  /* 时区弹窗：和时间选择器弹窗同风格同动画 */
+  .tz-pop { position:fixed; z-index:70; width:220px; padding:10px; border-radius:16px;
+            background:linear-gradient(180deg, #1b2440, #131b2e);
+            border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
+  .tz-pop.hidden { display:none; }
+  .tz-opt { display:block; width:100%; text-align:center; padding:9px 12px; border:0; border-radius:10px;
+            background:transparent; color:var(--text); font-size:13px; font-weight:500; cursor:pointer; }
+  .tz-opt:hover { background:rgba(91,140,255,.12); color:var(--text); transform:none; box-shadow:none; }
+  .tz-opt.sel { background:rgba(91,140,255,.18); color:var(--accent2); font-weight:700; }
   .sched-bar button { margin:0; }
+  /* 保存按钮：和时间/时区胶囊同形状（药丸），文字居中 */
+  #btn-save-sched { border-radius:999px; padding:5px 28px; font-size:13px; font-weight:600;
+                    display:inline-flex; align-items:center; justify-content:center; }
   .sched-tip { align-self:center; margin-left:auto; font-size:11.5px; color:var(--muted2); }
   @media (max-width:720px) { .sched-tip { display:none; } }
   /* 账号行里的小提示（站点推荐 / 网站回馈的操作建议） */
@@ -430,7 +447,7 @@
           单个账号可以在「签到时间」那一列单独设时间，留空 = 跟随这里。</p>
         <div class="sched-bar">
           <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
-          <div class="sched-field"><label>时区</label><select id="sched-tz"></select></div>
+          <div class="sched-field"><label>时区</label><div id="sched-tz"></div></div>
           <button id="btn-save-sched">保存</button>
           <span class="sched-tip">点时间胶囊可展开时/分滚轮</span>
         </div>
@@ -854,6 +871,55 @@ function renderTimePicker(container, initial, opts = {}) {
 // ---------- 签到时间设置 ----------
 const TZ_OPTS = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney'];
 const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'Asia/Tokyo': '东京时间', 'Asia/Singapore': '新加坡时间', 'UTC': 'UTC 时间', 'Europe/London': '伦敦时间', 'Europe/Berlin': '柏林时间', 'America/New_York': '纽约时间', 'America/Chicago': '芝加哥时间', 'America/Denver': '丹佛时间', 'America/Los_Angeles': '洛杉矶时间', 'Australia/Sydney': '悉尼时间' };
+// 自定义时区选择器：按钮+弹窗，风格与时间选择器一致
+let _tzPop = null, _tzValue = 'Asia/Shanghai';
+function _tzPopover() {
+  if (_tzPop) return _tzPop;
+  const el = document.createElement('div');
+  el.className = 'tz-pop hidden';
+  document.body.appendChild(el);
+  document.addEventListener('click', (e) => {
+    if (!el.classList.contains('hidden') && !el.contains(e.target) && !e.target.closest('.tz-chip')) el.classList.add('hidden');
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') el.classList.add('hidden'); });
+  _tzPop = el;
+  return el;
+}
+function renderTzPicker(container, initial) {
+  _tzValue = initial || 'Asia/Shanghai';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tz-chip';
+  const label = () => `${TZ_CN[_tzValue] || _tzValue}`;
+  const paint = () => { btn.innerHTML = `<span>${esc(label())}</span><span class="tz-arrow">▼</span>`; };
+  paint();
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const pop = _tzPopover();
+    pop.innerHTML = TZ_OPTS.map((z) => `<button type="button" class="tz-opt${z === _tzValue ? ' sel' : ''}" data-z="${z}">${esc(TZ_CN[z] || z)}</button>`).join('');
+    pop.querySelectorAll('.tz-opt').forEach((b) => {
+      b.onclick = (ev) => {
+        ev.stopPropagation();
+        _tzValue = b.dataset.z;
+        paint();
+        pop.classList.add('hidden');
+      };
+    });
+    const r = btn.getBoundingClientRect();
+    pop.classList.remove('hidden');
+    const pw = 220, ph = pop.offsetHeight;
+    let left = r.left + r.width / 2 - pw / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
+    let top = r.bottom + 8;
+    if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 8);
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+  };
+  container.innerHTML = '';
+  container.appendChild(btn);
+  return { get: () => _tzValue, set: (v) => { _tzValue = v || 'Asia/Shanghai'; paint(); } };
+}
+let tzPicker = null;
 let GLOBAL_HOUR = '08'; // 全局签到时间（整点小时），账号独立时间为空时跟随它
 let SCHED_TZ = 'Asia/Shanghai'; // 面板设置的时区：状态列「今天」也按它算
 let schedPicker = null;
@@ -893,16 +959,16 @@ async function loadSchedule() {
     // 全局签到时间：紧凑胶囊（点开滚轮浮层），noFollow 因为它就是「全局」本身
     if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { noFollow: true, large: true });
     else schedPicker.set(displayTime);
-    if (!$('sched-tz').options.length) {
-      $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option value="${z}" ${z === s.tz ? 'selected' : ''}>${TZ_CN[z] || z}</option>`).join('');
-    } else $('sched-tz').value = s.tz;
+    if (!tzPicker) tzPicker = renderTzPicker($('sched-tz'), s.tz);
+    else tzPicker.set(s.tz);
   } catch (e) { $('sched-line').textContent = '自动签到时间加载失败'; }
 }
 
 $('btn-save-sched').onclick = async () => {
   try {
     const v = schedPicker ? schedPicker.get() : '08:00';
-    await api('/api/schedule', 'PUT', { time: v, tz: $('sched-tz').value });
+    const tz = tzPicker ? tzPicker.get() : 'Asia/Shanghai';
+    await api('/api/schedule', 'PUT', { time: v, tz });
     // 必须先 await loadSchedule()：它把新的全局时间写进 GLOBAL_HOUR。
     // 以前两个都不 await，loadAccounts() 往往先跑完，
     // 于是「跟随全局」的账号仍然显示旧时间 —— 看着就像“改了全局时间，账号时间没跟着变”。
