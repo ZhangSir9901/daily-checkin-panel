@@ -1,6 +1,7 @@
 // 动态生成扩展 zip 包：把当前面板地址注入 popup.js 的 __PANEL_URL__ 占位符，
 // 用户下载安装后，扩展的面板地址输入框自动带出，用户仍可手动修改。
 // 极简 ZIP Writer（STORE 不压缩），零依赖。
+import { EXT_FILES } from './ext-files.js';
 
 const te = new TextEncoder();
 
@@ -101,7 +102,7 @@ export function buildZip(files) {
   return concat(...chunks, ...centralBytes, end);
 }
 
-// 从 ASSETS 读取扩展源文件，注入面板地址，打包返回
+// 从嵌入的源文件读取，注入面板地址，打包返回（不依赖 ASSETS 或自请求）
 export async function handleExtZip(req, env) {
   const url = new URL(req.url);
   const origin = url.origin; // 当前面板地址，如 https://xxx.workers.dev
@@ -110,21 +111,9 @@ export async function handleExtZip(req, env) {
   const files = [];
 
   for (const name of fileNames) {
-    let text = null;
-    // 优先用 ASSETS 直接读（避免自请求在某些环境下 404）
-    if (env.ASSETS) {
-      try {
-        const r = await env.ASSETS.fetch(new Request(origin + '/ext-src/' + name));
-        if (r.ok) text = await r.text();
-      } catch { /* 忽略，走自请求兜底 */ }
-    }
-    // 兜底：自请求
-    if (text === null) {
-      const res = await fetch(origin + '/ext-src/' + name);
-      if (!res.ok) {
-        return new Response('扩展源文件缺失：' + name, { status: 500 });
-      }
-      text = await res.text();
+    let text = EXT_FILES[name];
+    if (text == null) {
+      return new Response('扩展源文件缺失：' + name, { status: 500 });
     }
     if (name === 'popup.js' || name === 'background.js') {
       // 替换所有占位符
