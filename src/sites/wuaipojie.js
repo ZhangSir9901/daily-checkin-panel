@@ -52,12 +52,19 @@ export const wuaipojie = {
     const base = 'https://www.52pojie.cn';
     const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中'];
     const isWaf = (t) => WAF.some((m) => t.includes(m));
+    // 带超时的 fetch：WAF 有时会把连接挂起不返回，避免无限等待
+    const fetchT = async (url, init, ms) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), ms || 20000);
+      try { return await fetch(url, Object.assign({}, init, { signal: ctrl.signal })); }
+      finally { clearTimeout(timer); }
+    };
     // ① 检查是否已签到
     let portalResp;
     try {
-      portalResp = await fetch(base + '/portal.php', { credentials: 'include' });
+      portalResp = await fetchT(base + '/portal.php', { credentials: 'include' }, 20000);
     } catch (e) {
-      return { ok: false, message: '网络请求失败：' + (e.message || 'fetch 异常') };
+      return { ok: false, message: e.name === 'AbortError' ? '请求超时（20秒）：网络或 WAF 拦截' : '网络请求失败：' + (e.message || 'fetch 异常') };
     }
     const portalText = await portalResp.text();
     if (isWaf(portalText)) return { ok: false, message: '遇到安全验证（WAF）：请在浏览器中打开 www.52pojie.cn 完成验证后重试' };
@@ -68,12 +75,12 @@ export const wuaipojie = {
     // ② 执行签到
     let signResp;
     try {
-      signResp = await fetch(base + '/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php', {
+      signResp = await fetchT(base + '/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php', {
         credentials: 'include',
         headers: { 'Referer': base + '/portal.php' },
-      });
+      }, 20000);
     } catch (e) {
-      return { ok: false, message: '签到请求失败：' + (e.message || 'fetch 异常') };
+      return { ok: false, message: e.name === 'AbortError' ? '签到请求超时（20秒）：网络或 WAF 拦截' : '签到请求失败：' + (e.message || 'fetch 异常') };
     }
     const text = await signResp.text();
     if (isWaf(text)) return { ok: false, message: '签到时遇到安全验证（WAF）：请在浏览器中完成验证后重试' };
