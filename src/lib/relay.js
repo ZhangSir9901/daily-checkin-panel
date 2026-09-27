@@ -43,7 +43,8 @@ export async function queueRelayJob(db, { url, method = 'GET', headers = {}, bod
 // 等待中继结果（轮询 D1），返回 { status, headers, body: Uint8Array, url }，超时抛错
 // 轮询间隔调小（300ms），配合扩展端的长轮询：任务被领走后通常 1 秒内就能拿到结果
 // timeoutMs 也要覆盖「扩展多等一轮长轮询」的最坏情况。
-export async function waitRelayResult(db, jobId, timeoutMs = 60000, pollMs = 300) {
+// 52pojie 这类慢站：扩展端 fetch 超时 30s + 任务超时 60s，Worker 端给 90s 兜底
+export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 300) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const job = await db.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(jobId).first();

@@ -15,8 +15,8 @@ const RELAY_LONGPOLL_MS = 15000; // 单次长轮询挂起时长（Worker 端上�
 const RELAY_GAP_MS = 200; // 两轮长轮询之间的间隔
 const RELAY_BURST_ROUNDS = 24; // 单次突发最多跑几轮长轮询（防止无限循环/异常时死循环）
 const RELAY_BURST_IDLE = 6; // 连续几轮没接到任务就结束本次突发（6×15s≈90s 空转覆盖）
-const RELAY_JOB_TIMEOUT_MS = 30000; // 单个中继任务硬超时，超时也要回传，避免任务永久卡在 pending
-const RELAY_FETCH_TIMEOUT_MS = 18000; // 页面内单次 fetch 的超时（防止 52pojie 这类站把连接吊死）
+const RELAY_JOB_TIMEOUT_MS = 60000; // 单个中继任务硬超时，超时也要回传，避免任务永久卡在 pending
+const RELAY_FETCH_TIMEOUT_MS = 30000; // 页面内单次 fetch 的超时（52pojie 这类慢站需要更久）
 
 // 获取面板地址和 API Key
 async function getConfig() {

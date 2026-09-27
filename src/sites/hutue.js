@@ -29,7 +29,7 @@ const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
 const SITE_ACTIONS = ['xb_user_qiandao'];
 // 兜底 action 名（发现阶段与主题 action 都没命中时才用）
 const FALLBACK_ACTIONS = ['user_qiandao', 'qiandao', 'user_checkin'];
-const MAX_ATTEMPTS = 6; // 最多打几次，避免把站点打烦
+const MAX_ATTEMPTS = 4; // 最多打几次，避免把站点打烦（中继模式下每次尝试都是一次网络往返，要省着用）
 
 function normBase(u) {
   let s = String(u || '').trim();
