@@ -224,7 +224,7 @@
           </div>
         </div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>备注</th><th>站点</th><th>签到时间</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
+          <thead><tr><th>站点</th><th>签到时间</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
@@ -898,7 +898,7 @@ async function loadAccounts() {
   const { accounts } = await api('/api/accounts');
   ACCTS = accounts;
   const tb = $('accounts-body');
-  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">还没有账号，点击右上角「添加账号」。自动签到时间可在「设置」里修改，也可在下方每个账号单独调整。</td></tr>'; refreshCkSelect(); return; }
+  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">还没有账号，点击右上角「添加账号」。自动签到时间可在「设置」里修改，也可在下方每个账号单独调整。</td></tr>'; refreshCkSelect(); return; }
   const hourOpts = (cur) => {
     let h = `<option value="" ${!cur ? 'selected' : ''}>跟随全局(${GLOBAL_HOUR}:00)</option>`;
     for (let i = 0; i < 24; i++) {
@@ -913,34 +913,37 @@ async function loadAccounts() {
     return `
     <tr>
       <td><b>${esc(a.name)}</b></td>
-      <td><span class="badge site">${esc(siteName(a.site))}</span></td>
-      <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 0-23 的小时数，空为跟随全局(${GLOBAL_HOUR}:00)" style="width:70px;text-align:center"></td>
+      <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 0-23 的小时数，空为跟随全局(${GLOBAL_HOUR}:00)" style="width:90px;text-align:center"></td>
       <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : a.last_status === 'skip' ? '<span class="badge skip">跳过</span>' : '<span class="badge off">未运行</span>'}</td>
       <td class="msg">${esc(a.last_msg || '-')}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
       <td><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
-      <td><div class="row" style="gap:4px;flex-wrap:nowrap">
-        <button class="ghost sm" data-run="${a.id}" title="执行签到">执行</button>
-        <button class="ghost sm" data-edit="${a.id}" title="编辑账号">编辑</button>
-        <button class="danger sm" data-del="${a.id}" title="删除账号">删除</button>
+      <td><div style="display:inline-flex;gap:6px;white-space:nowrap">
+        <button class="ghost sm" data-run="${a.id}" title="执行签到" style="white-space:nowrap">执行</button>
+        <button class="ghost sm" data-edit="${a.id}" title="编辑账号" style="white-space:nowrap">编辑</button>
+        <button class="danger sm" data-del="${a.id}" title="删除账号" style="white-space:nowrap">删除</button>
       </div></td>
     </tr>`;
   }).join('');
 
-  tb.querySelectorAll('[data-sched]').forEach((sel) => (sel.onchange = async () => {
-    const v = sel.value.trim();
-    // 验证：空=跟随全局，或 0-23 的数字
-    if (v !== '' && !/^(0?[0-9]|1[0-9]|2[0-3])$/.test(v)) {
-      toast('请输入 0-23 的小时数，空为跟随全局');
-      sel.value = '';
-      return;
-    }
-    try {
-      await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: v === '' ? '' : String(parseInt(v, 10)).padStart(2, '0') });
-      toast('签到时间已保存');
-    } catch (e) { toast(e.message); }
-    loadAccounts();
-  }));
+  tb.querySelectorAll('[data-sched]').forEach((sel) => {
+    const save = async () => {
+      const v = sel.value.trim();
+      // 验证：空=跟随全局，或 0-23 的数字
+      if (v !== '' && !/^(0?[0-9]|1[0-9]|2[0-3])$/.test(v)) {
+        toast('请输入 0-23 的小时数，空为跟随全局');
+        sel.value = '';
+        return;
+      }
+      try {
+        await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: v === '' ? '' : String(parseInt(v, 10)).padStart(2, '0') });
+        toast('签到时间已保存');
+      } catch (e) { toast(e.message); }
+      loadAccounts();
+    };
+    sel.onchange = save;
+    sel.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); sel.blur(); } };
+  });
 
   tb.querySelectorAll('[data-atoggle]').forEach((b) => (b.onclick = async () => {
     const [id, key] = b.dataset.atoggle.split(':');
