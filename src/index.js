@@ -465,7 +465,39 @@ async function handleApi(req, env, url) {
     const { results } = await env.DB.prepare(
       'SELECT id, name, site, enabled, meta, last_status, last_msg, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
     ).all();
-    return json({ accounts: results || [] });
+    const accounts = results || [];
+    // 回填：今日有成功记录但 meta 缺 last_signin_date 的，补上（兼容旧数据）
+    const d = new Date();
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+    const p = {};
+    for (const x of parts) p[x.type] = x.value;
+    const today = `${p.year}-${p.month}-${p.day}`;
+    const dayStart = new Date(`${today}T00:00:00+08:00`).getTime();
+    for (const acc of accounts) {
+      let m = {};
+      try { m = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+      if (m.last_signin_date !== today) {
+        // 查今日是否有成功记录
+        const okRun = await env.DB.prepare(
+          "SELECT id FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? LIMIT 1"
+        ).bind(acc.id, dayStart).first();
+        if (okRun) {
+          m.last_signin_date = today;
+          // 同时把网站反馈补上（取今日最后一条成功的 message）
+          const lastOk = await env.DB.prepare(
+            "SELECT message FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? ORDER BY id DESC LIMIT 1"
+          ).bind(acc.id, dayStart).first();
+          if (lastOk?.message) {
+            acc.last_msg = lastOk.message;
+            acc.last_status = 'ok';
+          }
+          acc.meta = JSON.stringify(m);
+          await env.DB.prepare('UPDATE accounts SET meta=?, last_msg=?, last_status=?, updated_at=? WHERE id=?')
+            .bind(acc.meta, acc.last_msg, acc.last_status, Date.now(), acc.id).run();
+        }
+      }
+    }
+    return json({ accounts });
   }
 
   // 新增账号
