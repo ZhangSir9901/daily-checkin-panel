@@ -208,10 +208,10 @@ $('btn-check-conn').onclick = async () => {
     const apiKey = $('api-key').value.trim();
     if (!apiKey) return status('请先填写 API Key（面板设置页获取）', 'err');
 
-    // ① 检查面板是否可访问
+    // ① 检查面板是否可访问（用专用 ping 接口，不消费任务）
     let resp;
     try {
-      resp = await fetch(panelUrl + '/api/external/browser-jobs', {
+      resp = await fetch(panelUrl + '/api/external/ping', {
         headers: { 'X-Api-Key': apiKey },
       });
     } catch (e) {
@@ -223,8 +223,7 @@ $('btn-check-conn').onclick = async () => {
     // ③ 解析任务列表
     let data;
     try { data = await resp.json(); } catch { return status('连接失败：面板返回数据格式错误', 'err'); }
-    const n = (data.jobs || []).length;
-    status(`连接正常 ✅ API Key 有效，当前有 ${n} 个待办任务`, 'ok');
+    status(`连接正常 ✅ API Key 有效（面板版本 ${data.version || '未知'}）`, 'ok');
   } catch (e) {
     status('检查失败：' + (e.message || e), 'err');
   }

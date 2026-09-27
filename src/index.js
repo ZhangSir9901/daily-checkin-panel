@@ -179,6 +179,15 @@ async function handleApi(req, env, url) {
     return json({ mode });
   }
 
+  // ---- 扩展连接检查（无副作用，不消费任务） ----
+  if (path === '/api/external/ping' && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!(await checkExternalKey(env, apiKey))) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    return json({ ok: true, version: '2.2', time: Date.now() });
+  }
+
   // ---- 浏览器扩展获取待执行任务 ----
   // 扩展每小时调用一次，获取所有 browser 模式、已启用、到执行时间的账号
   // 返回每个任务的签到脚本（在用户浏览器中运行，使用用户网络 + 自动携带 Cookie）
