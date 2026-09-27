@@ -172,9 +172,10 @@ async function executeJobInPopup(job) {
     }
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: async (scriptStr, params) => {
-        const fn = eval(`(${scriptStr})`);
-        return await fn(params);
+      func: (scriptStr, params) => {
+        // 用 Function 构造器替代 eval，更可靠
+        const fn = new Function('params', `return (${scriptStr})(params)`);
+        return fn(params);
       },
       args: [job.script, job.params || {}],
     });

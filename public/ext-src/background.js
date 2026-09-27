@@ -73,10 +73,9 @@ async function executeJob(job) {
     // 脚本是面板下发的自包含 async 函数，入参为 params，返回 { ok, message }
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: async (scriptStr, params) => {
-        // eslint-disable-next-line no-eval
-        const fn = eval(`(${scriptStr})`);
-        return await fn(params);
+      func: (scriptStr, params) => {
+        const fn = new Function('params', `return (${scriptStr})(params)`);
+        return fn(params);
       },
       args: [job.script, job.params || {}],
     });
