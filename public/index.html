@@ -233,10 +233,15 @@
   th.c, td.c { text-align:center; }
   td.c { white-space:nowrap; }
   .site-cell { min-width:140px; text-align:center; }
-  .site-cell b { display:block; font-size:14px; margin-bottom:8px; }
-  /* 徽章+切换：允许换行，避免窄屏下「切换」被挤成两行 */
-  .site-line { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:wrap; margin-top:0; }
-  .site-line .ghost.sm { white-space:nowrap; flex-shrink:0; }
+  /* 站点名 + 切换 + 提示：一行居中 */
+  .site-head { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:8px; }
+  .site-head b { font-size:14px; }
+  /* 切换按钮：边框提亮 */
+  .exec-switch { font-size:11px !important; padding:3px 10px !important; white-space:nowrap; flex-shrink:0;
+                 border-color:rgba(91,140,255,.45) !important; color:var(--accent2) !important; }
+  .exec-switch:hover { border-color:var(--accent) !important; background:var(--accent-dim) !important; }
+  /* 网络徽章：单独一行居中 */
+  .site-line { display:flex; align-items:center; justify-content:center; margin-top:0; }
   .site-line .badge { flex-shrink:0; }
   /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
   td.msg { width:100%; min-width:160px; max-width:280px; }
@@ -1371,11 +1376,10 @@ function execCellHTML(a, execOverride) {
   const pills = togglePills(a);
   return {
     isLocalExec,
-    html: `<b>${esc(a.name)}</b>`
-      + `<div class="site-line">${execBadge}`
-      + `<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button>`
+    html: `<div class="site-head"><b>${esc(a.name)}</b>`
+      + `<button class="ghost sm exec-switch" data-exec="${a.id}" title="${esc(execTitle)}">切换</button>`
       + (hint ? `<span class="hint-dot" data-tip="推荐：${esc(hint)}">!</span>` : '')
-      + `</div>${pills}`,
+      + `</div><div class="site-line">${execBadge}</div>${pills}`,
   };
 }
 
