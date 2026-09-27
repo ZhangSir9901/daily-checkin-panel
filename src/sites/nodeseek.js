@@ -57,7 +57,7 @@ export const nodeseek = {
 
   // 站点独立开关：账号列表页直接切换，无需进编辑
   toggles: [
-    { key: 'random', label: '签到模式', onLabel: '试试手气', offLabel: '固定5鸡腿', default: true },
+    { key: 'random', label: '签到模式', onLabel: '随机', offLabel: '固定', default: true, segmented: true },
   ],
 
   async run(creds, ctx) {

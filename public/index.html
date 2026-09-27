@@ -164,6 +164,13 @@
           cursor:pointer; margin:3px 6px 3px 0; white-space:nowrap; transition:all .15s; font-weight:600; }
   .pill:hover { border-color:var(--accent); color:var(--text); }
   .pill.on { border-color:var(--ok); color:var(--ok); background:var(--ok-dim); }
+  /* 分段选择器（如随机/固定）：与徽章同字号，选中项高亮 */
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:20px; overflow:hidden; margin:3px 6px 3px 0; }
+  .seg-opt { background:transparent; border:0; padding:4px 12px; font-size:12px; font-weight:600;
+             color:var(--muted); cursor:pointer; white-space:nowrap; box-shadow:none; border-radius:0; }
+  .seg-opt:hover { color:var(--text); transform:none; box-shadow:none; }
+  .seg-opt.on { background:var(--ok-dim); color:var(--ok); }
+  .seg-opt + .seg-opt { border-left:1px solid var(--line); }
 
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-sm);
          overflow:hidden; margin-bottom:14px; background:rgba(255,255,255,.02); }
@@ -211,7 +218,7 @@
   .row-hint { margin-top:5px; font-size:11px; line-height:1.5; color:var(--warn);
               max-width:230px; }
   .row-hint::before { content:"⚠️ "; }
-  .row-pills { margin-top:8px; display:flex; flex-wrap:wrap; gap:4px; justify-content:center; }
+  .row-pills { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; }
   /* 提示不再占一整行：改成一个小红标，鼠标移上去才弹出来（见 #_tip） */
   .hint-dot { display:inline-flex; align-items:center; justify-content:center; flex:none;
               width:16px; height:16px; border-radius:50%; font-size:11px; font-weight:700; line-height:1;
@@ -233,15 +240,16 @@
   th.c, td.c { text-align:center; }
   td.c { white-space:nowrap; }
   .site-cell { min-width:140px; text-align:center; }
-  /* 站点名 + 切换 + 提示：一行居中 */
-  .site-head { display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:8px; }
+  /* 包裹层居中，内部右对齐：切换按钮右边缘与徽章右边缘对齐 */
+  .site-wrap { display:inline-block; text-align:right; }
+  .site-head { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-bottom:6px; }
   .site-head b { font-size:14px; }
   /* 切换按钮：边框提亮 */
   .exec-switch { font-size:11px !important; padding:3px 10px !important; white-space:nowrap; flex-shrink:0;
                  border-color:rgba(91,140,255,.45) !important; color:var(--accent2) !important; }
   .exec-switch:hover { border-color:var(--accent) !important; background:var(--accent-dim) !important; }
-  /* 网络徽章：单独一行居中 */
-  .site-line { display:flex; align-items:center; justify-content:center; margin-top:0; }
+  /* 网络徽章：右对齐，与切换按钮右边缘对齐 */
+  .site-line { display:flex; align-items:center; justify-content:flex-end; margin-top:0; }
   .site-line .badge { flex-shrink:0; }
   /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
   td.msg { width:100%; min-width:160px; max-width:280px; }
@@ -1376,10 +1384,10 @@ function execCellHTML(a, execOverride) {
   const pills = togglePills(a);
   return {
     isLocalExec,
-    html: `<div class="site-head"><b>${esc(a.name)}</b>`
+    siteHint: hint,
+    html: `<div class="site-wrap"><div class="site-head"><b>${esc(a.name)}</b>`
       + `<button class="ghost sm exec-switch" data-exec="${a.id}" title="${esc(execTitle)}">切换</button>`
-      + (hint ? `<span class="hint-dot" data-tip="推荐：${esc(hint)}">!</span>` : '')
-      + `</div><div class="site-line">${execBadge}</div>${pills}`,
+      + `</div><div class="site-line">${execBadge}</div>${pills}</div>`,
   };
 }
 
@@ -1419,6 +1427,13 @@ function togglePills(a) {
   const tg = meta.toggles || {};
   return '<div class="row-pills">' + s.toggles.map((t) => {
     const v = tg[t.key] == null ? !!t.default : !!tg[t.key];
+    // 分段选择器（如 NodeSeek 的随机/固定）：两个选项并排，选中项高亮
+    if (t.segmented) {
+      return `<span class="seg" title="${esc(t.label)}（点击切换，不用进编辑）">`
+        + `<button class="seg-opt ${v ? 'on' : ''}" data-atoggle="${a.id}:${esc(t.key)}" data-v="1">${esc(t.onLabel)}</button>`
+        + `<button class="seg-opt ${!v ? 'on' : ''}" data-atoggle="${a.id}:${esc(t.key)}" data-v="0">${esc(t.offLabel)}</button>`
+        + `</span>`;
+    }
     return `<button class="pill ${v ? 'on' : ''}" data-atoggle="${a.id}:${esc(t.key)}" data-v="${v ? 0 : 1}" title="点击切换（不用进编辑）">${esc(t.label)}：${esc(v ? t.onLabel : t.offLabel)}</button>`;
   }).join('') + '</div>';
 }
@@ -1452,7 +1467,7 @@ async function loadAccounts() {
     const statusBadge = signedToday
       ? '<span class="badge ok">已签到</span>'
       : '<span class="badge fail">未签到</span>';
-    const { html: execCell, isLocalExec } = execCellHTML(a, execOverride);
+    const { html: execCell, isLocalExec, siteHint } = execCellHTML(a, execOverride);
     const rawMsg = String(a.last_msg || '');
     // 旧版本遗留的提示文案（已无意义），不展示
     const msg = (rawMsg.includes('浏览器模式') || rawMsg.includes('请确保扩展')) ? '' : rawMsg;
@@ -1461,7 +1476,9 @@ async function loadAccounts() {
     const rawShow = rawText && rawText !== msg ? rawText.slice(0, 220) : '';
     // 红标提示要拿「反馈 + 网站原文」一起判：
     // 比如吾爱的 message 只有「HTTP 403」，真正能认出是网宿 UrlACL 的关键词在原文里。
-    const hintText = feedbackHint(msg + '\n' + rawText, a.site, isLocalExec);
+    // 站点级推荐（如糊涂鳄建议切本地网络）也统一放到网站反馈后面
+    let hintText = feedbackHint(msg + '\n' + rawText, a.site, isLocalExec);
+    if (siteHint) hintText = (hintText ? hintText + '\n' : '') + '推荐：' + siteHint;
     return `
     <tr>
       <td class="site-cell" data-exec-cell="${a.id}">${execCell}</td>
