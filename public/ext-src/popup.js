@@ -129,17 +129,28 @@ $('btn-run-now').onclick = async () => {
       status(`正在执行：${job.site_name || job.domain}…`, '');
       const r = await executeJobInPopup(job);
       // 上报结果
-      await fetch(panelUrl + '/api/external/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
-        body: JSON.stringify({
-          account_id: job.account_id,
-          status: r.status,
-          message: r.message,
-          detail: '',
-          duration_ms: r.durationMs || 0,
-        }),
-      }).catch(() => {});
+      try {
+        const repResp = await fetch(panelUrl + '/api/external/report', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+          body: JSON.stringify({
+            account_id: job.account_id,
+            status: r.status,
+            message: r.message,
+            detail: '',
+            duration_ms: r.durationMs || 0,
+          }),
+        });
+        if (!repResp.ok) {
+          status(`${job.site_name || job.domain}：执行完成但上报失败（HTTP ${repResp.status}），请检查 API Key`, 'err');
+          await new Promise((r2) => setTimeout(r2, 1500));
+          continue;
+        }
+      } catch (repErr) {
+        status(`${job.site_name || job.domain}：执行完成但上报失败（${repErr.message || repErr}），请检查网络`, 'err');
+        await new Promise((r2) => setTimeout(r2, 1500));
+        continue;
+      }
       status(`${job.site_name || job.domain}：${r.message}`, r.status === 'ok' ? 'ok' : 'err');
       await new Promise((r2) => setTimeout(r2, 1500));
     }
