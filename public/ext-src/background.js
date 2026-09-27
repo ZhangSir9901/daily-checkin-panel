@@ -11,7 +11,7 @@ async function getConfig() {
   const { panelUrl, apiKey } = await chrome.storage.sync.get(['panelUrl', 'apiKey']);
   // 面板地址：已保存 > 下载时注入的默认值
   let url = (panelUrl || '').trim().replace(/\/$/, '');
-  if (!url && typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL && !DEFAULT_PANEL_URL.includes('__PANEL_URL__')) {
+  if (!url && typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL && DEFAULT_PANEL_URL.startsWith('http')) {
     url = DEFAULT_PANEL_URL.replace(/\/$/, '');
   }
   return { panelUrl: url, apiKey: (apiKey || '').trim() };

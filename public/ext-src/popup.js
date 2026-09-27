@@ -11,10 +11,13 @@ let domain = '';
 async function init() {
   // 读取保存的面板地址和 API Key；没有保存过则用下载时注入的默认地址（面板动态生成 zip 时填入）
   const { panelUrl, apiKey } = await chrome.storage.sync.get(['panelUrl', 'apiKey']);
+  const hasDefault = typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL && DEFAULT_PANEL_URL.startsWith('http');
   if (panelUrl) {
     $('panel-url').value = panelUrl;
-  } else if (typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL && !DEFAULT_PANEL_URL.includes('__PANEL_URL__')) {
+  } else if (hasDefault) {
     $('panel-url').value = DEFAULT_PANEL_URL;
+    // 自动保存默认地址，避免下次为空
+    chrome.storage.sync.set({ panelUrl: DEFAULT_PANEL_URL }).catch(() => {});
   }
   if (apiKey) $('api-key').value = apiKey;
 
