@@ -20,16 +20,18 @@ const WAF_MARKS = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha'
 const BLOCK_RE = /reason:UrlACL|Client IP:\s*[\d.:a-f]+|eventID:\s*\d+-[\d.]+-\d+-waf|Request blocked|Access Denied|403 Forbidden/i;
 // 已签到特征。重点补充「签到完毕」：52pojie 的每日签到任务页在当天领过之后，
 // 按钮文字会变成「签到完毕」，再点没有任何反应（不会报错也不会给提示）。
-// 旧版没有这个词，于是把「已经签到过」误报成「未识别到成功标识」，
-// 面板也因此显示「未签到」——必须按已签到处理。
+// 旧版没有这个词，于是把「已经签到过」误报成「未识别到成功标识」。
+// 注意：只保留任务场景特有的词，去掉「已完成」「恭喜」这类在论坛帖子里也会出现的泛词。
 const SIGNED_MARKS = [
   '今日已签到', '今日已签', '已经签到', '已签到', '签到完毕', '签到完成', '已完成签到',
-  '已完成', '您已完成过此任务', '您已完成', '您已经完成', '已经完成了', '今日任务已完成',
-  '无需重复', '无需再签', '请等待下次刷新',
+  '您已完成过此任务', '您已经完成此任务', '今日任务已完成',
+  '无需重复签到', '无需重复', '请等待下次刷新',
   '下期再来', '明天再来',
   'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´', // GBK 被误作 Latin1 解码时的特征
 ];
-const SUCCESS_MARKS = ['签到成功', '打卡成功', '恭喜', '获得', '吾爱币', '热心值', '签到完毕'];
+// 成功特征：必须是任务完成场景的强信号。去掉「恭喜」「获得」「吾爱币」这类泛词，
+// 它们在论坛帖子/公告里随处可见，会造成误判。
+const SUCCESS_MARKS = ['任务已完成', '签到成功', '打卡成功', '签到完毕'];
 const PAUSED_MARKS = ['暂停签到', '签到暂停', '暂停每日签到', '签到功能维护'];
 const LOGIN_MARKS = ['请先登录', '需要先登录', '请登录后'];
 
@@ -93,7 +95,7 @@ async function creditSuffix(headers) {
 // 从页面里挑出与签到相关的一句话，作为真实网站回馈
 function pickLine(texts) {
   const text = clean(texts);
-  const m = text.match(/[^\s]{0,20}(任务已完成|签到成功|打卡成功|签到完毕|签到完成|已签到|已经签到|恭喜|下期再来|明天再来|获得[^\s]{0,10})[^\s]{0,30}/);
+  const m = text.match(/[^\s]{0,20}(任务已完成|签到成功|打卡成功|签到完毕|签到完成|今日已签到|已经签到|下期再来|明天再来)[^\s]{0,30}/);
   return (m ? m[0] : text.slice(0, 120)).trim();
 }
 
@@ -128,9 +130,9 @@ export const wuaipojie = {
     const all = html + '\\n' + text;
     const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中'];
     if (WAF.some((m) => all.includes(m))) return { ok: false, message: '遇到安全验证（WAF）：请在浏览器中打开 www.52pojie.cn 完成验证后重试' };
-    if (/任务已完成|签到成功|打卡成功|恭喜.*获得/.test(all)) return { ok: true, message: '签到成功' };
-    if (/今日已签到|已经签到|已签到|签到完毕|签到完成|下期再来|明天再来|无需重复/.test(all)) return { ok: true, message: '今日已签到，无需重复' };
     if (/需要先登录|请先登录/.test(all)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    if (/任务已完成|签到成功|打卡成功/.test(all)) return { ok: true, message: '签到成功' };
+    if (/今日已签到|已经签到|已签到|签到完毕|签到完成|下期再来|明天再来|无需重复/.test(all)) return { ok: true, message: '今日已签到，无需重复' };
     return { ok: false, message: '未识别到成功标识，页面标题：' + (document.title || '未知') };
   }`,
   fields: [
