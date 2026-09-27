@@ -3,8 +3,11 @@
 // 凭据：浏览器手动登录后的 Cookie。
 // 注意：登录页带 Cloudflare Turnstile 人机验证，账号密码无法自动登录，
 // 只能手动在浏览器登录一次，把 Cookie 复制到面板里。
+// 请求使用 src/lib/web.js 的浏览器模拟（UA/Referer/Origin 等）。
 
-const UA = 'Mozilla/5.0 (Linux; Android 13; KB2000 Build/TKQ1.221114.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36';
+import { MOBILE_UA, browserHeaders } from '../lib/web.js';
+
+const UA = MOBILE_UA;
 
 export const nodeseek = {
   id: 'nodeseek',
@@ -37,11 +40,11 @@ export const nodeseek = {
     const t = ctx && ctx.meta && ctx.meta.toggles ? ctx.meta.toggles.random : undefined;
     const random = t == null ? creds.random !== '固定 5 鸡腿' : !!t;
     const headers = {
+      ...browserHeaders('https://www.nodeseek.com/board', {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      }),
       'User-Agent': UA,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      Origin: 'https://www.nodeseek.com',
-      Referer: 'https://www.nodeseek.com/board',
       Cookie: String(creds.cookie || '').trim(),
     };
 
