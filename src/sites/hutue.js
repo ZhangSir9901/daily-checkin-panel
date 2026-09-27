@@ -52,12 +52,24 @@ function tryJson(text) {
 }
 
 // ---------- ① 从首页发现签到接口 ----------
-// 返回 { ajaxUrl, actions: [], routes: [], nonce }
+// 返回 { ajaxUrl, actions: [], routes: [], nonce, jsUrls: [] }
+// jsUrls: 页面引用的主题 JS 文件（签到 action 可能藏在其中，如 xb-app.js）
 export function discoverSignin(base, html) {
-  const out = { ajaxUrl: '', actions: [], routes: [], nonce: '' };
+  const out = { ajaxUrl: '', actions: [], routes: [], nonce: '', jsUrls: [] };
 
   const ajax = String(html || '').match(/["']?(?:ajaxurl|ajax_url|adminAjax)["']?\s*[:=]\s*["']([^"']+)["']/i);
   if (ajax) out.ajaxUrl = absolutize(ajax[1], base);
+
+  // 收集主题相关的外部 JS 文件地址（签到 action 可能藏在主题 JS 里）
+  const scriptRe = /<script[^>]+src=["']([^"']+\.js[^"']*)["']/gi;
+  let sm;
+  while ((sm = scriptRe.exec(String(html || ''))) !== null) {
+    const abs = absolutize(sm[1], base);
+    if (abs && /wp-content\/(themes|plugins)/i.test(abs) && !out.jsUrls.includes(abs)) {
+      out.jsUrls.push(abs);
+      if (out.jsUrls.length >= 5) break;
+    }
+  }
 
   // action:'user_qiandao' / action: "xb_user_qiandao" / data-action="qiandao"
   const actionRe = /(?:action|do|type)\s*[:=]\s*["']([A-Za-z0-9_-]*(?:qiandao|checkin|check_in|signin|sign_in)[A-Za-z0-9_-]*)["']/gi;
@@ -212,6 +224,17 @@ export const hutue = {
       for (const a of d.actions) seenActions.push(a);
       for (const r of d.routes) seenRoutes.push(r);
       nonce = d.nonce;
+      // 二次发现：抓主题 JS 文件，从中找签到 action（xb-app.js 这类文件里才有真正的 action 名）
+      for (const jsUrl of (d.jsUrls || []).slice(0, 3)) {
+        try {
+          const jr = await fetch(jsUrl, { headers });
+          const jsText = await jr.text();
+          const d2 = discoverSignin(base, jsText);
+          for (const a of d2.actions) {
+            if (a && !seenActions.includes(a)) seenActions.push(a);
+          }
+        } catch { /* 单个 JS 抓失败不影响 */ }
+      }
 
       // 首页本身若是验证码/登录页，直接给出明确结论，不再瞎试
       const snippet = '网站返回：' + String(html).replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);

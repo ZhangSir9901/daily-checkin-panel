@@ -277,8 +277,20 @@ export const wuaipojie = {
       // draw 失败不致命，继续用 apply 的结果报错
       if (/WAF|安全验证|403|UrlACL/.test(e.message || '')) throw e;
     }
+    // 诊断：记录页面关键特征，帮助排查为什么没识别到
+    const diag = [];
+    const diagText = pickText(final);
+    if (/task/i.test(diagText)) diag.push('含task字样');
+    if (/apply/i.test(diagText)) diag.push('含apply字样');
+    if (/draw/i.test(diagText)) diag.push('含draw字样');
+    if (/id=2/.test(diagText)) diag.push('含id=2');
+    if (/签到/.test(diagText)) diag.push('含"签到"');
+    if (/任务/.test(diagText)) diag.push('含"任务"');
+    const titleMatch = diagText.match(/<title[^>]*>([^<]{0,60})<\/title>/i);
+    if (titleMatch) diag.push('标题:' + titleMatch[1].trim());
     throw new Error(
-      `签到失败：未识别到成功标识（HTTP ${final.status}）${pauseHint}，` +
+      `签到失败：未识别到成功标识（HTTP ${final.status}）${pauseHint}` +
+        (diag.length ? ` [页面特征:${diag.join(',')}]` : '') + '，' +
         finalText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 200)
     );
   },
