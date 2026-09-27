@@ -109,17 +109,86 @@ $('api-key').onchange = () => {
 $('btn-run-now').onclick = async () => {
   status('正在获取待办任务…', '');
   try {
-    // 直接调用后台的 runJobs 逻辑（通过消息传递），加 10 秒超时防止卡死
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('后台无响应（扩展可能需要重新加载）')), 10000));
-    await Promise.race([
-      chrome.runtime.sendMessage({ action: 'runJobsNow' }),
-      timeout,
-    ]);
-    status('已触发执行，请稍后在面板查看日志', 'ok');
+    let panelUrl = $('panel-url').value.trim().replace(/\/$/, '');
+    if (!panelUrl) return status('请先填写签到面板地址', 'err');
+    if (!panelUrl.startsWith('http')) panelUrl = 'https://' + panelUrl;
+    const apiKey = $('api-key').value.trim();
+    if (!apiKey) return status('请先填写 API Key', 'err');
+
+    // 直接在弹窗里获取并执行（不依赖后台 Service Worker，避免休眠无响应）
+    const resp = await fetch(panelUrl + '/api/external/browser-jobs', {
+      headers: { 'X-Api-Key': apiKey },
+    });
+    if (!resp.ok) return status('获取任务失败：HTTP ' + resp.status, 'err');
+    const data = await resp.json();
+    const jobs = data.jobs || [];
+    if (!jobs.length) return status('暂无待办任务', 'ok');
+
+    status(`找到 ${jobs.length} 个任务，开始执行…`, '');
+    for (const job of jobs) {
+      status(`正在执行：${job.site_name || job.domain}…`, '');
+      const r = await executeJobInPopup(job);
+      // 上报结果
+      await fetch(panelUrl + '/api/external/report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+        body: JSON.stringify({
+          account_id: job.account_id,
+          status: r.status,
+          message: r.message,
+          detail: '',
+          duration_ms: r.durationMs || 0,
+        }),
+      }).catch(() => {});
+      status(`${job.site_name || job.domain}：${r.message}`, r.status === 'ok' ? 'ok' : 'err');
+      await new Promise((r2) => setTimeout(r2, 1500));
+    }
+    status('全部执行完成，去面板查看日志', 'ok');
   } catch (e) {
-    status('触发失败：' + (e.message || e), 'err');
+    status('执行失败：' + (e.message || e), 'err');
   }
 };
+
+// 在弹窗上下文中执行单个签到任务（复用目标域名标签页，携带用户 Cookie）
+async function executeJobInPopup(job) {
+  const startMs = Date.now();
+  try {
+    const tabs = await chrome.tabs.query({ url: `*://${job.domain}/*` });
+    let tab;
+    if (tabs.length > 0) {
+      tab = tabs[0];
+    } else {
+      tab = await chrome.tabs.create({ url: `https://${job.domain}/`, active: false });
+      await new Promise((resolve) => {
+        const listener = (tabId, info) => {
+          if (tabId === tab.id && info.status === 'complete') {
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+        setTimeout(resolve, 15000);
+      });
+    }
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (scriptStr, params) => {
+        const fn = eval(`(${scriptStr})`);
+        return await fn(params);
+      },
+      args: [job.script, job.params || {}],
+    });
+    const result = results && results[0] && results[0].result;
+    if (!result) throw new Error('脚本无返回结果');
+    return {
+      status: result.ok ? 'ok' : 'fail',
+      message: String(result.message || (result.ok ? '签到成功' : '签到失败')),
+      durationMs: Date.now() - startMs,
+    };
+  } catch (e) {
+    return { status: 'fail', message: '浏览器执行失败：' + (e.message || e), durationMs: Date.now() - startMs };
+  }
+}
 
 // 面板连接检查：验证面板地址和 API Key 是否可用
 $('btn-check-conn').onclick = async () => {
