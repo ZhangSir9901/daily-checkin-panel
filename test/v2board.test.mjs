@@ -5,11 +5,20 @@ import { v2board } from '../src/sites/v2board.js';
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
 
-// mock fetch：按 URL 返回预设响应，并记录请求
+// mock fetch：按 URL 返回预设响应，并记录请求（兼容 JSON 与表单两种请求体）
 function mockFetch(routes) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
-    calls.push({ url: String(url), init, body: init.body ? JSON.parse(init.body) : null });
+    let body = null;
+    const ct = String(init.headers?.['Content-Type'] || '');
+    if (init.body) {
+      if (ct.includes('x-www-form-urlencoded')) {
+        body = Object.fromEntries(new URLSearchParams(String(init.body)));
+      } else {
+        body = JSON.parse(init.body);
+      }
+    }
+    calls.push({ url: String(url), init, body, contentType: ct });
     globalThis.__calls = calls;
     for (const [match, resp] of routes) {
       if (String(url).includes(match)) {
@@ -34,11 +43,13 @@ await t('登录+签到成功，Cookie 透传', async () => {
   const r = await v2board.run({ domain: 'example.com', email: 'a@b.c', password: 'pw' });
   assert.equal(r.ok, true);
   assert.match(r.message, /签到成功/);
-  // 登录请求
+  // 登录请求：表单提交，同时带 password 与 passwd
   const loginCall = globalThis.__calls[0];
   assert.ok(loginCall.url.startsWith('https://example.com/auth/login'));
+  assert.match(loginCall.contentType, /x-www-form-urlencoded/);
   assert.equal(loginCall.body.email, 'a@b.c');
   assert.equal(loginCall.body.password, 'pw');
+  assert.equal(loginCall.body.passwd, 'pw');
   // 签到请求带上登录 Cookie
   const chkCall = globalThis.__calls[1];
   assert.ok(chkCall.url.startsWith('https://example.com/user/checkin'));
@@ -64,6 +75,21 @@ await t('域名带路径前缀时保留路径', async () => {
   assert.equal(r.ok, true);
   assert.ok(globalThis.__calls[0].url.startsWith('https://china_69yun.337979.xyz/uuid/auth/login'));
   assert.ok(globalThis.__calls[1].url.startsWith('https://china_69yun.337979.xyz/uuid/user/checkin'));
+});
+
+await t('魔改站登录：表单字段含 passwd/remember_me/code', async () => {
+  mockFetch([
+    ['/uuid/auth/login', loginOk],
+    ['/uuid/user/checkin', checkinOk],
+  ]);
+  await v2board.run({ domain: 'china_69yun.337979.xyz/uuid', email: 'a@b.c', password: 'pw' });
+  const loginCall = globalThis.__calls[0];
+  assert.match(loginCall.contentType, /x-www-form-urlencoded/);
+  assert.equal(loginCall.body.email, 'a@b.c');
+  assert.equal(loginCall.body.passwd, 'pw');
+  assert.equal(loginCall.body.password, 'pw');
+  assert.equal(loginCall.body.remember_me, '1');
+  assert.ok('code' in loginCall.body);
 });
 
 await t('登录失败抛错', async () => {
