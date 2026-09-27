@@ -118,6 +118,16 @@ async function handleApi(req, env, url) {
     return json({ id: acc.id, site: acc.site, name: acc.name, enabled: !!acc.enabled });
   }
 
+  // ---- 外部查询 NodeSeek 模式（VM 用） ----
+  if (path === '/api/external/nodeseek-mode' && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const mode = (await getSetting(env.DB, 'nodeseek_mode')) || 'random';
+    return json({ mode });
+  }
+
   if (!(await authed(env, req))) return json({ error: '未登录' }, 401);
 
   // ---- 登录后接口 ----
@@ -164,8 +174,11 @@ async function handleApi(req, env, url) {
     const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
 
-    // 手动执行单个账号
+    // 手动执行单个账号（NodeSeek 由 VM 代签，面板不直接执行）
     if (mAcc[2] === '/run' && method === 'POST') {
+      if (acc.site === 'nodeseek') {
+        return json({ ok: false, result: { status: 'fail', message: 'NodeSeek 由外部 VM 代签，面板不直接执行。请等待 VM 定时上报结果。' } });
+      }
       const r = await runAccount(env, acc);
       return json({ ok: r.status === 'ok', result: r });
     }
@@ -319,6 +332,18 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
+  // NodeSeek 模式（前端设置用）
+  if (path === '/api/nodeseek-mode' && method === 'GET') {
+    const mode = (await getSetting(env.DB, 'nodeseek_mode')) || 'random';
+    return json({ mode });
+  }
+  if (path === '/api/nodeseek-mode' && method === 'PUT') {
+    const { mode } = await readBody(req);
+    if (mode !== 'random' && mode !== 'fixed') return json({ error: '无效的模式' }, 400);
+    await setSetting(env.DB, 'nodeseek_mode', mode);
+    return json({ ok: true });
+  }
+
   // 修改管理密码
   if (path === '/api/change-password' && method === 'POST') {
     const { old_password, new_password } = await readBody(req);
@@ -358,10 +383,12 @@ export default {
           // 各账号上次执行 key：{ accountId: "YYYY-MM-DD HH" }
           let lastMap = {};
           try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
-          const { results } = await env.DB.prepare('SELECT id, meta FROM accounts WHERE enabled = 1').all();
+          const { results } = await env.DB.prepare('SELECT id, site, meta FROM accounts WHERE enabled = 1').all();
           const now = new Date();
           let changed = false;
           for (const acc of results || []) {
+            // NodeSeek 由外部 VM 代签（面板 IP 被拦），面板调度器跳过，只展示 VM 上报结果
+            if (acc.site === 'nodeseek') continue;
             const hour = accountHour(acc.meta, globalTime);
             const lastKey = lastMap[String(acc.id)];
             const { run, key } = shouldRun(now, hour, tz, lastKey);

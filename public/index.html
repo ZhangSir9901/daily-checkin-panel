@@ -239,7 +239,7 @@
           </div>
         </div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>备注</th><th>站点</th><th>签到设置</th><th>签到时间</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
+          <thead><tr><th>备注</th><th>站点</th><th>签到时间</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
@@ -373,6 +373,16 @@
         </div>
         <button id="btn-save-sched">保存时间设置</button>
         <p class="muted" style="margin-top:10px;line-height:1.8">建议绑定自定义域名（workers.dev 在国内访问不稳定）。</p>
+      </div>
+      <div class="card">
+        <h2>NodeSeek 设置</h2>
+        <p class="muted">NodeSeek 由外部 VM 代签（面板 IP 被 NodeSeek 拦截）。此处设置签到模式，VM 下次运行时生效。</p>
+        <label>签到模式</label>
+        <select id="nodeseek-mode">
+          <option value="random">试试手气（随机鸡腿）</option>
+          <option value="fixed">固定领取（5 个鸡腿）</option>
+        </select>
+        <button id="btn-save-nodeseek">保存 NodeSeek 设置</button>
       </div>
     </section>
   </div>
@@ -818,7 +828,7 @@ async function loadAccounts() {
   const { accounts } = await api('/api/accounts');
   ACCTS = accounts;
   const tb = $('accounts-body');
-  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="9" class="muted">还没有账号，点击右上角「添加账号」。自动签到时间可在「设置」里修改，也可在下方每个账号单独调整。</td></tr>'; refreshCkSelect(); return; }
+  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">还没有账号，点击右上角「添加账号」。自动签到时间可在「设置」里修改，也可在下方每个账号单独调整。</td></tr>'; refreshCkSelect(); return; }
   const hourOpts = (cur) => {
     let h = `<option value="" ${!cur ? 'selected' : ''}>跟随全局(${GLOBAL_HOUR}:00)</option>`;
     for (let i = 0; i < 24; i++) {
@@ -834,7 +844,6 @@ async function loadAccounts() {
     <tr>
       <td><b>${esc(a.name)}</b></td>
       <td><span class="badge site">${esc(siteName(a.site))}</span></td>
-      <td>${togglePills(a)}</td>
       <td><select class="sm" data-sched="${a.id}" title="该账号的每日签到时间，空为跟随全局">${hourOpts(schedHour)}</select></td>
       <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : a.last_status === 'skip' ? '<span class="badge skip">跳过</span>' : '<span class="badge off">未运行</span>'}</td>
       <td class="msg">${esc(a.last_msg || '-')}</td>
@@ -1252,7 +1261,19 @@ async function loadSettings() {
   $('bark-set').textContent = s.bark_key_set ? '（已设置）' : '';
   $('wh-set').textContent = s.webhook_url_set ? '（已设置）' : '';
   loadSchedule();
+  // NodeSeek 模式
+  try {
+    const { mode } = await api('/api/nodeseek-mode');
+    $('nodeseek-mode').value = mode || 'random';
+  } catch { /* 忽略 */ }
 }
+
+$('btn-save-nodeseek').onclick = async () => {
+  try {
+    await api('/api/nodeseek-mode', 'PUT', { mode: $('nodeseek-mode').value });
+    toast('NodeSeek 设置已保存，VM 下次运行时生效');
+  } catch (e) { toast(e.message); }
+};
 
 $('btn-save-settings').onclick = async () => {
   try {
