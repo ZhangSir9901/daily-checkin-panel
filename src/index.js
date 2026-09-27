@@ -115,6 +115,9 @@ async function handleApi(req, env, url) {
       'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
     ).bind(acc.id, acc.site, acc.name, status || 'ok', message || '', detail || '', duration_ms || 0, Date.now()).run();
     await env.DB.prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 500)').run();
+    // 同步更新账号的上次结果（账号列表"上次结果"列显示网站实际返回）
+    await env.DB.prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, updated_at=? WHERE id=?')
+      .bind(status || 'ok', message || '', Date.now(), Date.now(), acc.id).run();
     // 如果是手动任务队列中的，上报后删除（避免重复执行）
     await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE account_id = ?').bind(acc.id).run().catch(() => {});
     return json({ ok: true });
