@@ -395,7 +395,7 @@
         <h2>签到时间</h2>
         <p class="muted">Worker 每分钟唤醒一次，到达设定的时间才执行签到。修改即时生效，无需重新部署。</p>
         <div class="row">
-          <div style="flex:1"><label>每天执行时间</label><input type="time" id="sched-hour" style="width:100%;font-size:18px;padding:10px;text-align:center"></div>
+          <div style="flex:1"><label>每天执行时间</label><input type="time" id="sched-hour" step="60" style="width:100%;font-size:18px;padding:10px;text-align:center"></div>
           <div style="flex:2"><label>时区</label><select id="sched-tz"></select></div>
         </div>
         <button id="btn-save-sched">保存时间设置</button>
@@ -1023,7 +1023,7 @@ async function loadAccounts() {
     return `
     <tr>
       <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
-      <td><div style="display:flex;align-items:center;gap:4px;justify-content:center"><input type="time" class="sm" data-sched="${a.id}" value="${esc(schedHour)}" title="独立签到时间，清空则跟随全局(${GLOBAL_HOUR})" style="width:95px;text-align:center;padding:4px">${schedHour ? `<button class="ghost sm" data-sched-clear="${a.id}" title="跟随全局" style="padding:2px 6px">✕</button>` : ''}</div></td>
+      <td><div style="display:flex;align-items:center;gap:4px;justify-content:center"><input type="time" step="60" class="sm" data-sched="${a.id}" value="${esc(schedHour)}" title="独立签到时间，清空则跟随全局(${GLOBAL_HOUR})" style="width:80px;text-align:center;padding:4px">${schedHour ? `<button class="ghost sm" data-sched-clear="${a.id}" title="跟随全局" style="padding:2px 6px">✕</button>` : ''}</div></td>
       <td>${statusBadge}</td>
       <td class="msg">${(() => { const m = a.last_msg || ''; return (m.includes('浏览器模式') || m.includes('请确保扩展')) ? '-' : esc(m || '-'); })()}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
