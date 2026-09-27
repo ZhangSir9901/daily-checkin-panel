@@ -164,13 +164,14 @@
           cursor:pointer; margin:3px 6px 3px 0; white-space:nowrap; transition:all .15s; font-weight:600; }
   .pill:hover { border-color:var(--accent); color:var(--text); }
   .pill.on { border-color:var(--ok); color:var(--ok); background:var(--ok-dim); }
-  /* 分段选择器（如随机/固定）：与徽章同字号，选中项高亮 */
-  .seg { display:inline-flex; border:1px solid var(--line); border-radius:20px; overflow:hidden; margin:3px 6px 3px 0; }
+  /* 分段选择器（如随机/固定）：与徽章同字号、弧度、高度 */
+  .seg { display:inline-flex; border-radius:20px; overflow:hidden; margin:3px 6px 3px 0;
+         border:1px solid transparent; background:rgba(91,140,255,.16); }
   .seg-opt { background:transparent; border:0; padding:4px 12px; font-size:12px; font-weight:600;
-             color:var(--muted); cursor:pointer; white-space:nowrap; box-shadow:none; border-radius:0; }
+             color:var(--muted); cursor:pointer; white-space:nowrap; box-shadow:none; border-radius:0; line-height:1.5; }
   .seg-opt:hover { color:var(--text); transform:none; box-shadow:none; }
-  .seg-opt.on { background:var(--ok-dim); color:var(--ok); }
-  .seg-opt + .seg-opt { border-left:1px solid var(--line); }
+  .seg-opt.on { background:rgba(91,140,255,.25); color:var(--accent2); }
+  .seg-opt + .seg-opt { border-left:1px solid rgba(91,140,255,.25); }
 
   .seg { display:inline-flex; border:1px solid var(--line); border-radius:var(--radius-sm);
          overflow:hidden; margin-bottom:14px; background:rgba(255,255,255,.02); }
