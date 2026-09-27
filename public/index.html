@@ -42,6 +42,8 @@
     box-shadow:var(--shadow-sm);
     transition:border-color .2s;
   }
+  .card > h2:first-child { margin:0 0 14px; font-size:16px; }
+  .card .muted { line-height:1.7; }
   .card:hover { border-color:var(--line2); }
 
   h1 { font-size:24px; margin:8px 0 4px; font-weight:700; letter-spacing:.5px;
@@ -202,9 +204,7 @@
   /* 签到时间一行布局（紧凑） */
   /* 签到时间控制条：单独一条浅底区域，宽度不够时整组换行，
      不会像以前那样把标题挤歪、或者按钮掉到下面显得散。 */
-  .sched-bar { margin-top:14px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px;
-               padding:14px 16px; border-radius:var(--radius-sm);
-               background:rgba(91,140,255,.05); border:1px solid var(--line); }
+  .sched-bar { margin-top:10px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px; }
   .sched-bar .sched-field { display:flex; flex-direction:column; gap:7px; }
   .sched-bar .sched-field > label { margin:0; font-size:12px; color:var(--muted2); font-weight:500; }
   /* 时区选择器：和时间胶囊（大号）同风格 */
@@ -440,7 +440,7 @@
     <section id="tab-accounts">
       <div class="card">
         <div class="row" style="justify-content:space-between;margin-bottom:12px;">
-          <h2 style="margin:0">签到账号</h2>
+          <h2>签到账号</h2>
           <div class="row">
             <button class="ghost sm" id="btn-run-all">全部执行</button>
             <button class="sm" id="btn-add">添加账号</button>
@@ -452,18 +452,19 @@
         </table></div>
       </div>
       <div class="card">
-      <div class="row" style="align-items:flex-start">
+      <div class="row" style="align-items:flex-start; gap:24px">
       <div style="flex:1; min-width:0">
-        <h2 style="margin:0">签到时间</h2>
-        <div class="sched-bar" style="margin-top:10px">
+        <h2>签到时间</h2>
+        <div class="sched-bar">
           <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
           <div class="sched-field"><label>时区</label><div id="sched-tz"></div></div>
           <div class="sched-field"><label>&nbsp;</label><button id="btn-save-sched">保存</button></div>
         </div>
       </div>
+      <div style="width:1px; align-self:stretch; background:var(--line); flex:none"></div>
       <div style="flex:1; min-width:0">
-        <h2 style="margin-bottom:6px">添加 / 更新账号</h2>
-        <p class="muted" style="margin:0">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
+        <h2>添加 / 更新账号</h2>
+        <p class="muted">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
           面板会自动认出站点、自动填好 Cookie 和 User-Agent（<b>UA 不用自己找</b>），保存后立刻可用。</p>
         <textarea id="ck-paste" rows="3" style="margin-top:12px" placeholder="在这里粘贴扩展复制的内容 —— 粘上就会自动识别并保存"></textarea>
         <div class="row" style="margin:12px 0 0">
@@ -500,7 +501,7 @@
     <section id="tab-logs" class="hidden">
       <div class="card">
         <div class="row" style="justify-content:space-between;margin-bottom:12px;">
-          <h2 style="margin:0">运行日志</h2>
+          <h2>运行日志</h2>
           <div class="row">
             <button class="ghost sm" id="btn-refresh-logs">刷新</button>
             <button class="danger sm" id="btn-clear-logs">清空</button>
