@@ -56,19 +56,19 @@ export function mergeCookies(a, b) {
 }
 
 async function readJson(res) {
-  let j = null;
+  // 先读文本再解析 JSON，避免 body 被消费两次导致读不到原始内容
+  let raw = '';
+  try { raw = await res.text(); } catch { /* 忽略 */ }
+  raw = String(raw || '');
   try {
-    j = await res.json();
+    return JSON.parse(raw);
   } catch {
     // JSON 解析失败：把网站实际返回的内容带出来，而不是只显示"失败"
-    let raw = '';
-    try { raw = await res.text(); } catch { /* 忽略 */ }
-    raw = String(raw || '').slice(0, 500);
-    const err = new Error(`网站返回非 JSON（HTTP ${res.status}）：${raw || '空响应'}`);
-    err.detail = raw;
+    const snippet = raw.slice(0, 500);
+    const err = new Error(`网站返回非 JSON（HTTP ${res.status}）：${snippet || '空响应'}`);
+    err.detail = snippet;
     throw err;
   }
-  return j;
 }
 
 // GET 页面（模拟浏览器先访问登录页，常用于拿初始 Cookie）

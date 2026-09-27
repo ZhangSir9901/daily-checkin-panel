@@ -38,14 +38,15 @@ async function apiGet(path, token) {
     headers: { 'User-Agent': UA, Accept: 'application/json', Authorization: token },
   });
   let body = null;
+  // 先读文本再解析，避免 body 被消费两次
+  let raw = '';
+  try { raw = await res.text(); } catch { /* 忽略 */ }
   try {
-    body = await res.json();
+    body = JSON.parse(raw);
   } catch {
-    let raw = '';
-    try { raw = await res.text(); } catch { /* 忽略 */ }
-    raw = String(raw || '').slice(0, 500);
-    const err = new Error(`网站返回非 JSON（HTTP ${res.status}）：${raw || '空响应'}`);
-    err.detail = raw;
+    const snippet = String(raw || '').slice(0, 500);
+    const err = new Error(`网站返回非 JSON（HTTP ${res.status}）：${snippet || '空响应'}`);
+    err.detail = snippet;
     throw err;
   }
   return { httpStatus: res.status, body };

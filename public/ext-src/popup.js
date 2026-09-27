@@ -153,6 +153,8 @@ $('btn-run-now').onclick = async () => {
 async function executeJobInPopup(job) {
   const startMs = Date.now();
   try {
+    if (!job.domain) throw new Error('任务缺少目标域名');
+    if (!job.script) throw new Error('任务缺少签到脚本');
     const tabs = await chrome.tabs.query({ url: `*://${job.domain}/*` });
     let tab;
     if (tabs.length > 0) {
@@ -170,7 +172,8 @@ async function executeJobInPopup(job) {
         setTimeout(resolve, 15000);
       });
     }
-    const results = await chrome.scripting.executeScript({
+    // 脚本执行加 60 秒超时，防止卡死
+    const execPromise = chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: (scriptStr, params) => {
         // 用 Function 构造器替代 eval，更可靠
@@ -179,6 +182,10 @@ async function executeJobInPopup(job) {
       },
       args: [job.script, job.params || {}],
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('脚本执行超时（60秒）')), 60000)
+    );
+    const results = await Promise.race([execPromise, timeoutPromise]);
     const result = results && results[0] && results[0].result;
     if (!result) throw new Error('脚本无返回结果');
     return {
