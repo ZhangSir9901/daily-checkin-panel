@@ -564,8 +564,9 @@ async function handleApi(req, env, url) {
     let meta = {};
     try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
     const cur = meta.execution || '';
-    // 循环：'' → 'browser' → 'relay' → 'server' → ''
-    const next = cur === '' ? 'browser' : cur === 'browser' ? 'relay' : cur === 'relay' ? 'server' : '';
+    // 循环：''（跟随默认） → 'browser' → 'server' → ''
+    // 注：relay 模式已从手动切换中移除（中继代理过于复杂，browser 模式已覆盖本地网络需求）
+    const next = cur === '' ? 'browser' : cur === 'browser' ? 'server' : '';
     if (next === '') delete meta.execution;
     else meta.execution = next;
     await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
