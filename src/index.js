@@ -575,6 +575,10 @@ async function handleApi(req, env, url) {
         // 加入手动任务队列，扩展"立即执行"或下次轮询时执行
         await env.DB.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)')
           .bind(acc.id, Date.now()).run().catch(() => {});
+        // 写一条日志，让用户在日志里能看到任务已入队
+        await env.DB.prepare(
+          'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
+        ).bind(acc.id, acc.site, acc.name, 'skip', '已加入扩展待办', '等待浏览器扩展执行（点击扩展「▶ 立即执行待办签到」或等每小时自动轮询）', 0, Date.now()).run().catch(() => {});
         return json({ ok: true, result: { status: 'ok', message: `${site?.name || acc.site} 已加入扩展待办。请点击浏览器扩展的「▶ 立即执行待办签到」，或等待扩展自动执行（每小时）。` } });
       }
       const r = await runAccount(env, acc);
