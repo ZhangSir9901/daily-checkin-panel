@@ -90,6 +90,22 @@ async function handleApi(req, env, url) {
     return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
   }
 
+  // ---- 外部上报接口（VM 定时任务用 API Key 认证，不走 session） ----
+  if (path === '/api/external/report' && method === 'POST') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const { account_id, status, message, detail, duration_ms } = await readBody(req);
+    const acc = await env.DB.prepare('SELECT id, site, name FROM accounts WHERE id = ?').bind(Number(account_id)).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    await env.DB.prepare(
+      'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
+    ).bind(acc.id, acc.site, acc.name, status || 'ok', message || '', detail || '', duration_ms || 0, Date.now()).run();
+    await env.DB.prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 500)').run();
+    return json({ ok: true });
+  }
+
   if (!(await authed(env, req))) return json({ error: '未登录' }, 401);
 
   // ---- 登录后接口 ----
