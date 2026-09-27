@@ -17,6 +17,7 @@
 const WAF_MARKS = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中', 'Please enable JavaScript'];
 const SIGNED_MARKS = ['今日已签到', '今日已签', '已经签到', '已完成', '下期再来', 'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´']; // 后两项为 GBK 被误作 Latin1 解码时的特征
 const SUCCESS_MARKS = ['签到成功', '打卡成功', '恭喜', '获得', '吾爱币', '热心值'];
+const PAUSED_MARKS = ['暂停签到', '签到暂停', '暂停每日签到', '签到功能维护'];
 const LOGIN_MARKS = ['请先登录', '需要先登录', '请登录后'];
 
 async function fetchDualText(url, init) {
@@ -51,7 +52,9 @@ export const wuaipojie = {
   browserScript: `async (params) => {
     const base = 'https://www.52pojie.cn';
     const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'slidercaptcha', '请完成安全验证', '安全检查中'];
+    const PAUSED = ['暂停签到', '签到暂停', '暂停每日签到', '签到功能维护'];
     const isWaf = (t) => WAF.some((m) => t.includes(m));
+    const isPaused = (t) => PAUSED.some((m) => t.includes(m));
     // 带超时的 fetch：WAF 有时会把连接挂起不返回，避免无限等待
     const fetchT = async (url, init, ms) => {
       const ctrl = new AbortController();
@@ -67,6 +70,7 @@ export const wuaipojie = {
       return { ok: false, message: e.name === 'AbortError' ? '请求超时（20秒）：网络或 WAF 拦截' : '网络请求失败：' + (e.message || 'fetch 异常') };
     }
     const portalText = await portalResp.text();
+    if (isPaused(portalText)) return { ok: false, message: '论坛官方暂停签到（开放注册期间），等恢复后再试' };
     if (isWaf(portalText)) return { ok: false, message: '遇到安全验证（WAF）：请在浏览器中打开 www.52pojie.cn 完成验证后重试' };
     if (/今日已签到/.test(portalText)) return { ok: true, message: '今日已签到，无需重复' };
     if (/请先登录|member.php\\?mod=logging/.test(portalText) && !/退出/.test(portalText)) {
@@ -83,6 +87,7 @@ export const wuaipojie = {
       return { ok: false, message: e.name === 'AbortError' ? '签到请求超时（20秒）：网络或 WAF 拦截' : '签到请求失败：' + (e.message || 'fetch 异常') };
     }
     const text = await signResp.text();
+    if (isPaused(text)) return { ok: false, message: '论坛官方暂停签到（开放注册期间），等恢复后再试' };
     if (isWaf(text)) return { ok: false, message: '签到时遇到安全验证（WAF）：请在浏览器中完成验证后重试' };
     if (/签到成功|打卡成功|恭喜|获得.*吾爱币/.test(text)) return { ok: true, message: '签到成功' };
     if (/今日已签到|已经签到|下期再来/.test(text)) return { ok: true, message: '今日已签到，无需重复' };
@@ -125,6 +130,9 @@ export const wuaipojie = {
     // 注：中继模式下 runner.js 会透明替换 global fetch，站点代码无需改动
     const home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
     assertNoWaf(home);
+    if (has(home, PAUSED_MARKS)) {
+      throw new Error('论坛官方暂停签到（开放注册期间），等恢复后再试');
+    }
     if (has(home, SIGNED_MARKS)) {
       return { ok: true, message: '今日已签到，无需重复' };
     }
