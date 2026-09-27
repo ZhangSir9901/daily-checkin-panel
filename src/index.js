@@ -118,6 +118,28 @@ async function handleApi(req, env, url) {
     return json({ id: acc.id, site: acc.site, name: acc.name, enabled: !!acc.enabled });
   }
 
+  // ---- 外部查询账号凭据（VM 代签用，返回解密后的 cookie / user_agent 等） ----
+  // 面板是唯一凭据源：用户在面板更新 Cookie 后，VM 下次运行自动取到最新值，无需手动同步文件
+  const mExtCreds = path.match(/^\/api\/external\/account\/(\d+)\/creds$/);
+  if (mExtCreds && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const acc = await env.DB.prepare('SELECT id, site, name, enabled, creds FROM accounts WHERE id = ?').bind(Number(mExtCreds[1])).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    let creds = {};
+    try { creds = await decryptJSON(env, env.DB, acc.creds) || {}; } catch { /* 解密失败则返回空 */ }
+    return json({
+      id: acc.id,
+      site: acc.site,
+      name: acc.name,
+      enabled: !!acc.enabled,
+      cookie: creds.cookie || '',
+      user_agent: creds.user_agent || '',
+    });
+  }
+
   // ---- 外部查询 NodeSeek 模式（VM 用） ----
   if (path === '/api/external/nodeseek-mode' && method === 'GET') {
     const apiKey = req.headers.get('X-Api-Key') || '';

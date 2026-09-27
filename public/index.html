@@ -242,6 +242,7 @@
         </div>
         <div class="row" style="margin:8px 0">
           <button class="ghost sm ck-tab active" data-t="ext" type="button">🧩 扩展一键获取 ⭐</button>
+          <button class="ghost sm ck-tab" data-t="paste" type="button">📋 粘贴扩展内容</button>
           <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
           <button class="ghost sm ck-tab" data-t="addrbar" type="button">🔗 地址栏代码</button>
           <button class="ghost sm ck-tab" data-t="console" type="button">💻 控制台代码</button>
@@ -260,6 +261,15 @@
           2️⃣ 浏览器地址栏输入 <b>chrome://extensions/</b>（Edge 用 <b>edge://extensions/</b>），打开「开发者模式」<br>
           3️⃣ 点击「加载已解压的扩展程序」，选择解压后的 <b>文件夹</b>（不是 zip）<br>
           4️⃣ 在目标网站点扩展图标 → 一键发送到面板</p>
+        </div>
+        <div id="ck-panel-paste" class="ck-panel hidden">
+          <textarea id="ck-paste" rows="3" placeholder="粘贴扩展「一键复制全部信息」得到的内容"></textarea>
+          <div class="row"><button class="ghost sm" id="btn-parse-paste" type="button">解析并填入</button></div>
+          <div class="tips">用法：<br>
+          1️⃣ 在目标网站点扩展图标 → 「📋 一键复制全部信息（含 UA）」<br>
+          2️⃣ 把复制的内容粘贴到上面，点「解析并填入」<br>
+          3️⃣ 面板自动识别站点、填入 Cookie 和 UA，选账号保存即可<br>
+          扩展复制的内容包含完整 Cookie（含 HttpOnly）、浏览器 User-Agent 和域名，面板自动解析，无需手动拆分。</div>
         </div>
         <div id="ck-panel-bm" class="ck-panel hidden">
           <div class="row">
@@ -718,6 +728,30 @@ $('btn-parse-curl').onclick = () => {
     ckPreview(r.cookie, { userAgent: r.userAgent }, 'cURL 命令');
   } catch (e) { ckParseFail(e); }
 };
+// 扩展「一键复制全部信息」的粘贴解析：JSON 含 domain/userAgent/cookies
+$('btn-parse-paste').onclick = () => {
+  try {
+    const v = $('ck-paste').value.trim();
+    if (!v) throw new Error('请先粘贴扩展复制的内容');
+    let d = null;
+    let rawCookie = '';
+    // 情况1：扩展的标准 JSON 格式
+    if (v.startsWith('{')) {
+      try { d = JSON.parse(v); } catch (e) { throw new Error('不是有效的扩展复制格式，请确认是从扩展「一键复制全部信息」复制的'); }
+      if (!d || !d.cookies) throw new Error('内容里没有 Cookie 数据');
+    } else if (v.includes('=')) {
+      // 情况2：用户误粘了纯 Cookie 字符串（name=val; name=val），降级为手动选站点
+      rawCookie = v.replace(/^["']|["'];?$/g, '');
+      return openCookieSitePicker(rawCookie, '', '');
+    } else {
+      throw new Error('没识别出 Cookie 内容，请确认粘贴的是扩展复制的完整内容');
+    }
+    const domain = d.domain || '';
+    const siteId = guessSiteByDomain(domain);
+    if (!siteId) return openCookieSitePicker(d.cookies, domain, d.userAgent || '');
+    openCookieApplyDialog(siteId, d.cookies, domain, { userAgent: d.userAgent || '' });
+  } catch (e) { toast('解析失败：' + (e && e.message ? e.message : e)); }
+};
 $('btn-ck-apply').onclick = () => {
   if (!CK_PENDING) return toast('请先解析出 Cookie');
   const siteId = $('ck-account').value;
@@ -753,12 +787,16 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
   if (!list.length && !canCreate) return toast('面板里还没有可填 Cookie 的账号');
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
+  const needsUA = (s.fields || []).some((f) => f.key === 'user_agent');
+  const uaMissing = needsUA && !(extra && extra.userAgent);
   bg.innerHTML = `<div class="modal"><h2>一键填入 Cookie</h2>
     <p class="muted">来自站点：<b>${esc(domain || '')}</b>（${esc(s.name)}）<br>
     Cookie 长度 ${cookie.length} 字符，预览前 80 字符：</p>
     <div class="tips" style="word-break:break-all">${esc(cookie.slice(0, 80))}…</div>
+    ${extra && extra.userAgent ? `<p class="muted">已提取到 User-Agent（${esc(extra.userAgent.slice(0, 50))}…），会自动填入。</p>` : ''}
+    ${uaMissing ? `<p style="color:#ffb020;font-size:13px">⚠️ 该站点需要 User-Agent 配对，但本次未获取到。请在下方手动填写（面板「获取 Cookie」区可复制当前浏览器 UA）。</p>` : ''}
     <label>填入方式</label>
-    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">已有账号：${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 新建账号</option>' : ''}</select>
+    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">已有账号：${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 添加到面板（新建记录）</option>' : ''}</select>
     <div id="ckm-new" class="${list.length ? 'hidden' : ''}">
       <label>备注名</label><input id="ckm-name" value="${esc(s.name)}">
       <div id="ckm-fields"></div>
