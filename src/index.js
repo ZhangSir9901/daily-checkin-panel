@@ -179,6 +179,9 @@ async function handleApi(req, env, url) {
       if (acc.site === 'nodeseek') {
         return json({ ok: false, result: { status: 'fail', message: 'NodeSeek 由外部 VM 代签，面板不直接执行。请等待 VM 定时上报结果。' } });
       }
+      if (acc.site === 'wuaipojie') {
+        return json({ ok: false, result: { status: 'fail', message: '吾爱破解由外部 VM 代签（Worker IP 被 WAF 拦截），面板不直接执行。请等待 VM 定时上报结果。' } });
+      }
       const r = await runAccount(env, acc);
       return json({ ok: r.status === 'ok', result: r });
     }
@@ -395,6 +398,7 @@ export default {
           for (const acc of results || []) {
             // NodeSeek 由外部 VM 代签（面板 IP 被拦），面板调度器跳过，只展示 VM 上报结果
             if (acc.site === 'nodeseek') continue;
+            if (acc.site === 'wuaipojie') continue; // VM 代签，Worker IP 被 WAF 拦截
             const hour = accountHour(acc.meta, globalTime);
             const lastKey = lastMap[String(acc.id)];
             const { run, key } = shouldRun(now, hour, tz, lastKey);
