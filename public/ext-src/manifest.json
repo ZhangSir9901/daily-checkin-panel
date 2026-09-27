@@ -11,7 +11,7 @@
     "<all_urls>"
   ],
   "manifest_version": 3,
-  "name": "签到面板助手",
+  "name": "cookie插件2.2",
   "permissions": [
     "cookies",
     "activeTab",
