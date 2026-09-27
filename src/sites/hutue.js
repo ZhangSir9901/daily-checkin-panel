@@ -141,11 +141,10 @@ export function judgeSigninResponse(raw, status) {
   }
 
   // 非 JSON（可能是登录页 / WAF 页 / 空响应）
+  // 注意：HTML 页面里的「已签到」文字不可信（可能是模板/按钮文字），
+  // 曾导致没真签到却误报「今日已签到」。非 JSON 响应一律不判为成功/已签，
+  // 只认登录失效/验证码/WAF 这类明确负面信号，其余按「未识别」继续试下一个 action。
   const sig = classifySignal(text, { status });
-  if (sig.outcome === OUTCOME.ALREADY) return { done: true, result: { ok: true, message: '今日已签到，无需重复', detail: snippet } };
-  if (sig.outcome === OUTCOME.SUCCESS) {
-    return { done: true, result: { ok: true, message: '签到成功：' + text.replace(/\s+/g, ' ').slice(0, 120), detail: snippet } };
-  }
   if (sig.outcome === OUTCOME.NEED_LOGIN || /wp-login|请先登录|登录后查看/i.test(text)) {
     return definitive('登录已失效，请重新获取 Cookie', sig, snippet);
   }
