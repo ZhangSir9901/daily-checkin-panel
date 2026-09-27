@@ -892,7 +892,9 @@ function openCookieSitePicker(cookie, domain, userAgent) {
 // 小书签/扩展跳回面板时（#ck=... 或 #ext-cookies=...）
 async function checkCookieHash() {
 // 扩展格式：#ext-cookies=base64({domain, cookies, userAgent, ts})
-  const me = location.hash.match(/#ext-cookies=([A-Za-z0-9+/=]+)/);
+  // 先对 hash 做 URL 解码（base64 的 +/= 可能被浏览器编码为 %2B/%2F/%3D）
+  const hash = decodeURIComponent(location.hash || '');
+  const me = hash.match(/#ext-cookies=([A-Za-z0-9+/=]+)/);
   if (me) {
     history.replaceState(null, '', location.pathname);
     let d;
