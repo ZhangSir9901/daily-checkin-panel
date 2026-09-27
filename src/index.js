@@ -365,6 +365,12 @@ export default {
       const url = new URL(req.url);
       await ensureSchema(env.DB);
       if (url.pathname.startsWith('/api/')) return await handleApi(req, env, url);
+      // 非 API 请求交给静态资源（public 目录），如扩展 zip 包
+      if (env.ASSETS) {
+        const res = await env.ASSETS.fetch(req);
+        // 静态资源存在则直接返回；不存在才回退到 index.html（SPA）
+        if (res.status !== 404) return res;
+      }
       return new Response('Not Found', { status: 404 });
     } catch (e) {
       return json({ error: '服务异常：' + String((e && e.message) || e) }, 500);
