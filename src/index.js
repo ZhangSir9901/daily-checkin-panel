@@ -106,6 +106,18 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
+  // ---- 外部查询账号状态（VM 跑之前检查是否启用） ----
+  const mExtAcc = path.match(/^\/api\/external\/account\/(\d+)$/);
+  if (mExtAcc && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const acc = await env.DB.prepare('SELECT id, site, name, enabled FROM accounts WHERE id = ?').bind(Number(mExtAcc[1])).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    return json({ id: acc.id, site: acc.site, name: acc.name, enabled: !!acc.enabled });
+  }
+
   if (!(await authed(env, req))) return json({ error: '未登录' }, 401);
 
   // ---- 登录后接口 ----
