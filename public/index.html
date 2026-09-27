@@ -221,8 +221,10 @@
   .tz-pop.hidden { display:none; }
   .tz-opt { display:block; width:100%; text-align:center; padding:9px 12px; border:0; border-radius:10px;
             background:transparent; color:var(--text); font-size:13px; font-weight:500; cursor:pointer; }
-  .tz-opt:hover { background:rgba(91,140,255,.12); color:var(--text); transform:none; box-shadow:none; }
-  .tz-opt.sel { background:rgba(91,140,255,.18); color:var(--accent2); font-weight:700; }
+  .tz-opt:hover { background:rgba(91,140,255,.14); color:var(--text); transform:none; box-shadow:none; }
+  .tz-opt.sel:hover { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff; }
+  .tz-opt.sel { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff;
+                font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
   .sched-bar button { margin:0; }
   /* 保存按钮：和时间/时区胶囊同形状（药丸），文字居中 */
   #btn-save-sched { border-radius:999px; padding:5px 28px; font-size:13px; font-weight:600;
