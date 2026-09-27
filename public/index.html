@@ -914,7 +914,7 @@ async function loadAccounts() {
     <tr>
       <td><b>${esc(a.name)}</b></td>
       <td><span class="badge site">${esc(siteName(a.site))}</span></td>
-      <td><select class="sm" data-sched="${a.id}" title="该账号的每日签到时间，空为跟随全局">${hourOpts(schedHour)}</select></td>
+      <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 0-23 的小时数，空为跟随全局(${GLOBAL_HOUR}:00)" style="width:70px;text-align:center"></td>
       <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : a.last_status === 'skip' ? '<span class="badge skip">跳过</span>' : '<span class="badge off">未运行</span>'}</td>
       <td class="msg">${esc(a.last_msg || '-')}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
@@ -928,8 +928,15 @@ async function loadAccounts() {
   }).join('');
 
   tb.querySelectorAll('[data-sched]').forEach((sel) => (sel.onchange = async () => {
+    const v = sel.value.trim();
+    // 验证：空=跟随全局，或 0-23 的数字
+    if (v !== '' && !/^(0?[0-9]|1[0-9]|2[0-3])$/.test(v)) {
+      toast('请输入 0-23 的小时数，空为跟随全局');
+      sel.value = '';
+      return;
+    }
     try {
-      await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: sel.value });
+      await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: v === '' ? '' : String(parseInt(v, 10)).padStart(2, '0') });
       toast('签到时间已保存');
     } catch (e) { toast(e.message); }
     loadAccounts();
