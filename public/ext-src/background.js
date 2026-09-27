@@ -70,10 +70,10 @@ async function executeJob(job) {
     // 脚本是面板下发的自包含 async 函数，入参为 params，返回 { ok, message }
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (scriptStr, params) => {
+      func: async (scriptStr, params) => {
         // eslint-disable-next-line no-eval
         const fn = eval(`(${scriptStr})`);
-        return fn(params);
+        return await fn(params);
       },
       args: [job.script, job.params || {}],
     });
@@ -252,9 +252,17 @@ async function runRelay() {
     return; // 面板不可达时静默
   }
   for (const job of jobs) {
-    console.log(`[签到面板] 中继请求：${job.method} ${job.url}`);
-    const result = await executeRelayJob(job);
-    await submitRelayResult(panelUrl, apiKey, job.id, result);
+    try {
+      console.log(`[签到面板] 中继请求：${job.method} ${job.url}`);
+      const result = await executeRelayJob(job);
+      await submitRelayResult(panelUrl, apiKey, job.id, result);
+    } catch (e) {
+      console.error(`[签到面板] 中继任务 ${job.id} 失败:`, e);
+      // 回传错误，避免任务卡在 pending
+      try {
+        await submitRelayResult(panelUrl, apiKey, job.id, { error: String(e.message || e) });
+      } catch { /* 忽略 */ }
+    }
   }
 }
 
