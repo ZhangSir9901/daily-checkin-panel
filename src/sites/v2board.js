@@ -1,6 +1,6 @@
 // V2Board 机场面板每日签到（通用模块）
 // 逻辑来源：用户自有 Worker「69qiandao」（单机场签到脚本），已验证可用。
-// 流程：POST {domain}/auth/login（email+password）→ 取登录 Cookie →
+// 流程：POST {domain}/auth/login（表单提交）→ 取登录 Cookie →
 //       POST {domain}/user/checkin → ret===1 为成功。
 // 凭据经 AES-GCM 加密存 D1（与面板其他站点一致），不再放环境变量。
 //
@@ -9,75 +9,17 @@
 // - 部分魔改站（如 69）的密码字段叫 passwd 而不是 password；为兼容标准站与魔改站，
 //   同时发送 password 和 passwd 两个字段（值相同），服务端各取所需，多余字段会被忽略。
 // - 另带 remember_me、code 字段以兼容魔改站的表单结构。
+// - 登录请求使用 src/lib/web.js 的浏览器模拟（Referer/Origin/UA 等）。
 
-const UA = 'Mozilla/5.0 (Linux; Android 13; KB2000 Build/TKQ1.221114.001) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36';
+import { MOBILE_UA, cookiesFrom, postForm, postJSON } from '../lib/web.js';
+
+const UA = MOBILE_UA;
 
 function normDomain(d) {
   let s = String(d || '').trim();
   if (!s) return '';
   if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
   return s.replace(/\/+$/, '');
-}
-
-// 从登录响应收集 Cookie（Workers 下用 getSetCookie；兜底单头）
-function cookiesFrom(res) {
-  const out = [];
-  try {
-    if (typeof res.headers.getSetCookie === 'function') {
-      for (const c of res.headers.getSetCookie()) {
-        const i = c.indexOf(';');
-        out.push(i > 0 ? c.slice(0, i) : c);
-      }
-      return out.join('; ');
-    }
-  } catch { /* 忽略，走兜底 */ }
-  const c = res.headers.get('set-cookie');
-  if (c) out.push(c.split(';')[0]);
-  return out.join('; ');
-}
-
-async function postJSON(url, body, cookie) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'User-Agent': UA,
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
-    body: JSON.stringify(body),
-  });
-  let j = null;
-  try {
-    j = await res.json();
-  } catch {
-    throw new Error(`接口异常（HTTP ${res.status}），稍后重试`);
-  }
-  return { res, j };
-}
-
-// 表单方式 POST（兼容魔改 V2Board 站的登录接口）
-async function postForm(url, fields, cookie) {
-  const body = new URLSearchParams();
-  for (const [k, v] of Object.entries(fields)) body.append(k, String(v ?? ''));
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'User-Agent': UA,
-      Accept: 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      'X-Requested-With': 'XMLHttpRequest',
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
-    body: body.toString(),
-  });
-  let j = null;
-  try {
-    j = await res.json();
-  } catch {
-    throw new Error(`接口异常（HTTP ${res.status}），稍后重试`);
-  }
-  return { res, j };
 }
 
 export const v2board = {
@@ -117,13 +59,19 @@ export const v2board = {
     if (!email || !password) throw new Error('请填写账号邮箱和密码');
 
     // 1. 登录（表单提交；同时带 password 与 passwd 以兼容标准站和魔改站）
-    const { res: loginRes, j: login } = await postForm(`${domain}/auth/login`, {
-      email,
-      password, // 标准 V2Board
-      passwd: password, // 魔改站（如 69）
-      remember_me: '1',
-      code: '',
-    });
+    //    pageUrl 传入登录页地址，自动带上 Referer/Origin，模拟浏览器行为
+    const loginUrl = `${domain}/auth/login`;
+    const { res: loginRes, j: login } = await postForm(
+      loginUrl,
+      {
+        email,
+        password, // 标准 V2Board
+        passwd: password, // 魔改站（如 69）
+        remember_me: '1',
+        code: '',
+      },
+      { pageUrl: loginUrl, ua: UA }
+    );
     if (!login || login.ret !== 1) {
       const msg = String((login && login.msg) || '未知错误');
       throw new Error('登录失败：' + msg + '，请检查域名、邮箱和密码');
@@ -131,7 +79,8 @@ export const v2board = {
     const cookie = cookiesFrom(loginRes);
 
     // 2. 签到
-    const { j: chk } = await postJSON(`${domain}/user/checkin`, {}, cookie);
+    const checkinUrl = `${domain}/user/checkin`;
+    const { j: chk } = await postJSON(checkinUrl, {}, { cookie, pageUrl: checkinUrl, ua: UA });
     const msg = String((chk && chk.msg) || '');
     if (chk && chk.ret === 1) {
       return { ok: true, message: `签到成功：${msg || '领取成功'}` };
