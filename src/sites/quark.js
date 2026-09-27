@@ -17,6 +17,7 @@ export const quark = {
   id: 'quark',
   name: '夸克网盘',
   desc: '每日签到领取空间奖励，需抓包获取 kps / sign / vcode（约 2 个月有效期）。',
+  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     { key: 'kps', label: 'kps', type: 'text', required: true, placeholder: '抓包 growth/info 请求中的 kps 参数' },
     { key: 'sign', label: 'sign', type: 'text', required: true, placeholder: '抓包 growth/info 请求中的 sign 参数' },

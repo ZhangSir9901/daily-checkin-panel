@@ -27,5 +27,15 @@ export function siteMeta() {
     fields: s.fields,
     tips: s.tips || '',
     toggles: s.toggles || [],
+    execution: s.execution || 'server', // 默认执行模式
+    domain: s.domain || '', // 浏览器执行时的目标域名
+    hasBrowserScript: !!s.browserScript, // 是否有浏览器端签到脚本
   }));
+}
+
+// 供外部（浏览器扩展）获取浏览器签到脚本，不暴露服务端逻辑
+export function getBrowserScript(id) {
+  const s = getSite(id);
+  if (!s || !s.browserScript) return null;
+  return { domain: s.domain || '', script: s.browserScript };
 }

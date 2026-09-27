@@ -26,6 +26,7 @@ export const v2board = {
   id: 'v2board',
   name: 'V2Board 机场',
   desc: 'V2Board 面板机场每日签到领流量。填机场域名 + 注册邮箱 + 密码，面板自动登录签到。',
+  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     {
       key: 'domain',

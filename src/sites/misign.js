@@ -24,6 +24,31 @@ export const misign = {
   id: 'misign',
   name: 'Discuz 每日签到',
   desc: '通用模块：适用于安装了 k_misign 签到插件的 Discuz 论坛（如阅次元）。填论坛首页地址 + Cookie。',
+  execution: 'browser', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
+  // domain 由账号的 base_url 动态决定，browser-jobs 接口从 params.base_url 提取
+  browserScript: `async (params) => {
+    const base = (params.base_url || '').replace(/\\/$/, '');
+    if (!base) return { ok: false, message: '未配置论坛地址' };
+    const signUrl = base + '/plugin.php?id=k_misign:sign';
+    const get = async (url) => {
+      const r = await fetch(url, { credentials: 'include' });
+      return { status: r.status, text: await r.text() };
+    };
+    let p = await get(signUrl);
+    if (p.text.includes('您的签到排名')) return { ok: true, message: '今日已签到，无需重复' };
+    if (p.text.includes('mod=logging') && p.text.includes('action=login')) {
+      return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    }
+    const m = p.text.match(/<a[^>]*id=["']JD_sign["'][^>]*href=["']([^"']+)["']/i)
+      || p.text.match(/href=["']([^"']*k_misign[^"']*)["']/i);
+    if (!m) return { ok: false, message: '未找到签到按钮，该论坛可能不是 k_misign 插件' };
+    const href = m[1].replace(/&amp;/g, '&');
+    const signLink = /^https?:\\/\\//i.test(href) ? href : base + '/' + href.replace(/^\\/+/, '');
+    await get(signLink);
+    p = await get(signUrl);
+    if (p.text.includes('您的签到排名')) return { ok: true, message: '签到成功' };
+    return { ok: false, message: '签到失败，未识别到成功标识' };
+  }`,
   fields: [
     {
       key: 'base_url',

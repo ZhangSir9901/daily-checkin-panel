@@ -5,11 +5,22 @@ import { ensureSchema, getSetting, setSetting } from './db.js';
 import { hashPassword, verifyPassword, encryptJSON, decryptJSON, randomHex } from './crypto.js';
 import { handleExtZip } from './ext-zip.js';
 import { runAll, runAccount } from './runner.js';
-import { getSite, siteMeta } from './sites/index.js';
+import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
 import { shouldRun, validHour, validTz, accountHour } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
+
+// 校验外部 API Key：支持 Cloudflare Secret（旧）或面板设置中的 Key（新，可在 UI 查看/修改）
+async function checkExternalKey(env, apiKey) {
+  if (!apiKey) return false;
+  if (env.EXTERNAL_API_KEY && apiKey === env.EXTERNAL_API_KEY) return true;
+  try {
+    const saved = await getSetting(env.DB, 'external_api_key');
+    if (saved && apiKey === saved) return true;
+  } catch { /* 忽略 */ }
+  return false;
+}
 
 const SESSION_TTL_MS = 7 * 864e5;
 
@@ -91,10 +102,10 @@ async function handleApi(req, env, url) {
     return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
   }
 
-  // ---- 外部上报接口（VM 定时任务用 API Key 认证，不走 session） ----
+  // ---- 外部上报接口（VM 定时任务 / 浏览器扩展用 API Key 认证，不走 session） ----
   if (path === '/api/external/report' && method === 'POST') {
     const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+    if (!(await checkExternalKey(env, apiKey))) {
       return json({ error: '无效的 API Key' }, 401);
     }
     const { account_id, status, message, detail, duration_ms } = await readBody(req);
@@ -111,7 +122,7 @@ async function handleApi(req, env, url) {
   const mExtAcc = path.match(/^\/api\/external\/account\/(\d+)$/);
   if (mExtAcc && method === 'GET') {
     const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+    if (!(await checkExternalKey(env, apiKey))) {
       return json({ error: '无效的 API Key' }, 401);
     }
     const acc = await env.DB.prepare('SELECT id, site, name, enabled FROM accounts WHERE id = ?').bind(Number(mExtAcc[1])).first();
@@ -124,7 +135,7 @@ async function handleApi(req, env, url) {
   const mExtCreds = path.match(/^\/api\/external\/account\/(\d+)\/creds$/);
   if (mExtCreds && method === 'GET') {
     const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+    if (!(await checkExternalKey(env, apiKey))) {
       return json({ error: '无效的 API Key' }, 401);
     }
     const acc = await env.DB.prepare('SELECT id, site, name, enabled, creds FROM accounts WHERE id = ?').bind(Number(mExtCreds[1])).first();
@@ -144,11 +155,85 @@ async function handleApi(req, env, url) {
   // ---- 外部查询 NodeSeek 模式（VM 用） ----
   if (path === '/api/external/nodeseek-mode' && method === 'GET') {
     const apiKey = req.headers.get('X-Api-Key') || '';
-    if (!env.EXTERNAL_API_KEY || apiKey !== env.EXTERNAL_API_KEY) {
+    if (!(await checkExternalKey(env, apiKey))) {
       return json({ error: '无效的 API Key' }, 401);
     }
     const mode = (await getSetting(env.DB, 'nodeseek_mode')) || 'random';
     return json({ mode });
+  }
+
+  // ---- 浏览器扩展获取待执行任务 ----
+  // 扩展每小时调用一次，获取所有 browser 模式、已启用、到执行时间的账号
+  // 返回每个任务的签到脚本（在用户浏览器中运行，使用用户网络 + 自动携带 Cookie）
+  if (path === '/api/external/browser-jobs' && method === 'GET') {
+    const apiKey = req.headers.get('X-Api-Key') || '';
+    if (!(await checkExternalKey(env, apiKey))) {
+      return json({ error: '无效的 API Key' }, 401);
+    }
+    const globalTime = (await getSetting(env.DB, 'schedule_time')) || '08';
+    const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
+    let lastMap = {};
+    try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
+    const now = new Date();
+    const { results } = await env.DB.prepare('SELECT id, site, name, meta, creds FROM accounts WHERE enabled = 1').all();
+    const jobs = [];
+    let changed = false;
+    for (const acc of results || []) {
+      const site = getSite(acc.site);
+      if (!site) continue;
+      // 有效执行模式：账号覆盖 > 站点默认
+      let execMode = site.execution || 'server';
+      let meta = {};
+      try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+      if (meta.execution === 'server' || meta.execution === 'browser') execMode = meta.execution;
+      if (execMode !== 'browser') continue;
+      // 检查是否到执行时间
+      const hour = accountHour(acc.meta, globalTime);
+      const lastKey = lastMap[String(acc.id)];
+      const { run, key } = shouldRun(now, hour, tz, lastKey);
+      if (!run) continue;
+      // 获取浏览器脚本
+      const bs = getBrowserScript(acc.site);
+      if (!bs || !bs.script) continue;
+      // 组装参数（站点相关，不含敏感信息）
+      const params = {};
+      let domain = bs.domain;
+      if (acc.site === 'nodeseek') {
+        // 签到模式：账号开关 > 全局设置
+        const t = meta.toggles ? meta.toggles.random : undefined;
+        if (t != null) params.random = !!t;
+        else params.random = ((await getSetting(env.DB, 'nodeseek_mode')) || 'random') === 'random';
+      }
+      if (acc.site === 'misign') {
+        try {
+          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
+          params.base_url = String(creds.base_url || '').trim();
+          if (params.base_url) {
+            try { domain = new URL(params.base_url).hostname; } catch { /* 忽略 */ }
+          }
+        } catch { /* 忽略 */ }
+      }
+      if (acc.site === 'kanxue') {
+        try {
+          const creds = await decryptJSON(env, env.DB, acc.creds) || {};
+          if (creds.csrf_token) params.csrf_token = String(creds.csrf_token);
+        } catch { /* 忽略 */ }
+      }
+      if (!domain) continue; // 没有目标域名无法执行
+      jobs.push({
+        account_id: acc.id,
+        site: acc.site,
+        site_name: site.name,
+        domain,
+        script: bs.script,
+        params,
+      });
+      // 标记已领取任务，避免重复下发（扩展上报后也会更新 last_run，这里先占位）
+      lastMap[String(acc.id)] = key;
+      changed = true;
+    }
+    if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap));
+    return json({ jobs });
   }
 
   if (!(await authed(env, req))) return json({ error: '未登录' }, 401);
@@ -197,13 +282,16 @@ async function handleApi(req, env, url) {
     const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
 
-    // 手动执行单个账号（NodeSeek 由 VM 代签，面板不直接执行）
+    // 手动执行单个账号（browser 模式由浏览器扩展执行，面板不直接执行）
     if (mAcc[2] === '/run' && method === 'POST') {
-      if (acc.site === 'nodeseek') {
-        return json({ ok: false, result: { status: 'fail', message: 'NodeSeek 由外部 VM 代签，面板不直接执行。请等待 VM 定时上报结果。' } });
-      }
-      if (acc.site === 'wuaipojie') {
-        return json({ ok: false, result: { status: 'fail', message: '吾爱破解由外部 VM 代签（Worker IP 被 WAF 拦截），面板不直接执行。请等待 VM 定时上报结果。' } });
+      const site = getSite(acc.site);
+      let execMode = site?.execution || 'server';
+      try {
+        const m = JSON.parse(acc.meta || '{}');
+        if (m.execution === 'server' || m.execution === 'browser') execMode = m.execution;
+      } catch { /* 忽略 */ }
+      if (execMode === 'browser') {
+        return json({ ok: false, result: { status: 'fail', message: `${site?.name || acc.site} 为浏览器执行模式（使用您的网络），请确保浏览器扩展已安装并打开，它会自动执行。` } });
       }
       const r = await runAccount(env, acc);
       return json({ ok: r.status === 'ok', result: r });
@@ -277,6 +365,25 @@ async function handleApi(req, env, url) {
     await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
       .bind(JSON.stringify(meta), Date.now(), id).run();
     return json({ ok: true, hour: meta.sched_hour || '' });
+  }
+
+  // 账号执行模式切换：PUT /api/accounts/:id/execution
+  // 在 跟随默认 → browser → server → 跟随默认 之间循环
+  const mExec = path.match(/^\/api\/accounts\/(\d+)\/execution$/);
+  if (mExec && method === 'PUT') {
+    const id = Number(mExec[1]);
+    const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    let meta = {};
+    try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+    const cur = meta.execution || '';
+    // 循环：'' → 'browser' → 'server' → ''
+    const next = cur === '' ? 'browser' : cur === 'browser' ? 'server' : '';
+    if (next === '') delete meta.execution;
+    else meta.execution = next;
+    await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
+      .bind(JSON.stringify(meta), Date.now(), id).run();
+    return json({ ok: true, execution: next || 'default' });
   }
 
   // 签到时间设置：每天几点（整点，0-23）+ 时区
@@ -370,6 +477,20 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
+  // 扩展用 API Key（前端设置页管理，需登录）
+  if (path === '/api/ext-key' && method === 'GET') {
+    const key = (await getSetting(env.DB, 'external_api_key')) || '';
+    // 只返回掩码版本，前端显示时可选择查看完整（已登录用户可信）
+    return json({ key, masked: key ? key.slice(0, 4) + '****' + key.slice(-4) : '' });
+  }
+  if (path === '/api/ext-key' && method === 'PUT') {
+    const { key } = await readBody(req);
+    const k = String(key || '').trim();
+    if (!k || k.length < 16) return json({ error: 'Key 至少 16 位' }, 400);
+    await setSetting(env.DB, 'external_api_key', k);
+    return json({ ok: true });
+  }
+
   // 修改管理密码
   if (path === '/api/change-password' && method === 'POST') {
     const { old_password, new_password } = await readBody(req);
@@ -421,9 +542,15 @@ export default {
           const now = new Date();
           let changed = false;
           for (const acc of results || []) {
-            // NodeSeek 由外部 VM 代签（面板 IP 被拦），面板调度器跳过，只展示 VM 上报结果
-            if (acc.site === 'nodeseek') continue;
-            if (acc.site === 'wuaipojie') continue; // VM 代签，Worker IP 被 WAF 拦截
+            // 执行模式：账号可单独覆盖（meta.execution），否则跟随站点默认
+            // browser 模式由用户浏览器扩展执行，Worker 调度器跳过
+            const site = getSite(acc.site);
+            let execMode = site?.execution || 'server';
+            try {
+              const m = JSON.parse(acc.meta || '{}');
+              if (m.execution === 'server' || m.execution === 'browser') execMode = m.execution;
+            } catch { /* 忽略 */ }
+            if (execMode === 'browser') continue;
             const hour = accountHour(acc.meta, globalTime);
             const lastKey = lastMap[String(acc.id)];
             const { run, key } = shouldRun(now, hour, tz, lastKey);

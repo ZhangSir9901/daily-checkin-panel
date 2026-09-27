@@ -31,6 +31,36 @@ export const kanxue = {
   id: 'kanxue',
   name: '看雪论坛',
   desc: '看雪论坛每日签到。Cookie 方式，csrf_token 自动获取（失败可手动填）。',
+  execution: 'browser', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
+  domain: 'bbs.kanxue.com',
+  browserScript: `async (params) => {
+    const base = 'https://bbs.kanxue.com';
+    // ① 获取 csrf_token
+    const homeResp = await fetch(base + '/', { credentials: 'include' });
+    const homeText = await homeResp.text();
+    const m = homeText.match(/csrf_token['"]?\\s*[:=]\\s*['"]([^'"]+)['"]/);
+    const token = m ? m[1] : (params.csrf_token || '');
+    if (!token) return { ok: false, message: '未能获取 csrf_token，请手动填入' };
+    // ② 签到
+    const resp = await fetch(base + '/user-signin.htm', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': base + '/',
+      },
+      body: 'csrf_token=' + encodeURIComponent(token),
+    });
+    const text = await resp.text();
+    let j = null;
+    try { j = JSON.parse(text); } catch {}
+    const msg = j ? String(j.message || j.msg || '') : text.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ');
+    if (/已签|重复|已经/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
+    if (/成功/.test(msg)) return { ok: true, message: '签到成功' };
+    if (/登录|login/i.test(msg)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    return { ok: false, message: '签到失败：' + msg.slice(0, 80) };
+  }`,
   fields: [
     {
       key: 'cookie',

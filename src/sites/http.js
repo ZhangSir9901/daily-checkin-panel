@@ -94,6 +94,7 @@ export const httpTask = {
   id: 'http',
   name: '自定义 HTTP',
   desc: '通用模块：单次请求或多步录制（按顺序执行多个请求，后一步可引用前一步的结果）。',
+  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     { key: 'url', label: '请求地址', type: 'text', required: false, placeholder: 'https://example.com/api/sign（多步模式可留空）' },
     {

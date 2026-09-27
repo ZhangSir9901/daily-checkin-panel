@@ -13,6 +13,31 @@ export const nodeseek = {
   id: 'nodeseek',
   name: 'NodeSeek',
   desc: '论坛每日签到领鸡腿。登录有人机验证，只能用 Cookie 方式（手动登录后复制）。',
+  execution: 'browser', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
+  domain: 'www.nodeseek.com',
+  // 浏览器端签到脚本：params.random 为 true=试试手气，false=固定5个
+  browserScript: `async (params) => {
+    const random = params.random !== false;
+    const resp = await fetch('https://www.nodeseek.com/api/attendance?random=' + random, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: '{}',
+    });
+    const text = await resp.text();
+    let j = null;
+    try { j = JSON.parse(text); } catch {}
+    if (!j) {
+      if (/challenge-platform|just a moment/i.test(text)) return { ok: false, message: '网站人机验证拦截，稍后重试' };
+      return { ok: false, message: '网站没认出登录信息，请重新获取 Cookie' };
+    }
+    const msg = String(j.message || '');
+    const okFlag = j.success === true || (j.data && j.data.success === true);
+    if (okFlag || msg.includes('鸡腿')) return { ok: true, message: '签到成功：' + (msg.slice(0, 60) || '领取成功') };
+    if (/已签到|已经签到|已完成签到/.test(msg)) return { ok: true, message: '今日已签到，不能重复签到' };
+    if (j.status === 404 || msg.includes('USER NOT FOUND')) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    return { ok: false, message: msg ? '签到失败：' + msg.slice(0, 60) : '签到失败，稍后重试' };
+  }`,
   fields: [
     {
       key: 'cookie',

@@ -81,6 +81,7 @@ export const akile = {
   id: 'akile',
   name: 'AkileCloud',
   desc: 'Akile 云服务器每日签到，奖励 1~10 AK币。token 方式签到：浏览器登录 akile.ai 后复制 akile-token，面板自动续期。',
+  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     {
       key: 'token',

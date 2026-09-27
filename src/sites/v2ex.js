@@ -12,6 +12,25 @@ export const v2ex = {
   id: 'v2ex',
   name: 'V2EX',
   desc: 'V2EX 每日登录奖励领取。无验证码，Cookie 方式。',
+  execution: 'browser', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
+  domain: 'www.v2ex.com',
+  browserScript: `async (params) => {
+    const base = 'https://www.v2ex.com';
+    const r1 = await fetch(base + '/mission/daily', { credentials: 'include' });
+    const t1 = await r1.text();
+    if (t1.includes('每日登录奖励已领取')) return { ok: true, message: '今日已签到，无需重复' };
+    if (r1.status === 403 || (t1.includes('/signin') && t1.includes('请重新登录'))) {
+      return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    }
+    const m = t1.match(/\\/mission\\/daily\\/redeem\\?once=(\\d+)/);
+    if (!m) return { ok: false, message: '未找到领取链接，页面可能改版或 Cookie 失效' };
+    const r2 = await fetch(base + '/mission/daily/redeem?once=' + m[1], { credentials: 'include' });
+    const t2 = await r2.text();
+    if (t2.includes('每日登录奖励已领取') || t2.includes('已成功领取每日登录奖励')) {
+      return { ok: true, message: '签到成功：每日登录奖励已领取' };
+    }
+    return { ok: false, message: '签到失败，未识别到成功标识' };
+  }`,
   fields: [
     {
       key: 'cookie',

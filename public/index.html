@@ -391,13 +391,25 @@
       </div>
       <div class="card">
         <h2>NodeSeek 设置</h2>
-        <p class="muted">NodeSeek 由外部 VM 代签（面板 IP 被 NodeSeek 拦截）。此处设置签到模式，VM 下次运行时生效。</p>
+        <p class="muted">NodeSeek 由浏览器扩展在您的网络中代签。此处设置签到模式，扩展下次运行时生效。</p>
         <label>签到模式</label>
         <select id="nodeseek-mode">
           <option value="random">试试手气（随机鸡腿）</option>
           <option value="fixed">固定领取（5 个鸡腿）</option>
         </select>
         <button id="btn-save-nodeseek">保存 NodeSeek 设置</button>
+      </div>
+      <div class="card">
+        <h2>🔌 浏览器扩展</h2>
+        <p class="muted">安装「签到面板助手」扩展后，它会每小时在您的浏览器中自动执行 <b>浏览器模式</b> 的签到（使用您的网络，无 IP 限制）。扩展需要下面的 API Key 才能连接面板。</p>
+        <label>API Key（扩展用）</label>
+        <div style="display:flex;gap:8px">
+          <input id="ext-api-key" type="text" readonly placeholder="点击生成" style="flex:1">
+          <button id="btn-gen-key" style="white-space:nowrap">🎲 生成</button>
+          <button id="btn-copy-key" style="white-space:nowrap">📋 复制</button>
+        </div>
+        <p class="muted" style="margin-top:8px">把 Key 填到扩展弹窗的「API Key」输入框并保存，扩展就会开始工作。Key 泄露时点「生成」换一个新的。</p>
+        <button id="btn-save-key">保存 API Key</button>
       </div>
     </section>
   </div>
@@ -948,10 +960,22 @@ async function loadAccounts() {
   };
   tb.innerHTML = accounts.map((a) => {
     let schedHour = '';
-    try { schedHour = JSON.parse(a.meta || '{}').sched_hour || ''; } catch { /* 忽略 */ }
+    let execOverride = '';
+    try {
+      const m = JSON.parse(a.meta || '{}');
+      schedHour = m.sched_hour || '';
+      execOverride = m.execution || '';
+    } catch { /* 忽略 */ }
+    const site = SITES.find((s) => s.id === a.site);
+    const siteExec = site ? (site.execution || 'server') : 'server';
+    const effExec = execOverride || siteExec;
+    const execBadge = effExec === 'browser'
+      ? `<span class="badge" style="background:#e8f4fd;color:#1a73e8" title="在您的浏览器中执行（使用您的网络）">🌐 浏览器</span>`
+      : `<span class="badge" style="background:#f0f4f8;color:#5f6368" title="在云端执行">☁️ 云端</span>`;
+    const execTitle = execOverride ? `（已手动设为${effExec === 'browser' ? '浏览器' : '云端'}，点击切换）` : `（跟随站点默认：${siteExec === 'browser' ? '浏览器' : '云端'}，点击可手动覆盖）`;
     return `
     <tr>
-      <td><b>${esc(a.name)}</b></td>
+      <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
       <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 0-23 的小时数，空为跟随全局(${GLOBAL_HOUR}:00)" style="width:90px;text-align:center"></td>
       <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : a.last_status === 'skip' ? '<span class="badge skip">跳过</span>' : '<span class="badge off">未运行</span>'}</td>
       <td class="msg">${esc(a.last_msg || '-')}</td>
@@ -997,6 +1021,14 @@ async function loadAccounts() {
     const id = b.dataset.toggle;
     const acc = (await api('/api/accounts/' + id)).account;
     await api('/api/accounts/' + id, 'PUT', { enabled: !acc.enabled });
+    loadAccounts();
+  }));
+  tb.querySelectorAll('[data-exec]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.exec;
+    try {
+      const r = await api('/api/accounts/' + id + '/execution', 'PUT', {});
+      toast(r.execution === 'browser' ? '已切换为浏览器执行（您的网络）' : r.execution === 'server' ? '已切换为云端执行' : '已恢复跟随站点默认');
+    } catch (e) { toast('切换失败：' + e.message); }
     loadAccounts();
   }));
   tb.querySelectorAll('[data-run]').forEach((b) => (b.onclick = async () => {
@@ -1366,12 +1398,39 @@ async function loadSettings() {
     const { mode } = await api('/api/nodeseek-mode');
     $('nodeseek-mode').value = mode || 'random';
   } catch { /* 忽略 */ }
+  // 扩展 API Key
+  loadExtKey();
 }
 
 $('btn-save-nodeseek').onclick = async () => {
   try {
     await api('/api/nodeseek-mode', 'PUT', { mode: $('nodeseek-mode').value });
-    toast('NodeSeek 设置已保存，VM 下次运行时生效');
+    toast('NodeSeek 设置已保存，扩展下次运行时生效');
+  } catch (e) { toast(e.message); }
+};
+
+// ---------- 扩展 API Key ----------
+async function loadExtKey() {
+  try {
+    const d = await api('/api/ext-key', 'GET');
+    if (d.key) $('ext-api-key').value = d.key;
+  } catch (e) { /* 忽略 */ }
+}
+$('btn-gen-key').onclick = () => {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  $('ext-api-key').value = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+};
+$('btn-copy-key').onclick = async () => {
+  const v = $('ext-api-key').value;
+  if (!v) return toast('还没有 Key，先点生成');
+  try { await navigator.clipboard.writeText(v); toast('API Key 已复制'); }
+  catch { toast('复制失败，请手动复制'); }
+};
+$('btn-save-key').onclick = async () => {
+  try {
+    await api('/api/ext-key', 'PUT', { key: $('ext-api-key').value });
+    toast('API Key 已保存，填到扩展里即可使用');
   } catch (e) { toast(e.message); }
 };
 

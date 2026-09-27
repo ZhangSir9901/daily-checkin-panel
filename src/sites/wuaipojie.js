@@ -44,6 +44,30 @@ export const wuaipojie = {
   id: 'wuaipojie',
   name: '吾爱破解',
   desc: '吾爱破解论坛每日签到（Discuz 任务）。Cookie 方式，需先用浏览器过安全验证，UA 须与抓包时一致。',
+  execution: 'browser', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
+  domain: 'www.52pojie.cn', // 浏览器执行时的目标域名
+  // 浏览器端签到脚本：在用户浏览器中运行，自动携带登录 Cookie，使用用户网络（无 WAF）
+  // 入参 params：{}；返回 { ok, message }
+  browserScript: `async (params) => {
+    const base = 'https://www.52pojie.cn';
+    // ① 检查是否已签到
+    const portalResp = await fetch(base + '/portal.php', { credentials: 'include' });
+    const portalText = await portalResp.text();
+    if (/今日已签到/.test(portalText)) return { ok: true, message: '今日已签到，无需重复' };
+    if (/请先登录|member.php\\?mod=logging/.test(portalText) && !/退出/.test(portalText)) {
+      return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    }
+    // ② 执行签到
+    const signResp = await fetch(base + '/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php', {
+      credentials: 'include',
+      headers: { 'Referer': base + '/portal.php' },
+    });
+    const text = await signResp.text();
+    if (/签到成功|打卡成功|恭喜|获得.*吾爱币/.test(text)) return { ok: true, message: '签到成功' };
+    if (/今日已签到|已经签到|下期再来/.test(text)) return { ok: true, message: '今日已签到，无需重复' };
+    if (/请先登录/.test(text)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+    return { ok: false, message: '签到失败：未识别到成功标识' };
+  }`,
   fields: [
     {
       key: 'cookie',

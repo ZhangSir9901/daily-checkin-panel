@@ -9,13 +9,14 @@ let cookies = [];
 let domain = '';
 
 async function init() {
-  // 读取保存的面板地址；没有保存过则用下载时注入的默认地址（面板动态生成 zip 时填入）
-  const { panelUrl } = await chrome.storage.sync.get('panelUrl');
+  // 读取保存的面板地址和 API Key；没有保存过则用下载时注入的默认地址（面板动态生成 zip 时填入）
+  const { panelUrl, apiKey } = await chrome.storage.sync.get(['panelUrl', 'apiKey']);
   if (panelUrl) {
     $('panel-url').value = panelUrl;
   } else if (typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL && !DEFAULT_PANEL_URL.includes('__PANEL_URL__')) {
     $('panel-url').value = DEFAULT_PANEL_URL;
   }
+  if (apiKey) $('api-key').value = apiKey;
 
   // 获取当前标签页
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -86,6 +87,22 @@ $('btn-send').onclick = async () => {
 
 $('panel-url').onchange = () => {
   chrome.storage.sync.set({ panelUrl: $('panel-url').value.trim().replace(/\/$/, '') });
+};
+
+$('api-key').onchange = () => {
+  chrome.storage.sync.set({ apiKey: $('api-key').value.trim() });
+};
+
+// 立即执行待办签到（触发后台任务）
+$('btn-run-now').onclick = async () => {
+  status('正在获取待办任务…', '');
+  try {
+    // 直接调用后台的 runJobs 逻辑（通过消息传递）
+    await chrome.runtime.sendMessage({ action: 'runJobsNow' });
+    status('已触发执行，请稍后在面板查看日志', 'ok');
+  } catch (e) {
+    status('触发失败：' + (e.message || e), 'err');
+  }
 };
 
 init();

@@ -186,6 +186,7 @@ export const cloud189 = {
   id: 'cloud189',
   name: '天翼云盘',
   desc: '账号密码登录，每日签到领随机空间（登录态自动缓存复用）。',
+  execution: 'server', // 默认执行模式：server=云端执行，browser=浏览器扩展执行（用户网络）
   fields: [
     { key: 'username', label: '账号', type: 'text', required: true, placeholder: '189 手机号' },
     { key: 'password', label: '密码', type: 'password', required: true, placeholder: '天翼账号密码' },

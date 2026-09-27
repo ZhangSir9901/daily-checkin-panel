@@ -106,7 +106,7 @@ export async function handleExtZip(req, env) {
   const url = new URL(req.url);
   const origin = url.origin; // 当前面板地址，如 https://xxx.workers.dev
 
-  const fileNames = ['manifest.json', 'popup.html', 'popup.js'];
+  const fileNames = ['manifest.json', 'popup.html', 'popup.js', 'background.js'];
   const files = [];
 
   for (const name of fileNames) {
@@ -117,7 +117,11 @@ export async function handleExtZip(req, env) {
     }
     let text = await res.text();
     if (name === 'popup.js') {
-      text = text.replace('__PANEL_URL__', origin);
+      // 替换所有占位符（注释和常量中都有）
+      text = text.split('__PANEL_URL__').join(origin);
+    }
+    if (name === 'background.js') {
+      text = text.split('__PANEL_URL__').join(origin);
     }
     files.push({ name, data: te.encode(text) });
   }
