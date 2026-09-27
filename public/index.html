@@ -107,7 +107,7 @@
                         box-shadow:0 4px 12px rgba(91,140,255,.3); }
 
   table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
-  th, td { text-align:left; padding:12px 10px; vertical-align:middle; }
+  th, td { text-align:left; padding:10px 8px; vertical-align:middle; }
   th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.5px;
        border-bottom:2px solid var(--line); white-space:nowrap; }
   td { border-bottom:1px solid rgba(35,46,77,.6); }
@@ -229,13 +229,13 @@
   /* 表格里该居中的列居中（数值/徽章/开关/按钮） */
   th.c, td.c { text-align:center; }
   td.c { white-space:nowrap; }
-  .site-cell { min-width:188px; text-align:center; }
+  .site-cell { min-width:140px; text-align:center; }
   /* nowrap：否则「徽章 + 切换 + 红标」会折行，红标孤零零掉到下面一行像杂物 */
-  .site-line { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:nowrap; margin-top:6px; }
+  .site-line { display:flex; align-items:center; justify-content:center; gap:6px; flex-wrap:nowrap; margin-top:6px; }
   /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
-  td.msg { width:100%; min-width:240px; max-width:460px; }
-  .msg-main { font-size:13px; line-height:1.6;
-              display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  td.msg { width:100%; min-width:160px; max-width:280px; }
+  .msg-main { font-size:12.5px; line-height:1.5;
+              display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   .msg-line { display:flex; align-items:flex-start; gap:7px; }
   .msg-raw { margin-top:5px; font-size:11px; line-height:1.5; color:var(--muted2);
              border-left:2px solid var(--line2); padding-left:8px; word-break:break-word;

@@ -184,12 +184,23 @@ export const wuaipojie = {
     // 早期版本拿「暂停签到 / 今日已签到」这类词扫整个首页，结果把一个正常可签的账号
     // 报成「论坛官方暂停签到，等恢复后再试」——所以这里绝不能再凭首页文本下签到结论。
     // 注：中继模式下 runner.js 会透明替换 global fetch，站点代码无需改动
-    const home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
-    assertNoWaf(home, home.res.status);
-    // 首页公告里提到暂停时，只当作「线索」留到最后当提示，不能当结论
-    const pauseHint = has(home, PAUSED_MARKS)
-      ? '（注：门户页的公告里有一条「' + (clean(home).match(/[^\s]{0,12}暂停签到[^\s]{0,20}/) || ['暂停签到'])[0] + '」，若确实暂停了请等恢复后再试）'
-      : '';
+    let home, pauseHint = '';
+    try {
+      home = await fetchDualText('https://www.52pojie.cn/portal.php', { headers: baseHeaders });
+      assertNoWaf(home, home.res.status);
+      // 首页公告里提到暂停时，只当作「线索」留到最后当提示，不能当结论
+      pauseHint = has(home, PAUSED_MARKS)
+        ? '（注：门户页公告提到暂停签到，若确实暂停请等恢复）'
+        : '';
+    } catch (e) {
+      // 预检超时/中继失败：直接验证是否已签到，避免误报
+      if (/超时|timeout|中继|abort|network/i.test(e.message || '')) {
+        if (await verifySigned()) {
+          return { ok: true, message: '今日已签到（预检超时后验证确认：签到完毕）' };
+        }
+      }
+      throw e;
+    }
 
     // ② 签到（手动跟随重定向，最多 3 跳）
     let url = 'https://www.52pojie.cn/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php';

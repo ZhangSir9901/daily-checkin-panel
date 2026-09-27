@@ -49,7 +49,7 @@ export async function waitRelayResult(db, jobId, timeoutMs = 60000, pollMs = 300
     const job = await db.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(jobId).first();
     if (!job) throw new Error('中继任务不存在');
     if (job.status === 'failed') {
-      const err = new Error('本地网络执行失败：' + (job.error || '未知错误'));
+      const err = new Error('本地网络失败：' + (job.error || '未知错误'));
       err.outcome = 'relay';
       throw err;
     }
