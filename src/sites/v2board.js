@@ -60,7 +60,7 @@ export const v2board = {
       label: '机场域名',
       type: 'text',
       required: true,
-      placeholder: '如：example.com（不用加 https://）',
+      placeholder: '如：example.com，或带路径 example.com/uuid（不用加 https://）',
     },
     {
       key: 'email',
@@ -77,7 +77,7 @@ export const v2board = {
       placeholder: '机场账号密码',
     },
   ],
-  tips: '适用于 V2Board 面板的机场：填入机场域名、注册邮箱和密码，面板会自动登录并签到领流量。域名填主域名即可，如 example.com。',
+  tips: '适用于 V2Board 面板的机场：填入机场域名、注册邮箱和密码，面板会自动登录并签到领流量。域名填主域名即可，如 example.com；如果机场登录页带路径（如 …/uuid/auth/login），域名就填带路径的形式，如 example.com/uuid。',
 
   async run(creds, ctx = {}) {
     const domain = normDomain(creds.domain);

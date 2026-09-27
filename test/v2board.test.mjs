@@ -55,6 +55,17 @@ await t('域名自动补 https:// 并去尾斜杠', async () => {
   assert.ok(globalThis.__calls[0].url.startsWith('https://example.com/auth/login'));
 });
 
+await t('域名带路径前缀时保留路径', async () => {
+  mockFetch([
+    ['/uuid/auth/login', loginOk],
+    ['/uuid/user/checkin', checkinOk],
+  ]);
+  const r = await v2board.run({ domain: 'china_69yun.337979.xyz/uuid', email: 'a@b.c', password: 'pw' });
+  assert.equal(r.ok, true);
+  assert.ok(globalThis.__calls[0].url.startsWith('https://china_69yun.337979.xyz/uuid/auth/login'));
+  assert.ok(globalThis.__calls[1].url.startsWith('https://china_69yun.337979.xyz/uuid/user/checkin'));
+});
+
 await t('登录失败抛错', async () => {
   mockFetch([['/auth/login', { ret: 0, msg: '密码错误' }]]);
   await assert.rejects(
