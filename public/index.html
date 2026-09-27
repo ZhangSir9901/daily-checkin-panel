@@ -249,6 +249,12 @@
         <div class="row">
           <select id="ck-account" style="flex:1;margin:4px 0"></select>
         </div>
+        <div class="tips" style="margin:8px 0">🖥️ 当前浏览器 User-Agent（吾爱等站点需与 Cookie 配对填入）：
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input id="my-ua" readonly style="flex:1;font-size:11px" title="你的浏览器 UA">
+            <button class="ghost sm" id="btn-copy-ua" type="button">复制 UA</button>
+          </div>
+        </div>
         <div class="row" style="margin:8px 0">
           <button class="ghost sm ck-tab active" data-t="ext" type="button">🧩 扩展一键获取 ⭐</button>
           <button class="ghost sm ck-tab" data-t="bm" type="button">📑 小书签</button>
@@ -662,6 +668,15 @@ document.querySelectorAll('.ck-tab').forEach((b) => {
     b.classList.add('active');
   };
 });
+
+// 显示当前浏览器 UA，一键复制（吾爱等站点用）
+$('my-ua').value = navigator.userAgent;
+$('btn-copy-ua').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(navigator.userAgent);
+    toast('User-Agent 已复制');
+  } catch { toast('复制失败，请手动选中复制'); }
+};
 
 function ckPreview(cookie, extra, label) {
   CK_PENDING = { cookie, extra: extra || {}, label: label || '' };
