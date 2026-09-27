@@ -34,13 +34,11 @@
   .hidden { display:none !important; }
 
   .card {
-    background:linear-gradient(180deg, var(--card2), var(--card));
+    background:var(--card);
     border:1px solid var(--line);
     border-radius:var(--radius);
-    padding:22px;
-    margin-bottom:18px;
-    box-shadow:var(--shadow-sm);
-    transition:border-color .2s;
+    padding:20px;
+    margin-bottom:16px;
   }
   .card > h2:first-child { margin:0 0 14px; font-size:16px; }
   .card .muted { line-height:1.7; }
@@ -106,7 +104,7 @@
   .tabs-row { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
   .tabs-row .tabs { margin:18px 0; }
   .tabs-row .topbar-right { margin:18px 0; }
-  .tabs button { background:transparent; border:0; color:var(--muted); box-shadow:none; padding:9px 18px; }
+  .tabs button { background:transparent; border:0; color:var(--muted); box-shadow:none; padding:8px 16px; }
   .tabs button:hover { transform:none; color:var(--text); box-shadow:none; }
   .tabs button.active { background:var(--accent); color:#fff;
                         box-shadow:0 4px 12px rgba(91,140,255,.3); }
@@ -144,7 +142,7 @@
               display:flex; align-items:flex-start; justify-content:center;
               padding:28px 14px; z-index:10; overflow-y:auto; animation:fadeIn .2s; }
   @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
-  .modal { background:linear-gradient(180deg, var(--card2), var(--card));
+  .modal { background:var(--card2);
            border:1px solid var(--line2); border-radius:var(--radius);
            padding:24px; width:100%; max-width:540px; box-shadow:var(--shadow);
            animation:slideUp .25s; }
@@ -205,24 +203,24 @@
   /* 签到时间控制条：单独一条浅底区域，宽度不够时整组换行，
      不会像以前那样把标题挤歪、或者按钮掉到下面显得散。 */
   .sched-bar { margin-top:10px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px; }
-  .sched-bar .sched-field { display:flex; flex-direction:column; gap:7px; }
+  .sched-bar .sched-field { display:flex; flex-direction:column; gap:8px; }
   .sched-bar .sched-field > label { margin:0; font-size:12px; color:var(--muted2); font-weight:500; }
   /* 时区选择器：和时间胶囊（大号）同风格 */
-  .tz-chip { display:inline-flex; align-items:center; justify-content:center; gap:7px; padding:9px 18px; border-radius:12px;
+  .tz-chip { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:8px 16px; border-radius:var(--radius-sm);
              background:var(--card2); border:1px solid var(--line); color:var(--text); font-size:17px;
              font-weight:600; cursor:pointer; box-shadow:none; white-space:nowrap; min-width:176px;
              font-variant-numeric:tabular-nums;
              transition:border-color .15s, box-shadow .15s; }
   .tz-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
   .tz-chip .tz-arrow { font-size:12px; color:var(--muted); }
-  .tz-chip .tz-dot { width:7px; height:7px; border-radius:50%; background:var(--accent2); flex:none;
+  .tz-chip .tz-dot { width:8px; height:8px; border-radius:50%; background:var(--accent2); flex:none;
                     box-shadow:0 0 0 3px var(--accent-dim); }
   /* 时区弹窗：和时间选择器弹窗同风格同动画 */
   .tz-pop { position:fixed; z-index:70; width:220px; padding:10px; border-radius:var(--radius);
             background:#141c33;
             border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
   .tz-pop.hidden { display:none; }
-  .tz-opt { display:block; width:100%; text-align:center; padding:7px 0; border:0; border-radius:9px;
+  .tz-opt { display:block; width:100%; text-align:center; padding:8px 0; border:0; border-radius:var(--radius-sm);
             background:transparent; color:var(--muted); font-size:13.5px; font-weight:500; cursor:pointer; box-shadow:none;
             transition:background .12s, color .12s; }
   .tz-opt:hover { background:rgba(91,140,255,.14); color:var(--text); transform:none; box-shadow:none; }
@@ -231,7 +229,7 @@
                 font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
   .sched-bar button { margin:0; }
   /* 保存按钮：和时间/时区大号胶囊同尺寸，文字居中 */
-  #btn-save-sched { border-radius:12px; padding:9px 32px; font-size:17px; font-weight:600;
+  #btn-save-sched { border-radius:var(--radius-sm); padding:8px 32px; font-size:17px; font-weight:600;
                     display:inline-flex; align-items:center; justify-content:center;
                     border:1px solid transparent; box-shadow:0 4px 14px rgba(91,140,255,.3); }
   .sched-tip { align-self:center; margin-left:auto; font-size:11.5px; color:var(--muted2); }
@@ -280,7 +278,7 @@
   td.msg { width:100%; min-width:160px; max-width:280px; }
   .msg-main { font-size:12.5px; line-height:1.5;
               display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .msg-line { display:flex; align-items:flex-start; gap:7px; }
+  .msg-line { display:flex; align-items:flex-start; gap:8px; }
   .msg-raw { margin-top:5px; font-size:11px; line-height:1.5; color:var(--muted2);
              border-left:2px solid var(--line2); padding-left:8px; word-break:break-word;
              display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
@@ -322,14 +320,14 @@
 
   /* 响应式 */
   /* ---------- 时间选择器（胶囊 + 浮层 / 设置页内嵌滚轮） ---------- */
-  .tp-chip { display:inline-flex; align-items:center; gap:7px; padding:5px 11px; border-radius:999px;
+  .tp-chip { display:inline-flex; align-items:center; gap:8px; padding:4px 12px; border-radius:999px;
              background:var(--card2); border:1px solid var(--line); color:var(--text); font-size:13px;
              font-weight:600; font-variant-numeric:tabular-nums; cursor:pointer; box-shadow:none;
              transition:border-color .15s, box-shadow .15s; white-space:nowrap; }
   .tp-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
   .tp-chip.is-follow { color:var(--muted); font-weight:500; }
   /* 大号胶囊：设置页的全局时间用它，一行放得下 */
-  .tp-chip.lg { padding:9px 18px; font-size:17px; border-radius:12px; }
+  .tp-chip.lg { padding:8px 16px; font-size:17px; border-radius:var(--radius-sm); }
   .tp-chip .tp-dot { width:6px; height:6px; border-radius:50%; background:var(--muted2); flex:none; }
   .tp-chip:not(.is-follow) .tp-dot { background:var(--accent2); box-shadow:0 0 0 3px var(--accent-dim); }
 
@@ -357,7 +355,7 @@
               -webkit-mask-image:linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%);
               mask-image:linear-gradient(180deg, transparent 0, #000 16%, #000 84%, transparent 100%); }
   .tpx-list::-webkit-scrollbar { width:0; height:0; display:none; }
-  .tpx-opt { display:block; width:100%; padding:7px 0; margin:0; border:0; border-radius:9px;
+  .tpx-opt { display:block; width:100%; padding:8px 0; margin:0; border:0; border-radius:var(--radius-sm);
              background:transparent; color:var(--muted); font-size:13.5px; font-weight:500;
              box-shadow:none; font-variant-numeric:tabular-nums; cursor:pointer;
              transition:background .12s, color .12s, transform .12s; }
