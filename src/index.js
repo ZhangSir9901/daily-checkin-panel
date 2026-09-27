@@ -111,15 +111,17 @@ async function handleApi(req, env, url) {
     const { account_id, status, message, detail, duration_ms } = await readBody(req);
     const acc = await env.DB.prepare('SELECT id, site, name FROM accounts WHERE id = ?').bind(Number(account_id)).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
+    // 校验 status 只允许 ok/fail/skip，防止非法值写入
+    const validStatus = ['ok', 'fail', 'skip'].includes(status) ? status : 'fail';
     await env.DB.prepare(
       'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
-    ).bind(acc.id, acc.site, acc.name, status || 'ok', message || '', detail || '', duration_ms || 0, Date.now()).run();
+    ).bind(acc.id, acc.site, acc.name, validStatus, message || '', detail || '', duration_ms || 0, Date.now()).run();
     await env.DB.prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 500)').run();
     // 同步更新账号的上次结果；成功时记录今日已签到日期
     const fullAcc = await env.DB.prepare('SELECT meta FROM accounts WHERE id = ?').bind(acc.id).first();
     let rmeta = {};
     try { rmeta = JSON.parse(fullAcc?.meta || '{}'); } catch { /* 忽略 */ }
-    if ((status || 'ok') === 'ok') {
+    if (validStatus === 'ok') {
       const d = new Date();
       const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
       const p = {};
@@ -127,7 +129,7 @@ async function handleApi(req, env, url) {
       rmeta.last_signin_date = `${p.year}-${p.month}-${p.day}`;
     }
     await env.DB.prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
-      .bind(status || 'ok', message || '', Date.now(), JSON.stringify(rmeta), Date.now(), acc.id).run();
+      .bind(validStatus, message || '', Date.now(), JSON.stringify(rmeta), Date.now(), acc.id).run();
     // 如果是手动任务队列中的，上报后删除（避免重复执行）
     await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE account_id = ?').bind(acc.id).run().catch(() => {});
     return json({ ok: true });
