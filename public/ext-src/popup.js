@@ -109,8 +109,12 @@ $('api-key').onchange = () => {
 $('btn-run-now').onclick = async () => {
   status('正在获取待办任务…', '');
   try {
-    // 直接调用后台的 runJobs 逻辑（通过消息传递）
-    await chrome.runtime.sendMessage({ action: 'runJobsNow' });
+    // 直接调用后台的 runJobs 逻辑（通过消息传递），加 10 秒超时防止卡死
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('后台无响应（扩展可能需要重新加载）')), 10000));
+    await Promise.race([
+      chrome.runtime.sendMessage({ action: 'runJobsNow' }),
+      timeout,
+    ]);
     status('已触发执行，请稍后在面板查看日志', 'ok');
   } catch (e) {
     status('触发失败：' + (e.message || e), 'err');
@@ -121,7 +125,11 @@ $('btn-run-now').onclick = async () => {
 $('btn-relay-now').onclick = async () => {
   status('正在获取中继任务…', '');
   try {
-    await chrome.runtime.sendMessage({ action: 'runRelayNow' });
+    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('后台无响应（扩展可能需要重新加载）')), 10000));
+    await Promise.race([
+      chrome.runtime.sendMessage({ action: 'runRelayNow' }),
+      timeout,
+    ]);
     status('已触发中继处理，请稍后在面板查看日志', 'ok');
   } catch (e) {
     status('触发失败：' + (e.message || e), 'err');
