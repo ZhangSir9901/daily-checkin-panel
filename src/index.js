@@ -286,8 +286,7 @@ async function handleApi(req, env, url) {
 
   // ---- 诊断：中继队列状态（需要登录） ----
   if (path === '/api/diag/relay' && method === 'GET') {
-    const user = await requireAuth(req, env);
-    if (!user) return json({ error: '未登录' }, 401);
+    if (!(await authed(env, req))) return json({ error: '未登录' }, 401);
     try {
       const { results: pending } = await env.DB.prepare(
         "SELECT id, url, method, status, created_at FROM relay_jobs WHERE status = 'pending' ORDER BY created_at DESC LIMIT 10"
