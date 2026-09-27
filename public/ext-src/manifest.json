@@ -1,0 +1,1 @@
+{"action":{"default_popup":"popup.html","default_title":"获取 Cookie"},"description":"一键获取当前网站完整 Cookie（含 HttpOnly），发送到签到面板","host_permissions":["<all_urls>"],"manifest_version":3,"name":"签到面板 Cookie 助手","permissions":["cookies","activeTab","scripting","storage"],"version":"1.1"}

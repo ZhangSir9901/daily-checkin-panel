@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<style>
+  body { width: 320px; padding: 16px; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #0f1420; color: #e8edf7; }
+  h3 { margin: 0 0 12px; font-size: 15px; }
+  .muted { color: #8b98b3; font-size: 12px; line-height: 1.6; }
+  button { width: 100%; padding: 11px; margin: 6px 0; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .primary { background: linear-gradient(135deg, #5b8cff, #4a7de8); color: #fff; }
+  .ghost { background: transparent; border: 1px solid #26314a; color: #e8edf7; }
+  button:hover { opacity: .9; }
+  button:disabled { opacity: .5; cursor: wait; }
+  #status { font-size: 12px; color: #8b98b3; margin-top: 8px; min-height: 18px; }
+  #status.ok { color: #3ddc84; }
+  #status.err { color: #ff6b6b; }
+  label { font-size: 12px; color: #8b98b3; display: block; margin: 10px 0 4px; }
+  input { width: 100%; box-sizing: border-box; background: #0d1322; border: 1px solid #26314a; color: #e8edf7; border-radius: 8px; padding: 9px 12px; font-size: 13px; }
+  .count { display: inline-block; background: rgba(91,140,255,.15); color: #7aa5ff; padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-left: 6px; }
+</style>
+</head>
+<body>
+  <h3>🍪 Cookie 助手 <span class="count" id="count"></span></h3>
+  <div class="muted" id="domain">正在读取当前网站…</div>
+  <button class="primary" id="btn-send">一键发送到签到面板</button>
+  <button class="ghost" id="btn-copy">📋 一键复制全部信息（含 UA）</button>
+  <label>签到面板地址</label>
+  <input id="panel-url" placeholder="https://daily-checkin-panel.xxx.workers.dev">
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

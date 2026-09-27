@@ -3,6 +3,7 @@
 
 import { ensureSchema, getSetting, setSetting } from './db.js';
 import { hashPassword, verifyPassword, encryptJSON, decryptJSON, randomHex } from './crypto.js';
+import { handleExtZip } from './ext-zip.js';
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
@@ -390,7 +391,9 @@ export default {
       const url = new URL(req.url);
       await ensureSchema(env.DB);
       if (url.pathname.startsWith('/api/')) return await handleApi(req, env, url);
-      // 非 API 请求交给静态资源（public 目录），如扩展 zip 包
+      // 扩展下载：动态生成 zip，把当前面板地址注入进去（扩展自动带出面板地址）
+      if (url.pathname === '/cookie-helper-extension.zip') return await handleExtZip(req, env);
+      // 非 API 请求交给静态资源（public 目录）
       if (env.ASSETS) {
         const res = await env.ASSETS.fetch(req);
         // 静态资源存在则直接返回；不存在才回退到 index.html（SPA）
