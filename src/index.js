@@ -267,6 +267,11 @@ async function handleApi(req, env, url) {
     if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap));
 
     // 手动任务队列：面板"执行"按钮为 browser 模式账号加入的即时任务
+    // 清理 24 小时前的过期任务，防止堆积
+    try {
+      await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE created_at < ?')
+        .bind(Date.now() - 86400000).run().catch(() => {});
+    } catch { /* 忽略 */ }
     try {
       const { results: manualJobs } = await env.DB.prepare(
         'SELECT account_id FROM browser_manual_jobs ORDER BY created_at LIMIT 20'

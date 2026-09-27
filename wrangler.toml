@@ -13,7 +13,7 @@ not_found_handling = "single-page-application"
 # 每小时触发一次，Worker 内按「签到时间设置」（默认北京时间 08:00）判断是否执行
 # 时间在面板网页「设置」里修改，无需重新部署
 [triggers]
-crons = ["0 * * * *"]
+crons = ["* * * * *"]
 
 [[d1_databases]]
 binding = "DB"
