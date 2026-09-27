@@ -121,18 +121,35 @@ $('btn-run-now').onclick = async () => {
   }
 };
 
-// 立即处理中继任务（调试用）
-$('btn-relay-now').onclick = async () => {
-  status('正在获取中继任务…', '');
+// 面板连接检查：验证面板地址和 API Key 是否可用
+$('btn-check-conn').onclick = async () => {
+  status('正在检查面板连接…', '');
   try {
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('后台无响应（扩展可能需要重新加载）')), 10000));
-    await Promise.race([
-      chrome.runtime.sendMessage({ action: 'runRelayNow' }),
-      timeout,
-    ]);
-    status('已触发中继处理，请稍后在面板查看日志', 'ok');
+    let panelUrl = $('panel-url').value.trim().replace(/\/$/, '');
+    if (!panelUrl) return status('请先填写签到面板地址', 'err');
+    if (!panelUrl.startsWith('http')) panelUrl = 'https://' + panelUrl;
+    const apiKey = $('api-key').value.trim();
+    if (!apiKey) return status('请先填写 API Key（面板设置页获取）', 'err');
+
+    // ① 检查面板是否可访问
+    let resp;
+    try {
+      resp = await fetch(panelUrl + '/api/external/browser-jobs', {
+        headers: { 'X-Api-Key': apiKey },
+      });
+    } catch (e) {
+      return status('连接失败：面板地址无法访问（' + (e.message || '网络错误') + '）', 'err');
+    }
+    // ② 检查 API Key 是否有效
+    if (resp.status === 401) return status('连接失败：API Key 无效，请去面板设置页重新生成', 'err');
+    if (!resp.ok) return status('连接失败：面板返回 HTTP ' + resp.status, 'err');
+    // ③ 解析任务列表
+    let data;
+    try { data = await resp.json(); } catch { return status('连接失败：面板返回数据格式错误', 'err'); }
+    const n = (data.jobs || []).length;
+    status(`连接正常 ✅ API Key 有效，当前有 ${n} 个待办任务`, 'ok');
   } catch (e) {
-    status('触发失败：' + (e.message || e), 'err');
+    status('检查失败：' + (e.message || e), 'err');
   }
 };
 
