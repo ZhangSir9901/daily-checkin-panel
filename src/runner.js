@@ -92,6 +92,15 @@ export async function runAccount(env, account) {
     .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
     .bind(account.id, account.site, account.name, status, message, detail, duration, now)
     .run();
+  // 签到成功时记录今日已签到日期（用于状态列显示 已签到/未签到）
+  if (status === 'ok') {
+    const d = new Date(now);
+    // 用 Asia/Shanghai 日期
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+    const p = {};
+    for (const x of parts) p[x.type] = x.value;
+    meta.last_signin_date = `${p.year}-${p.month}-${p.day}`;
+  }
   await db
     .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
     .bind(status, message, now, JSON.stringify(meta), now, account.id)
