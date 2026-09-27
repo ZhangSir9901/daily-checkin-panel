@@ -225,15 +225,22 @@ export const hutue = {
       for (const r of d.routes) seenRoutes.push(r);
       nonce = d.nonce;
       // 二次发现：抓主题 JS 文件，从中找签到 action（xb-app.js 这类文件里才有真正的 action 名）
-      for (const jsUrl of (d.jsUrls || []).slice(0, 3)) {
-        try {
+      // 并行抓取，省时间（中继模式下每次都是网络往返）
+      const jsUrls = (d.jsUrls || []).slice(0, 2);
+      const jsResults = await Promise.allSettled(
+        jsUrls.map(async (jsUrl) => {
           const jr = await fetch(jsUrl, { headers });
-          const jsText = await jr.text();
-          const d2 = discoverSignin(base, jsText);
+          return await jr.text();
+        })
+      );
+      for (const r of jsResults) {
+        if (r.status !== 'fulfilled' || !r.value) continue;
+        try {
+          const d2 = discoverSignin(base, r.value);
           for (const a of d2.actions) {
             if (a && !seenActions.includes(a)) seenActions.push(a);
           }
-        } catch { /* 单个 JS 抓失败不影响 */ }
+        } catch { /* 解析失败不影响 */ }
       }
 
       // 首页本身若是验证码/登录页，直接给出明确结论，不再瞎试
@@ -345,6 +352,7 @@ export const hutue = {
       throw err;
     }
     const routeHint = seenRoutes.length ? `（页面里发现 REST 路由 ${seenRoutes[0]}，该站可能改用 REST 签到，请告知开发者）` : '';
-    throw new Error('签到失败：' + (lastReason || '未识别到成功标识') + routeHint);
+    const triedHint = ordered.length ? `（已试 ${ordered.slice(0, MAX_ATTEMPTS).join('、')}）` : '';
+    throw new Error('签到失败：' + (lastReason || '未识别到成功标识') + triedHint + routeHint);
   },
 };
