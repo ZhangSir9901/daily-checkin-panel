@@ -960,14 +960,19 @@ function openCookieSitePicker(cookie, domain, userAgent) {
 
 // 小书签/扩展跳回面板时（#ck=... 或 #ext-cookies=...）
 async function checkCookieHash() {
-// 扩展格式：#ext-cookies=base64({domain, cookies, userAgent, ts})
-  // 先对 hash 做 URL 解码（base64 的 +/= 可能被浏览器编码为 %2B/%2F/%3D）
+// 扩展格式：#ext-cookies=base64url({domain, cookies, userAgent, ts})
+  // 先对 hash 做 URL 解码（兼容旧版 base64 的 +/= 被编码为 %2B/%2F/%3D 的情况）
   const hash = decodeURIComponent(location.hash || '');
-  const me = hash.match(/#ext-cookies=([A-Za-z0-9+/=]+)/);
+  const me = hash.match(/#ext-cookies=([A-Za-z0-9\-_+/=]+)/);
   if (me) {
     history.replaceState(null, '', location.pathname);
     let d;
-    try { d = JSON.parse(decodeURIComponent(escape(atob(me[1])))); } catch (e) { return toast('扩展 Cookie 数据解析失败'); }
+    try {
+      // base64url 转标准 base64（-→+，_→/，补 =）
+      let b64 = me[1].replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4) b64 += '=';
+      d = JSON.parse(decodeURIComponent(escape(atob(b64))));
+    } catch (e) { return toast('扩展 Cookie 数据解析失败'); }
     if (!d || !d.cookies) return toast('扩展没有读取到 Cookie');
     // 按域名自动匹配站点
     const siteId = guessSiteByDomain(d.domain || '');

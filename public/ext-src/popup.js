@@ -83,7 +83,9 @@ $('btn-send').onclick = async () => {
   await chrome.storage.sync.set({ panelUrl });
 
   // 把 Cookie + UA + 域名编码进 URL hash，面板 JS 读取后自动弹出确认框
-  const payload = btoa(unescape(encodeURIComponent(fullPayload())));
+  // 用 base64url 编码（+/= 替换为 -_.），避免特殊字符在地址栏被转义或截断
+  const b64 = btoa(unescape(encodeURIComponent(fullPayload())));
+  const payload = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   chrome.tabs.create({ url: panelUrl + '#ext-cookies=' + payload });
   status('已打开面板，请在面板中确认保存', 'ok');
 };
