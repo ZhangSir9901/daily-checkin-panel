@@ -8,7 +8,7 @@ import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
-import { shouldRun, validHour, validTz, accountHour } from './schedule.js';
+import { shouldRun, validHour, validTime, validTz, accountHour } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
 
 // 校验外部 API Key：支持 Cloudflare Secret（旧）或面板设置中的 Key（新，可在 UI 查看/修改）
@@ -561,11 +561,11 @@ async function handleApi(req, env, url) {
     if (!acc) return json({ error: '账号不存在' }, 404);
     const { hour } = await readBody(req);
     const h = String(hour || '').trim();
-    if (h !== '' && !validHour(h)) return json({ error: '时间必须是 0-23 的整点小时' }, 400);
+    if (h !== '' && !validTime(h)) return json({ error: '时间格式错误，请用 HH:MM（如 08:30）' }, 400);
     let meta = {};
     try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
     if (h === '') delete meta.sched_hour;
-    else meta.sched_hour = validHour(h);
+    else meta.sched_hour = validTime(h);
     await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
       .bind(JSON.stringify(meta), Date.now(), id).run();
     return json({ ok: true, hour: meta.sched_hour || '' });
@@ -602,9 +602,9 @@ async function handleApi(req, env, url) {
   }
   if (path === '/api/schedule' && method === 'PUT') {
     const { time, tz } = await readBody(req);
-    const h = validHour(time);
+    const h = validTime(time);
     const z = validTz(tz);
-    if (!h) return json({ error: '时间必须是 0-23 的整点小时' }, 400);
+    if (!h) return json({ error: '时间格式错误，请用 HH:MM（如 08:30）' }, 400);
     if (!z) return json({ error: '时区无效' }, 400);
     await setSetting(env.DB, 'schedule_time', h);
     await setSetting(env.DB, 'schedule_tz', z);

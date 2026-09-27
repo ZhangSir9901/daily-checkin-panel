@@ -11,28 +11,64 @@ export function tzParts(date, tz) {
   });
   const p = {};
   for (const x of fmt.formatToParts(date)) p[x.type] = x.value;
-  return { day: `${p.year}-${p.month}-${p.day}`, hour: p.hour };
+  return { day: `${p.year}-${p.month}-${p.day}`, hour: p.hour, minute: p.minute };
 }
 
 // now: Date；timeHH: "08"；tz: IANA；lastKey: 上次执行 key（"YYYY-MM-DD HH"）
 // 返回 { run, key }：run 为 true 表示本小时应该执行。
-export function shouldRun(now, timeHH, tz, lastKey) {
+export function shouldRun(now, timeHHMM, tz, lastKey) {
   let parts;
   try {
     parts = tzParts(now, tz);
   } catch {
     parts = tzParts(now, 'Asia/Shanghai');
   }
-  const key = `${parts.day} ${parts.hour}`;
-  const want = String(timeHH).padStart(2, '0');
-  if (parts.hour !== want) return { run: false, key };
+  // 支持 HH:MM 格式，也兼容旧的 HH 格式
+  const t = String(timeHHMM || '');
+  let wantHour, wantMin;
+  if (t.includes(':')) {
+    const [h, m] = t.split(':');
+    wantHour = String(h).padStart(2, '0');
+    wantMin = String(m).padStart(2, '0');
+  } else {
+    wantHour = String(t).padStart(2, '0');
+    wantMin = '00';
+  }
+  const key = `${parts.day} ${parts.hour}:${parts.minute}`;
+  if (parts.hour !== wantHour || parts.minute !== wantMin) return { run: false, key };
   if (lastKey === key) return { run: false, key };
   return { run: true, key };
+}
+
+// 全角转半角（支持全角数字和冒号输入）
+export function toHalfWidth(s) {
+  return String(s || '').replace(/[０-９：]/g, (c) => {
+    if (c === '：') return ':';
+    return String.fromCharCode(c.charCodeAt(0) - 0xFEE0);
+  });
 }
 
 export function validHour(v) {
   const n = parseInt(v, 10);
   return Number.isInteger(n) && n >= 0 && n <= 23 ? String(n).padStart(2, '0') : null;
+}
+
+// 验证 HH:MM 格式（支持 8:30、08:30、8：30全角等），返回规范化的 "HH:MM" 或 null
+export function validTime(v) {
+  const s = toHalfWidth(v).trim();
+  if (!s) return null;
+  const m = s.match(/^(\d{1,2})[:：](\d{1,2})$/);
+  if (m) {
+    const h = parseInt(m[1], 10);
+    const min = parseInt(m[2], 10);
+    if (h >= 0 && h <= 23 && min >= 0 && min <= 59) {
+      return String(h).padStart(2, '0') + ':' + String(min).padStart(2, '0');
+    }
+    return null;
+  }
+  // 兼容旧的纯小时格式 "08"
+  const h = validHour(s);
+  return h ? h + ':00' : null;
 }
 
 export function validTz(tz) {

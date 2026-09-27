@@ -224,7 +224,7 @@
           </div>
         </div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>站点</th><th>签到时间</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
+          <thead><tr><th>站点</th><th>签到时间</th><th>状态</th><th>网站反馈</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
@@ -383,7 +383,7 @@
         <h2>签到时间</h2>
         <p class="muted">Worker 每小时唤醒一次，到达设定的整点才执行签到。修改即时生效，无需重新部署。</p>
         <div class="row">
-          <div style="flex:1"><label>每天执行时间（整点）</label><select id="sched-hour"></select></div>
+          <div style="flex:1"><label>每天执行时间（HH:MM）</label><input id="sched-hour" placeholder="08:30" style="width:100%"></div>
           <div style="flex:2"><label>时区</label><select id="sched-tz"></select></div>
         </div>
         <button id="btn-save-sched">保存时间设置</button>
@@ -554,11 +554,8 @@ async function loadSchedule() {
   try {
     const s = await api('/api/schedule');
     GLOBAL_HOUR = s.time;
-    $('sched-line').textContent = `每天 ${s.time}:00（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
-    $('sched-hour').innerHTML = Array.from({ length: 24 }, (_, h) => {
-      const v = String(h).padStart(2, '0');
-      return `<option value="${v}" ${v === s.time ? 'selected' : ''}>${v}:00</option>`;
-    }).join('');
+    $('sched-line').textContent = `每天 ${s.time}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
+    $('sched-hour').value = s.time;
     if (!$('sched-tz').options.length) {
       $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option ${z === s.tz ? 'selected' : ''}>${z}</option>`).join('');
     } else $('sched-tz').value = s.tz;
@@ -567,7 +564,10 @@ async function loadSchedule() {
 
 $('btn-save-sched').onclick = async () => {
   try {
-    await api('/api/schedule', 'PUT', { time: $('sched-hour').value, tz: $('sched-tz').value });
+    // 全角转半角
+    const toHalf = (s) => String(s || '').replace(/[０-９：]/g, (c) => c === '：' ? ':' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+    const v = toHalf($('sched-hour').value).trim();
+    await api('/api/schedule', 'PUT', { time: v, tz: $('sched-tz').value });
     toast('时间设置已保存'); loadSchedule();
   } catch (e) { toast(e.message); }
 };
@@ -981,7 +981,7 @@ async function loadAccounts() {
     return `
     <tr>
       <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
-      <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 0-23 的小时数，空为跟随全局(${GLOBAL_HOUR}:00)" style="width:90px;text-align:center"></td>
+      <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 HH:MM（如 08:30），空为跟随全局(${GLOBAL_HOUR})" style="width:90px;text-align:center"></td>
       <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : a.last_status === 'skip' ? '<span class="badge skip">跳过</span>' : '<span class="badge off">未运行</span>'}</td>
       <td class="msg">${esc(a.last_msg || '-')}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
@@ -996,15 +996,25 @@ async function loadAccounts() {
 
   tb.querySelectorAll('[data-sched]').forEach((sel) => {
     const save = async () => {
-      const v = sel.value.trim();
-      // 验证：空=跟随全局，或 0-23 的数字
-      if (v !== '' && !/^(0?[0-9]|1[0-9]|2[0-3])$/.test(v)) {
-        toast('请输入 0-23 的小时数，空为跟随全局');
-        sel.value = '';
+      // 全角转半角
+      const toHalf = (s) => String(s || '').replace(/[０-９：]/g, (c) => c === '：' ? ':' : String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+      const v = toHalf(sel.value).trim();
+      // 验证：空=跟随全局，或 HH:MM 格式（如 08:30），也兼容旧的纯小时 "08"
+      if (v !== '' && !/^(\d{1,2})(:\d{1,2})?$/.test(v)) {
+        toast('时间格式错误，请用 HH:MM（如 08:30），空为跟随全局');
         return;
       }
+      if (v !== '') {
+        const parts = v.split(':');
+        const h = parseInt(parts[0], 10);
+        const m = parts[1] ? parseInt(parts[1], 10) : 0;
+        if (h < 0 || h > 23 || m < 0 || m > 59) {
+          toast('时间无效：小时 0-23，分钟 0-59');
+          return;
+        }
+      }
       try {
-        await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: v === '' ? '' : String(parseInt(v, 10)).padStart(2, '0') });
+        await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: v });
         toast('签到时间已保存');
       } catch (e) { toast(e.message); }
       loadAccounts();
