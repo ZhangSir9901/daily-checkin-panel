@@ -7,7 +7,7 @@ import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta } from './sites/index.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
-import { shouldRun, validHour, validTz } from './schedule.js';
+import { shouldRun, validHour, validTz, accountHour } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
 
 const SESSION_TTL_MS = 7 * 864e5;
@@ -193,6 +193,25 @@ async function handleApi(req, env, url) {
     return json({ ok: true, value: !!value });
   }
 
+  // 账号独立签到时间：PUT /api/accounts/:id/schedule { hour: "08" 或 "" }
+  // hour 为 ""（空）表示跟随全局时间；"00"~"23" 为该账号独立的整点小时
+  const mSched = path.match(/^\/api\/accounts\/(\d+)\/schedule$/);
+  if (mSched && method === 'PUT') {
+    const id = Number(mSched[1]);
+    const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    const { hour } = await readBody(req);
+    const h = String(hour || '').trim();
+    if (h !== '' && !validHour(h)) return json({ error: '时间必须是 0-23 的整点小时' }, 400);
+    let meta = {};
+    try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+    if (h === '') delete meta.sched_hour;
+    else meta.sched_hour = validHour(h);
+    await env.DB.prepare('UPDATE accounts SET meta=?, updated_at=? WHERE id=?')
+      .bind(JSON.stringify(meta), Date.now(), id).run();
+    return json({ ok: true, hour: meta.sched_hour || '' });
+  }
+
   // 签到时间设置：每天几点（整点，0-23）+ 时区
   if (path === '/api/schedule' && method === 'GET') {
     const time = (await getSetting(env.DB, 'schedule_time')) || '08';
@@ -299,19 +318,38 @@ export default {
     }
   },
 
-  // Cron 触发：每小时触发一次，按「签到时间设置」判断是否到达整点才执行
+  // Cron 触发：每小时触发一次，按各账号的签到时间（独立时间或全局时间）
+  // 判断是否到达整点才执行。每个账号独立记录上次执行 key，避免重复。
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
       (async () => {
         try {
           await ensureSchema(env.DB);
-          const time = (await getSetting(env.DB, 'schedule_time')) || '08';
+          const globalTime = (await getSetting(env.DB, 'schedule_time')) || '08';
           const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
-          const lastKey = await getSetting(env.DB, 'sched_last_key');
-          const { run, key } = shouldRun(new Date(), time, tz, lastKey);
-          if (!run) return;
-          await setSetting(env.DB, 'sched_last_key', key);
-          await runAll(env, { manual: false });
+          // 各账号上次执行 key：{ accountId: "YYYY-MM-DD HH" }
+          let lastMap = {};
+          try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
+          const { results } = await env.DB.prepare('SELECT id, meta FROM accounts WHERE enabled = 1').all();
+          const now = new Date();
+          let changed = false;
+          for (const acc of results || []) {
+            const hour = accountHour(acc.meta, globalTime);
+            const lastKey = lastMap[String(acc.id)];
+            const { run, key } = shouldRun(now, hour, tz, lastKey);
+            if (!run) continue;
+            lastMap[String(acc.id)] = key;
+            changed = true;
+            try {
+              const full = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(acc.id).first();
+              if (full) await runAccount(env, full);
+            } catch (e) {
+              console.error('[cron] account', acc.id, e);
+            }
+            // 账号之间稍作间隔，降低被目标站点限流的概率
+            await new Promise((r) => setTimeout(r, 1200));
+          }
+          if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap));
         } catch (e) {
           console.error('[cron]', e);
         }

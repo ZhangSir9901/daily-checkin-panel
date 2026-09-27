@@ -106,7 +106,7 @@
           </div>
         </div>
         <div style="overflow-x:auto"><table>
-          <thead><tr><th>备注</th><th>站点</th><th>签到设置</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
+          <thead><tr><th>备注</th><th>站点</th><th>签到设置</th><th>签到时间</th><th>状态</th><th>上次结果</th><th>上次运行</th><th>启用</th><th>操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
@@ -367,10 +367,12 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 // ---------- 签到时间设置 ----------
 const TZ_OPTS = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney'];
 const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'UTC': 'UTC 时间' };
+let GLOBAL_HOUR = '08'; // 全局签到时间（整点小时），账号独立时间为空时跟随它
 
 async function loadSchedule() {
   try {
     const s = await api('/api/schedule');
+    GLOBAL_HOUR = s.time;
     $('sched-line').textContent = `每天 ${s.time}:00（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
     $('sched-hour').innerHTML = Array.from({ length: 24 }, (_, h) => {
       const v = String(h).padStart(2, '0');
@@ -637,8 +639,8 @@ async function checkCookieHash() {
 async function initMain() {
   const { sites } = await api('/api/sites');
   SITES = sites;
+  await loadSchedule(); // 先加载全局时间，供账号列表的"跟随全局"显示
   await loadAccounts();
-  loadSchedule();
   checkCookieHash();
 }
 
@@ -666,12 +668,24 @@ async function loadAccounts() {
   const { accounts } = await api('/api/accounts');
   ACCTS = accounts;
   const tb = $('accounts-body');
-  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">还没有账号，点击右上角「添加账号」。自动签到时间可在「设置」里修改。</td></tr>'; refreshCkSelect(); return; }
-  tb.innerHTML = accounts.map((a) => `
+  if (!accounts.length) { tb.innerHTML = '<tr><td colspan="9" class="muted">还没有账号，点击右上角「添加账号」。自动签到时间可在「设置」里修改，也可在下方每个账号单独调整。</td></tr>'; refreshCkSelect(); return; }
+  const hourOpts = (cur) => {
+    let h = `<option value="" ${!cur ? 'selected' : ''}>跟随全局(${GLOBAL_HOUR}:00)</option>`;
+    for (let i = 0; i < 24; i++) {
+      const v = String(i).padStart(2, '0');
+      h += `<option value="${v}" ${cur === v ? 'selected' : ''}>${v}:00</option>`;
+    }
+    return h;
+  };
+  tb.innerHTML = accounts.map((a) => {
+    let schedHour = '';
+    try { schedHour = JSON.parse(a.meta || '{}').sched_hour || ''; } catch { /* 忽略 */ }
+    return `
     <tr>
       <td><b>${esc(a.name)}</b></td>
       <td><span class="badge site">${esc(siteName(a.site))}</span></td>
       <td>${togglePills(a)}</td>
+      <td><select class="sm" data-sched="${a.id}" title="该账号的每日签到时间，空为跟随全局">${hourOpts(schedHour)}</select></td>
       <td>${a.last_status === 'ok' ? '<span class="badge ok">成功</span>' : a.last_status === 'fail' ? '<span class="badge fail">失败</span>' : '<span class="badge off">未运行</span>'}</td>
       <td class="msg">${esc(a.last_msg || '-')}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
@@ -681,7 +695,16 @@ async function loadAccounts() {
         <button class="ghost sm" data-edit="${a.id}">编辑</button>
         <button class="danger sm" data-del="${a.id}">删除</button>
       </div></td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+
+  tb.querySelectorAll('[data-sched]').forEach((sel) => (sel.onchange = async () => {
+    try {
+      await api('/api/accounts/' + sel.dataset.sched + '/schedule', 'PUT', { hour: sel.value });
+      toast('签到时间已保存');
+    } catch (e) { toast(e.message); }
+    loadAccounts();
+  }));
 
   tb.querySelectorAll('[data-atoggle]').forEach((b) => (b.onclick = async () => {
     const [id, key] = b.dataset.atoggle.split(':');

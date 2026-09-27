@@ -1,6 +1,6 @@
 // schedule 测试：node test/schedule.test.mjs
 import assert from 'node:assert/strict';
-import { shouldRun, validHour, validTz, tzParts } from '../src/schedule.js';
+import { shouldRun, validHour, validTz, tzParts, accountHour } from '../src/schedule.js';
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; console.log('ok -', name); };
@@ -51,6 +51,14 @@ t('validHour 校验', () => {
 t('validTz 校验', () => {
   assert.equal(validTz('Asia/Shanghai'), 'Asia/Shanghai');
   assert.equal(validTz('Nope/Zone'), null);
+});
+
+t('accountHour：独立时间优先，为空跟随全局', () => {
+  assert.equal(accountHour('{"sched_hour":"09"}', '08'), '09');
+  assert.equal(accountHour('{}', '08'), '08');
+  assert.equal(accountHour('{"sched_hour":""}', '08'), '08');
+  assert.equal(accountHour('not-json', '08'), '08');
+  assert.equal(accountHour(null, '08'), '08');
 });
 
 console.log(`\n${n} 组通过`);

@@ -43,3 +43,13 @@ export function validTz(tz) {
     return null;
   }
 }
+
+// 账号的签到小时：独立时间优先（meta.sched_hour），为空则跟随全局
+export function accountHour(metaJson, globalHour) {
+  try {
+    const m = JSON.parse(metaJson || '{}');
+    return m.sched_hour || globalHour;
+  } catch {
+    return globalHour;
+  }
+}
