@@ -101,6 +101,9 @@
   .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .tabs { display:flex; gap:8px; margin:18px 0; padding:4px; background:rgba(255,255,255,.03);
           border:1px solid var(--line); border-radius:12px; width:fit-content; }
+  .tabs-row { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  .tabs-row .tabs { margin:18px 0; }
+  .tabs-row .topbar-right { margin:18px 0; }
   .tabs button { background:transparent; border:0; color:var(--muted); box-shadow:none; padding:9px 18px; }
   .tabs button:hover { transform:none; color:var(--text); box-shadow:none; }
   .tabs button.active { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff;
@@ -378,17 +381,19 @@
   <div id="view-main" class="view hidden">
     <div class="topbar">
       <div><h1>签到面板</h1><div class="muted" id="sched-line">自动签到时间加载中…</div></div>
+    </div>
+    <div class="tabs-row">
+      <div class="tabs">
+        <button data-tab="accounts" class="active">账号</button>
+        <button data-tab="logs">运行日志</button>
+        <button data-tab="settings">设置</button>
+      </div>
       <div class="topbar-right">
         <div id="ext-state" class="wait" title="点击检测一次扩展是否在线；只有扩展在线，账号才能切到「本地网络」">
           <i></i><span id="ext-state-text">检测扩展状态…</span>
         </div>
         <button class="ghost sm" id="btn-logout">退出</button>
       </div>
-    </div>
-    <div class="tabs">
-      <button data-tab="accounts" class="active">账号</button>
-      <button data-tab="logs">运行日志</button>
-      <button data-tab="settings">设置</button>
     </div>
 
     <section id="tab-accounts">
@@ -401,7 +406,7 @@
           </div>
         </div>
         <div style="overflow-x:visible"><table>
-          <thead><tr><th>站点</th><th class="c">签到时间</th><th class="c">状态</th><th>网站反馈</th><th class="c">上次运行</th><th class="c">启用</th><th class="c">操作</th></tr></thead>
+          <thead><tr><th class="c">站点</th><th class="c">签到时间</th><th class="c">状态</th><th>网站反馈</th><th class="c">上次运行</th><th class="c">启用</th><th class="c">操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
