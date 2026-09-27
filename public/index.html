@@ -51,14 +51,14 @@
   h2 { font-size:16px; margin:0 0 14px; font-weight:600; color:var(--text);
        display:flex; align-items:center; gap:8px; }
   h2::before { content:""; width:4px; height:16px; border-radius:2px;
-               background:linear-gradient(180deg, var(--accent), var(--accent2)); }
+               background:var(--accent); }
   .muted { color:var(--muted); font-size:13px; line-height:1.6; }
   .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
   /* 右侧只留一行：[扩展状态] [退出]，竖排会把「退出」顶到上面、把顶栏拉高 */
   .topbar-right { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
   /* 首页右上角：扩展在线状态（在「退出」下方） */
   #ext-state { display:inline-flex; align-items:center; gap:6px; padding:4px 12px;
-               border-radius:20px; font-size:12px; font-weight:600; white-space:nowrap;
+               border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap;
                border:1px solid transparent; cursor:pointer; transition:background .2s, color .2s; }
   #ext-state i { width:7px; height:7px; border-radius:50%; background:currentColor;
                  box-shadow:0 0 0 3px rgba(255,255,255,.05); }
@@ -69,7 +69,7 @@
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.35; } }
   #sched-line { display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
                 background:var(--accent-dim); border:1px solid rgba(91,140,255,.25);
-                border-radius:20px; font-size:12px; color:var(--accent2); }
+                border-radius:999px; font-size:12px; color:var(--accent2); }
 
   input, select, textarea {
     width:100%; background:#0c1224; border:1px solid var(--line); color:var(--text);
@@ -87,7 +87,7 @@
   button {
     cursor:pointer; border:0; border-radius:var(--radius-sm);
     padding:11px 20px; font-size:14px; font-weight:600;
-    background:linear-gradient(135deg, var(--accent), #4a7de8);
+    background:var(--accent);
     color:#fff; box-shadow:0 4px 14px rgba(91,140,255,.3);
     transition:transform .15s, box-shadow .15s, opacity .15s;
   }
@@ -108,7 +108,7 @@
   .tabs-row .topbar-right { margin:18px 0; }
   .tabs button { background:transparent; border:0; color:var(--muted); box-shadow:none; padding:9px 18px; }
   .tabs button:hover { transform:none; color:var(--text); box-shadow:none; }
-  .tabs button.active { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff;
+  .tabs button.active { background:var(--accent); color:#fff;
                         box-shadow:0 4px 12px rgba(91,140,255,.3); }
 
   table { width:100%; border-collapse:separate; border-spacing:0; font-size:13px; }
@@ -120,7 +120,7 @@
   tbody tr:hover { background:rgba(91,140,255,.04); }
   tbody tr:last-child td { border-bottom:0; }
 
-  .badge { display:inline-flex; align-items:center; gap:5px; padding:4px 12px; border-radius:20px;
+  .badge { display:inline-flex; align-items:center; gap:5px; padding:4px 12px; border-radius:999px;
            font-size:12px; font-weight:600; white-space:nowrap; }
   .badge::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
   .badge.ok { background:var(--ok-dim); color:var(--ok); }
@@ -132,12 +132,12 @@
   .badge.off { background:rgba(147,160,189,.12); color:var(--muted); }
   .badge.skip { background:var(--warn-dim); color:var(--warn); }
 
-  .switch { position:relative; width:44px; height:24px; background:#2a3550; border-radius:20px;
+  .switch { position:relative; width:44px; height:24px; background:#2a3550; border-radius:999px;
             border:1px solid var(--line); padding:0; box-shadow:none; transition:background .2s; }
   .switch::after { content:""; position:absolute; top:2px; left:2px; width:18px; height:18px;
                    border-radius:50%; background:#8b98b3; transition:.2s; box-shadow:0 2px 4px rgba(0,0,0,.3); }
   .switch:hover { transform:none; box-shadow:none; }
-  .switch.on { background:linear-gradient(135deg, var(--ok), #2bb673); border-color:transparent; }
+  .switch.on { background:var(--ok); border-color:transparent; }
   .switch.on::after { left:22px; background:#fff; }
 
   .modal-bg { position:fixed; inset:0; background:rgba(5,8,18,.75); backdrop-filter:blur(4px);
@@ -161,13 +161,13 @@
   .checkline input { width:auto; margin:0; accent-color:var(--accent); }
   .msg { word-break:break-all; color:var(--muted); font-size:12px; line-height:1.6; }
 
-  .pill { display:inline-flex; align-items:center; padding:4px 12px; border-radius:20px; font-size:12px;
+  .pill { display:inline-flex; align-items:center; padding:4px 12px; border-radius:999px; font-size:12px;
           border:1px solid var(--line); background:rgba(255,255,255,.02); color:var(--muted);
           cursor:pointer; margin:3px 6px 3px 0; white-space:nowrap; transition:all .15s; font-weight:600; }
   .pill:hover { border-color:var(--accent); color:var(--text); }
   .pill.on { border-color:var(--ok); color:var(--ok); background:var(--ok-dim); }
   /* 分段选择器（如随机/固定）：与徽章同字号、弧度、高度、宽度 */
-  .seg { display:inline-flex; border-radius:20px; overflow:hidden; margin:0; width:100%; box-sizing:border-box;
+  .seg { display:inline-flex; border-radius:999px; overflow:hidden; margin:0; width:100%; box-sizing:border-box;
          border:1px solid transparent; background:rgba(91,140,255,.16); }
   .seg-opt { background:transparent; border:0; padding:4px 0; font-size:12px; font-weight:600; flex:1;
              display:inline-flex; align-items:center; justify-content:center;
@@ -186,7 +186,7 @@
                   color:var(--accent2); text-decoration:none; font-size:14px; font-weight:600;
                   margin:4px 8px 4px 0; transition:all .15s; background:var(--accent-dim); }
   a.bookmarklet:hover { background:rgba(91,140,255,.2); transform:translateY(-1px); }
-  .ck-tab.active { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff; border-color:transparent; }
+  .ck-tab.active { background:var(--accent); color:#fff; border-color:transparent; }
   .ck-panel textarea { width:100%; box-sizing:border-box; margin:4px 0; }
 
   /* 折叠区（其它取 Cookie 方式 / 扩展安装步骤）：默认收起，保持页面清爽 */
@@ -218,7 +218,7 @@
   .tz-chip .tz-dot { width:7px; height:7px; border-radius:50%; background:var(--accent2); flex:none;
                     box-shadow:0 0 0 3px var(--accent-dim); }
   /* 时区弹窗：和时间选择器弹窗同风格同动画 */
-  .tz-pop { position:fixed; z-index:70; width:220px; padding:10px; border-radius:16px;
+  .tz-pop { position:fixed; z-index:70; width:220px; padding:10px; border-radius:var(--radius);
             background:#141c33;
             border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
   .tz-pop.hidden { display:none; }
@@ -333,7 +333,7 @@
   .tp-chip .tp-dot { width:6px; height:6px; border-radius:50%; background:var(--muted2); flex:none; }
   .tp-chip:not(.is-follow) .tp-dot { background:var(--accent2); box-shadow:0 0 0 3px var(--accent-dim); }
 
-  .tpx-pop { position:fixed; z-index:70; width:250px; padding:14px; border-radius:16px;
+  .tpx-pop { position:fixed; z-index:70; width:250px; padding:14px; border-radius:var(--radius);
              background:#141c33;
              border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
   .tpx-pop.hidden { display:none; }
@@ -362,14 +362,14 @@
              box-shadow:none; font-variant-numeric:tabular-nums; cursor:pointer;
              transition:background .12s, color .12s, transform .12s; }
   .tpx-opt:hover { transform:none; box-shadow:none; background:rgba(91,140,255,.14); color:var(--text); }
-  .tpx-opt.sel { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff;
+  .tpx-opt.sel { background:var(--accent); color:#fff;
                  font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
-  .tpx-opt.sel:hover { background:linear-gradient(135deg, var(--accent), #4a7de8); color:#fff; }
+  .tpx-opt.sel:hover { background:var(--accent); color:#fff; }
   .tpx-foot { display:flex; gap:8px; margin-top:12px; justify-content:center; }
   .tpx-foot button { padding:9px 28px; border-radius:10px; font-size:12.5px; box-shadow:none; }
   .tpx-follow { background:transparent; border:1px solid var(--line2); color:var(--muted); }
   .tpx-follow:hover { transform:none; box-shadow:none; color:var(--fail); border-color:var(--fail); background:var(--fail-dim); }
-  .tpx-done { background:linear-gradient(135deg, var(--accent), #4a7de8); border:0; color:#fff; font-weight:600; }
+  .tpx-done { background:var(--accent); border:0; color:#fff; font-weight:600; }
   .tpx-done:hover { transform:none; box-shadow:none; filter:brightness(1.08); }
 
   /* 设置页内嵌形态 */
