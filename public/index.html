@@ -994,7 +994,7 @@ async function loadAccounts() {
       <td><b>${esc(a.name)}</b><br>${execBadge}<button class="ghost sm" data-exec="${a.id}" title="${esc(execTitle)}" style="font-size:11px;padding:2px 6px">切换</button></td>
       <td><input class="sm" data-sched="${a.id}" value="${esc(schedHour)}" placeholder="跟随全局" title="输入 HH:MM（如 08:30），空为跟随全局(${GLOBAL_HOUR})" style="width:90px;text-align:center"></td>
       <td>${statusBadge}</td>
-      <td class="msg">${esc(a.last_msg || '-')}</td>
+      <td class="msg">${(() => { const m = a.last_msg || ''; return (m.includes('浏览器模式') || m.includes('请确保扩展')) ? '-' : esc(m || '-'); })()}</td>
       <td class="muted">${fmtTime(a.last_run_at)}</td>
       <td><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
       <td><div style="display:inline-flex;gap:6px;white-space:nowrap">
