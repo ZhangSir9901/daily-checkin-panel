@@ -39,6 +39,12 @@ const MIGRATIONS = [
   async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_relay_status ON relay_jobs(status, created_at)').run(),
   // v5：relay_jobs.options（fetch 选项透传：redirect/credentials 等）
   async (db) => ensureColumn(db, 'relay_jobs', 'options', `TEXT NOT NULL DEFAULT '{}'`),
+  // v6：browser_manual_jobs（面板手动触发浏览器模式任务的队列，扩展立即执行）
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS browser_manual_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )`).run(),
 ];
 
 export async function ensureSchema(db) {

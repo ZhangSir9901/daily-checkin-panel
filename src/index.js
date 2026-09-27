@@ -115,6 +115,8 @@ async function handleApi(req, env, url) {
       'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
     ).bind(acc.id, acc.site, acc.name, status || 'ok', message || '', detail || '', duration_ms || 0, Date.now()).run();
     await env.DB.prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 500)').run();
+    // 如果是手动任务队列中的，上报后删除（避免重复执行）
+    await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE account_id = ?').bind(acc.id).run().catch(() => {});
     return json({ ok: true });
   }
 
@@ -233,6 +235,52 @@ async function handleApi(req, env, url) {
       changed = true;
     }
     if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap));
+
+    // 手动任务队列：面板"执行"按钮为 browser 模式账号加入的即时任务
+    try {
+      const { results: manualJobs } = await env.DB.prepare(
+        'SELECT account_id FROM browser_manual_jobs ORDER BY created_at LIMIT 20'
+      ).all();
+      const manualIds = (manualJobs || []).map((j) => j.account_id);
+      if (manualIds.length > 0) {
+        // 查询这些账号的信息
+        const placeholders = manualIds.map(() => '?').join(',');
+        const { results: manualAccs } = await env.DB.prepare(
+          `SELECT id, site, name, meta, creds FROM accounts WHERE id IN (${placeholders}) AND enabled = 1`
+        ).bind(...manualIds).all();
+        for (const acc of manualAccs || []) {
+          // 避免重复（已在定时任务中）
+          if (jobs.some((j) => j.account_id === acc.id)) continue;
+          const site = getSite(acc.site);
+          if (!site) continue;
+          const bs = getBrowserScript(acc.site);
+          if (!bs || !bs.script) continue;
+          let meta = {};
+          try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+          const params = {};
+          let domain = bs.domain;
+          if (acc.site === 'nodeseek') {
+            const t = meta.toggles ? meta.toggles.random : undefined;
+            if (t != null) params.random = !!t;
+            else params.random = ((await getSetting(env.DB, 'nodeseek_mode')) || 'random') === 'random';
+          }
+          // misign/kanxue 等需要 creds 参数的站点，复用上面的逻辑（简化：只处理通用情况）
+          if (domain) {
+            jobs.push({
+              account_id: acc.id,
+              site: acc.site,
+              site_name: site.name,
+              domain,
+              script: bs.script,
+              params,
+              manual: true, // 标记为手动任务，扩展执行后需通知面板删除队列记录
+            });
+          }
+        }
+        // 注意：不立即删除，等扩展上报结果后再删（通过 /api/external/report 的 account_id 匹配）
+      }
+    } catch { /* 忽略，手动队列不影响主流程 */ }
+
     return json({ jobs });
   }
 
@@ -402,7 +450,10 @@ async function handleApi(req, env, url) {
         if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
       } catch { /* 忽略 */ }
       if (execMode === 'browser') {
-        return json({ ok: false, result: { status: 'fail', message: `${site?.name || acc.site} 为浏览器执行模式（使用您的网络），请确保浏览器扩展已安装并打开，它会自动执行。` } });
+        // 加入手动任务队列，扩展"立即执行"或下次轮询时执行
+        await env.DB.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)')
+          .bind(acc.id, Date.now()).run().catch(() => {});
+        return json({ ok: true, result: { status: 'ok', message: `${site?.name || acc.site} 已加入扩展待办。请点击浏览器扩展的「▶ 立即执行待办签到」，或等待扩展自动执行（每小时）。` } });
       }
       const r = await runAccount(env, acc);
       return json({ ok: r.status === 'ok', result: r });
