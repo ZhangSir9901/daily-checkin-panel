@@ -229,9 +229,9 @@
   /* 表格里该居中的列居中（数值/徽章/开关/按钮） */
   th.c, td.c { text-align:center; }
   td.c { white-space:nowrap; }
-  .site-cell { min-width:188px; }
+  .site-cell { min-width:188px; text-align:center; }
   /* nowrap：否则「徽章 + 切换 + 红标」会折行，红标孤零零掉到下面一行像杂物 */
-  .site-line { display:flex; align-items:center; gap:8px; flex-wrap:nowrap; margin-top:6px; }
+  .site-line { display:flex; align-items:center; justify-content:center; gap:8px; flex-wrap:nowrap; margin-top:6px; }
   /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
   td.msg { width:100%; min-width:240px; max-width:460px; }
   .msg-main { font-size:13px; line-height:1.6;
@@ -400,7 +400,7 @@
             <button class="sm" id="btn-add">添加账号</button>
           </div>
         </div>
-        <div style="overflow-x:auto"><table>
+        <div style="overflow-x:visible"><table>
           <thead><tr><th>站点</th><th class="c">签到时间</th><th class="c">状态</th><th>网站反馈</th><th class="c">上次运行</th><th class="c">启用</th><th class="c">操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
@@ -467,7 +467,7 @@
             <option value="200">200 条</option><option value="500">500 条</option>
           </select>
         </div>
-        <div style="overflow-x:auto"><table>
+        <div style="overflow-x:visible"><table>
           <thead><tr><th>时间</th><th>账号</th><th>结果</th><th>耗时</th><th>详情</th></tr></thead>
           <tbody id="logs-body"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
         </table></div>
@@ -617,7 +617,10 @@ function toast(msg, ms = 2200) {
 
 function fmtTime(ts) {
   if (!ts) return '-';
-  return new Date(ts).toLocaleString('zh-CN', { hour12: false });
+  const d = new Date(ts);
+  const date = d.toLocaleDateString('zh-CN');
+  const time = d.toLocaleTimeString('zh-CN', { hour12: false });
+  return `${date}<br><span style="color:var(--muted2)">${time}</span>`;
 }
 
 function esc(s) {
@@ -831,7 +834,7 @@ function renderTimePicker(container, initial, opts = {}) {
 
 // ---------- 签到时间设置 ----------
 const TZ_OPTS = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney'];
-const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'UTC': 'UTC 时间' };
+const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'Asia/Tokyo': '东京时间', 'Asia/Singapore': '新加坡时间', 'UTC': 'UTC 时间', 'Europe/London': '伦敦时间', 'Europe/Berlin': '柏林时间', 'America/New_York': '纽约时间', 'America/Chicago': '芝加哥时间', 'America/Denver': '丹佛时间', 'America/Los_Angeles': '洛杉矶时间', 'Australia/Sydney': '悉尼时间' };
 let GLOBAL_HOUR = '08'; // 全局签到时间（整点小时），账号独立时间为空时跟随它
 let SCHED_TZ = 'Asia/Shanghai'; // 面板设置的时区：状态列「今天」也按它算
 let schedPicker = null;
@@ -872,7 +875,7 @@ async function loadSchedule() {
     if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { noFollow: true, large: true });
     else schedPicker.set(displayTime);
     if (!$('sched-tz').options.length) {
-      $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option ${z === s.tz ? 'selected' : ''}>${z}</option>`).join('');
+      $('sched-tz').innerHTML = TZ_OPTS.map((z) => `<option value="${z}" ${z === s.tz ? 'selected' : ''}>${TZ_CN[z] || z}</option>`).join('');
     } else $('sched-tz').value = s.tz;
   } catch (e) { $('sched-line').textContent = '自动签到时间加载失败'; }
 }

@@ -165,6 +165,19 @@ export const wuaipojie = {
       Cookie: cookie,
     };
 
+    // 超时后的验证：如果签到请求超时/中继失败，可能是请求实际成功但响应没回来，
+    // 去任务页看一眼有没有「签到完毕」，有就按已签到处理，避免误报失败。
+    const verifySigned = async () => {
+      try {
+        const v = await fetchDualText('https://www.52pojie.cn/home.php?mod=task&do=apply&id=2', { headers: baseHeaders });
+        if (has(v, SIGNED_MARKS)) return true;
+        // 按钮文字「签到完毕」是已签到的铁证（见用户截图）
+        const t = clean(v);
+        if (/签到完毕/.test(t)) return true;
+      } catch { /* 验证失败则忽略 */ }
+      return false;
+    };
+
     // ① 预检首页：**只看 WAF**。
     // 注意：portal.php 是门户页，上面除了博客卡片，还有论坛的最新帖标题 + 「最新公告」块。
     // 实测该页的公告里就写着「开放注册期间论坛暂停签到」，而帖子标题里什么都可能有。
@@ -183,17 +196,27 @@ export const wuaipojie = {
     let final = null;
     // 中继模式下无法使用 redirect:'manual'（opaqueredirect 响应头不可读），改用 follow 让浏览器自动跟随
     const redirectMode = ctx && ctx.relayDb ? 'follow' : 'manual';
-    for (let i = 0; i < 4; i++) {
-      const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: redirectMode });
-      assertNoWaf({ utf8, gbk }, res.status);
-      if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get('location') || res.headers.get('Location');
-        if (!loc) throw new Error('签到失败：重定向无 Location');
-        url = /^https?:\/\//i.test(loc) ? loc : 'https://www.52pojie.cn/' + String(loc).replace(/^\/+/, '');
-        continue;
+    try {
+      for (let i = 0; i < 4; i++) {
+        const { res, utf8, gbk } = await fetchDualText(url, { headers: baseHeaders, redirect: redirectMode });
+        assertNoWaf({ utf8, gbk }, res.status);
+        if (res.status >= 300 && res.status < 400) {
+          const loc = res.headers.get('location') || res.headers.get('Location');
+          if (!loc) throw new Error('签到失败：重定向无 Location');
+          url = /^https?:\/\//i.test(loc) ? loc : 'https://www.52pojie.cn/' + String(loc).replace(/^\/+/, '');
+          continue;
+        }
+        final = { utf8, gbk, status: res.status };
+        break;
       }
-      final = { utf8, gbk, status: res.status };
-      break;
+    } catch (e) {
+      // 中继超时/网络错误：请求可能实际成功但响应没回来，验证一次再下结论
+      if (/超时|timeout|中继|abort|network/i.test(e.message || '')) {
+        if (await verifySigned()) {
+          return { ok: true, message: '今日已签到，无需重复（超时后验证确认：签到完毕）' };
+        }
+      }
+      throw e;
     }
     if (!final) throw new Error('签到失败：重定向次数过多');
 
