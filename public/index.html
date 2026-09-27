@@ -167,8 +167,9 @@
   /* 分段选择器（如随机/固定）：与徽章同字号、弧度、高度、宽度 */
   .seg { display:inline-flex; border-radius:20px; overflow:hidden; margin:0; width:100%; box-sizing:border-box;
          border:1px solid transparent; background:rgba(91,140,255,.16); }
-  .seg-opt { background:transparent; border:0; padding:4px 0; font-size:12px; font-weight:600; flex:1; text-align:center;
-             color:var(--muted); cursor:pointer; white-space:nowrap; box-shadow:none; border-radius:0; line-height:1.5; }
+  .seg-opt { background:transparent; border:0; padding:4px 0; font-size:12px; font-weight:600; flex:1;
+             display:inline-flex; align-items:center; justify-content:center;
+             color:var(--muted); cursor:pointer; white-space:nowrap; box-shadow:none; border-radius:0; }
   .seg-opt:hover { color:var(--text); transform:none; box-shadow:none; }
   .seg-opt.on { background:rgba(91,140,255,.25); color:var(--accent2); }
   .seg-opt + .seg-opt { border-left:1px solid rgba(91,140,255,.25); }
