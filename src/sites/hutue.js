@@ -193,10 +193,17 @@ export const hutue = {
     };
 
     // ---- ① 发现：抓首页，找悬浮窗用的 ajax 入口 / action / nonce ----
+    // 优化：如果已记住上次命中的 action，跳过首页抓取（省一次中继往返，首页 HTML 很大很慢），
+    // 直接用记住的 action 试；只有记住的 action 失效时才走完整发现流程。
     let ajaxUrl = base + '/wp-admin/admin-ajax.php';
     const seenActions = [];
     const seenRoutes = [];
     let nonce = '';
+    const remembered = ctx && ctx.meta && ctx.meta.hutue_action ? String(ctx.meta.hutue_action) : '';
+    const rememberedNonce = ctx && ctx.meta && ctx.meta.hutue_use_nonce;
+    // 只有记住的 action 且不需要 nonce 时才跳过发现（nonce 是每页刷新的，跳过就拿不到新的）
+    let skipDiscovery = !!remembered && !rememberedNonce;
+    if (!skipDiscovery) {
     try {
       const res = await fetch(base + '/', { headers });
       const html = await res.text();
@@ -239,28 +246,29 @@ export const hutue = {
       // 只有「明确结论」才中断；普通网络失败继续走兜底 action 尝试
       if (e && e.outcome) throw e;
     }
+    } // end if (!skipDiscovery)
 
     // ---- ② 组装尝试列表 ----
-    // 顺序：主题自己用的 action（最可信，两个站都是 xb-child 子主题）
-    //       → 上次命中的 → 本次页面发现的 → 其余兜底
-    // 为什么把主题 action 放最前：踩过的坑——如果某个别的插件 action 也返回 status=1，
-    // 一旦它先命中就会被记住（hutue_action），以后每次都走它，
-    // 网站反馈就变成那个插件的话（比如只给 1 点积分），跟本站的签到奖励对不上。
-    const remembered = ctx && ctx.meta && ctx.meta.hutue_action ? String(ctx.meta.hutue_action) : '';
+    // 顺序：上次命中的（最可信，已验证过）→ 主题自己用的 action → 本次页面发现的 → 其余兜底
     const ordered = [];
     const push = (a) => { if (a && !ordered.includes(a)) ordered.push(a); };
-    for (const a of SITE_ACTIONS) push(a);
     push(remembered);
+    for (const a of SITE_ACTIONS) push(a);
     for (const a of seenActions) push(a);
     for (const a of FALLBACK_ACTIONS) push(a);
 
     // 同一个 action 的「带 nonce」版本优先，但不做全局排序——
     // 全局按 nonce 排序会把首选 action 的无 nonce 版本挤到很后面。
+    // 跳过发现时（有记住的 action）：只用记住的 nonce 设置试一次，失败才走完整流程
     const attempts = [];
-    for (const action of ordered) {
-      if (nonce) attempts.push({ action, nonce });
-      attempts.push({ action, nonce: '' });
-      if (attempts.length >= MAX_ATTEMPTS) break;
+    if (skipDiscovery && remembered) {
+      attempts.push({ action: remembered, nonce: rememberedNonce ? nonce : '' });
+    } else {
+      for (const action of ordered) {
+        if (nonce) attempts.push({ action, nonce });
+        attempts.push({ action, nonce: '' });
+        if (attempts.length >= MAX_ATTEMPTS) break;
+      }
     }
 
     // ---- ③ 依次尝试：成功即返回；负面结论记录下来，全部试完再抛最有信息量的那个 ----

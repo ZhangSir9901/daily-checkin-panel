@@ -259,6 +259,24 @@ export const wuaipojie = {
     if (has(final, PAUSED_MARKS)) {
       throw new Error('论坛官方暂停签到：' + pickLine(final) + '。等恢复后再试。');
     }
+    // apply 没出明确结论时，试一次 do=draw 领奖励（Discuz 每日任务：apply 是接任务，draw 是领奖励完成签到）
+    try {
+      const draw = await fetchDualText('https://www.52pojie.cn/home.php?mod=task&do=draw&id=2', { headers: baseHeaders, redirect: redirectMode });
+      assertNoWaf(draw, draw.res.status);
+      if (has(draw, SUCCESS_MARKS)) {
+        const suffix = isRelay ? '' : await creditSuffix(baseHeaders);
+        return { ok: true, message: '签到成功：' + pickLine(draw) + suffix, detail: '网站返回：' + clean(draw).slice(0, 300) };
+      }
+      if (has(draw, SIGNED_MARKS)) {
+        const suffix = isRelay ? '' : await creditSuffix(baseHeaders);
+        return { ok: true, message: '今日已签到，无需重复：' + pickLine(draw) + suffix, detail: '网站返回：' + clean(draw).slice(0, 300) };
+      }
+      // draw 页也没结论就用它的内容报，未识别时信息更准
+      final = { utf8: draw.utf8, gbk: draw.gbk, status: draw.res.status };
+    } catch (e) {
+      // draw 失败不致命，继续用 apply 的结果报错
+      if (/WAF|安全验证|403|UrlACL/.test(e.message || '')) throw e;
+    }
     throw new Error(
       `签到失败：未识别到成功标识（HTTP ${final.status}）${pauseHint}，` +
         finalText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 200)
