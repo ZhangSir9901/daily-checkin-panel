@@ -277,6 +277,14 @@ chrome.runtime.onStartup.addListener(() => {
   chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
 });
 
+// Service Worker 每次启动时确保定时器存在（覆盖"重新加载"场景：onInstalled/onStartup 都不触发）
+chrome.alarms.get(ALARM_NAME, (a) => {
+  if (!a) chrome.alarms.create(ALARM_NAME, { periodInMinutes: CHECK_INTERVAL_MIN });
+});
+chrome.alarms.get(RELAY_ALARM, (a) => {
+  if (!a) chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
+});
+
 // popup 手动触发
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === 'runJobsNow') {
