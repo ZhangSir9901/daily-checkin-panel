@@ -451,23 +451,23 @@
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
-      <div class="card">
-      <div class="row" style="align-items:flex-start; gap:24px">
+      <div class="card" style="padding:18px 20px">
+      <div class="row" style="align-items:flex-start; gap:18px">
       <div style="flex:1; min-width:0">
-        <h2>签到时间</h2>
-        <div class="sched-bar">
-          <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
-          <div class="sched-field"><label>时区</label><div id="sched-tz"></div></div>
-          <div class="sched-field"><label>&nbsp;</label><button id="btn-save-sched">保存</button></div>
+        <h2 style="margin-bottom:10px">签到时间</h2>
+        <div class="sched-bar" style="gap:12px">
+          <div class="sched-field" style="gap:5px"><label>每天执行时间</label><div id="sched-tp"></div></div>
+          <div class="sched-field" style="gap:5px"><label>时区</label><div id="sched-tz"></div></div>
+          <div class="sched-field" style="gap:5px"><label>&nbsp;</label><button id="btn-save-sched">保存</button></div>
         </div>
       </div>
       <div style="width:1px; align-self:stretch; background:var(--line); flex:none"></div>
       <div style="flex:1; min-width:0">
-        <h2>添加 / 更新账号</h2>
-        <p class="muted">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
+        <h2 style="margin-bottom:8px">添加 / 更新账号</h2>
+        <p class="muted" style="font-size:12.5px">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
           面板会自动认出站点、自动填好 Cookie 和 User-Agent（<b>UA 不用自己找</b>），保存后立刻可用。</p>
-        <textarea id="ck-paste" rows="3" style="margin-top:12px" placeholder="在这里粘贴扩展复制的内容 —— 粘上就会自动识别并保存"></textarea>
-        <div class="row" style="margin:12px 0 0">
+        <textarea id="ck-paste" rows="2" style="margin-top:8px" placeholder="在这里粘贴扩展复制的内容 —— 粘上就会自动识别并保存"></textarea>
+        <div class="row" style="margin:8px 0 0; gap:8px">
           <button id="btn-parse-paste" type="button">✅ 粘贴并保存</button>
           <button class="ghost sm" id="btn-ck-pick" type="button">手动选站点保存</button>
         </div>
