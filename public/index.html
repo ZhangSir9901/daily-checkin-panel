@@ -214,6 +214,8 @@
              transition:border-color .15s, box-shadow .15s; }
   .tz-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
   .tz-chip .tz-arrow { font-size:10px; color:var(--muted); }
+  .tz-chip .tz-dot { width:6px; height:6px; border-radius:50%; background:var(--accent2); flex:none;
+                    box-shadow:0 0 0 3px var(--accent-dim); }
   /* 时区弹窗：和时间选择器弹窗同风格同动画 */
   .tz-pop { position:fixed; z-index:70; width:220px; padding:10px; border-radius:16px;
             background:#141c33;
@@ -227,9 +229,10 @@
   .tz-opt.sel { background:var(--accent); color:#fff;
                 font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
   .sched-bar button { margin:0; }
-  /* 保存按钮：和时间/时区胶囊同形状（药丸），文字居中 */
+  /* 保存按钮：和时间/时区胶囊同尺寸同圆角，文字居中 */
   #btn-save-sched { border-radius:999px; padding:5px 28px; font-size:13px; font-weight:600;
-                    display:inline-flex; align-items:center; justify-content:center; }
+                    display:inline-flex; align-items:center; justify-content:center;
+                    border:1px solid transparent; box-shadow:0 4px 14px rgba(91,140,255,.3); }
   .sched-tip { align-self:center; margin-left:auto; font-size:11.5px; color:var(--muted2); }
   @media (max-width:720px) { .sched-tip { display:none; } }
   /* 账号行里的小提示（站点推荐 / 网站回馈的操作建议） */
@@ -895,7 +898,7 @@ function renderTzPicker(container, initial) {
   btn.type = 'button';
   btn.className = 'tz-chip';
   const label = () => `${TZ_CN[_tzValue] || _tzValue}`;
-  const paint = () => { btn.innerHTML = `<span>${esc(label())}</span><span class="tz-arrow">▼</span>`; };
+  const paint = () => { btn.innerHTML = `<span class="tz-dot"></span><span>${esc(label())}</span><span class="tz-arrow">▼</span>`; };
   paint();
   btn.onclick = (e) => {
     e.stopPropagation();
