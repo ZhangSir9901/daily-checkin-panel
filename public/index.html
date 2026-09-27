@@ -220,8 +220,9 @@
             border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
   .tz-pop.hidden { display:none; }
   .tz-opt { display:block; width:100%; text-align:center; padding:9px 12px; border:0; border-radius:10px;
-            background:transparent; color:var(--text); font-size:13px; font-weight:500; cursor:pointer; }
-  .tz-opt:hover { background:rgba(91,140,255,.14); color:var(--text); transform:none; box-shadow:none; }
+            background:#1a2340; color:var(--text); font-size:13px; font-weight:500; cursor:pointer; box-shadow:none;
+            transition:background .12s, color .12s; }
+  .tz-opt:hover { background:#222c4e; color:var(--text); transform:none; box-shadow:none; }
   .tz-opt.sel:hover { background:var(--accent); color:#fff; }
   .tz-opt.sel { background:var(--accent); color:#fff;
                 font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
