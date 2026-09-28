@@ -160,4 +160,30 @@ t('执行路线自动选路：徽章显示「实际路线」，换过路要写�
   assert.match(html, /hutue: '糊涂鳄的签到接口从 CF 网络直连正常/, '糊涂鳄要改成「直连正常」的说法');
 });
 
+t('反馈里不摆英文代码，账号行模板里也不能夹注释（会被当成页面内容）', () => {
+  // 用户看到的：日志里那行「网站回馈：网站返回：{"success":false,"message":"…"}」——
+  // 主文案已经写着那句话了，再摆一串 JSON 只是占地方 + 看着像报错。
+  assert.match(html, /function rawFeedbackLine\(raw, shownMsg\)/, '要有 rawFeedbackLine');
+  assert.match(html, /const rawClean = rawFeedbackLine\(a\.last_detail, msgShow\)/, '账号行要用它');
+  assert.match(html, /const detailLine = rawFeedbackLine\(r\.detail, r\.message\)/, '运行日志也要用它');
+  assert.match(html, /网站回馈：\$\{esc\(detailLine\)\}/, '日志里的网站回馈要用清理后的文本');
+  assert.doesNotMatch(html, /网站回馈：\$\{esc\(r\.detail\)\}/, '不能把整串 JSON 直接摆出来');
+  assert.match(html, /const rawTip = !rawShow && rawText \?/, '不摆出来时也要留一个悬浮看原文的入口');
+
+  // 曾经踩过：注释写在 `return \`` 的下一行 → 成了模板内容，每行账号都把它渲染成文字
+  const at = html.indexOf('tb.innerHTML = accounts.map((a) => {');
+  assert.ok(at > 0, '找不到账号行模板');
+  const seg = html.slice(at, at + 9000);
+  const ret = seg.indexOf('return `');
+  assert.ok(ret > 0, '账号行模板里找不到 return `');
+  const firstLine = (seg.slice(ret + 'return `'.length).split('\n')[1] || '').trim();
+  assert.match(firstLine, /^<tr>/, '账号行模板第一行必须是 <tr>，实际：' + firstLine.slice(0, 40));
+
+  // 这个坑单独立了一条自检（语法检查发现不了：它本来就是合法字符串）
+  const checkTool = readFileSync(join(root, 'tools', 'check-template-comments.mjs'), 'utf8');
+  assert.match(checkTool, /模板字符串里出现了/, '自检工具要能报出泄漏');
+  const verifySrc = readFileSync(join(root, 'tools', 'verify.mjs'), 'utf8');
+  assert.match(verifySrc, /check-template-comments\.mjs/, '自检要接进 verify.mjs');
+});
+
 console.log(`\n${n} 通过`);

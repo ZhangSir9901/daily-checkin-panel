@@ -36,6 +36,9 @@ run([join('tools', 'check-html.mjs')], 'index.html');
 step('DOM 引用检查（拦住「$() 返回 null → 整段脚本断掉」这类崩溃）');
 run([join('tools', 'check-dom-refs.mjs')], 'index.html');
 
+step('内联 JS 模板字符串：不许把 // 注释当成页面内容渲染出去');
+run([join('tools', 'check-template-comments.mjs')], 'index.html');
+
 step('index.html 内联 JS 语法');
 {
   const html = readFileSync(join(root, 'public', 'index.html'), 'utf8');

@@ -2131,6 +2131,25 @@ const BOILERPLATE_MSG = [
   '今日已签到', '签到成功', '签到失败', '请求成功', '领取成功', '签到完毕',
 ];
 
+// 「网站回馈」那一行该显示什么？
+//
+// 用户看到的原话：*「反馈中的英文代码要去掉」* —— 比如日志里那行
+//   网站回馈：网站返回：{"success":false,"message":"今天已完成签到，请勿重复操作"}
+// 主文案已经写着「今天已完成签到，请勿重复操作」了，再把整串 JSON 摆一遍只有两种效果：
+// 占地方、看着像报错（用户甚至会以为签到失败了）。所以：
+//   ① 能从原文里抽出网站自己那句话的：
+//        · 和主文案一样 → 不重复占位（鼠标移上去仍能看完整原文）；
+//        · 和主文案不一样 → 就显示那句话本身（不摆花括号）；
+//   ② 抽不出话的（只有技术字段的纯 JSON）→ 不摆出来；
+//   ③ 不是 JSON 的（HTTP 403、WAF 指纹、网站给的细节）→ 照旧显示，那是排障唯一的线索。
+function rawFeedbackLine(raw, shownMsg) {
+  const t = decodeEscapes(String(raw == null ? '' : raw)).replace(/^网站返回：/, '').trim();
+  if (!t) return '';
+  const own = siteOwnMessage(t);
+  if (own) return own === String(shownMsg == null ? '' : shownMsg).trim() ? '' : own;
+  return /^[[{]/.test(t) ? '' : t;
+}
+
 // 从网站原文里抠出网站自己的那句话（JSON 的 message / msg / errmsg / status_msg…）
 function siteOwnMessage(raw) {
   const m = String(raw || '').match(/"(?:message|msg|errmsg|info|status_msg)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
@@ -2261,7 +2280,10 @@ async function loadAccounts() {
       const own = siteOwnMessage(rawText);
       if (own && own !== msg) { msgShow = own; bySite = true; }
     }
-    const rawShow = rawText && rawText !== msgShow ? rawText.slice(0, 220) : '';
+    // 网站回馈那一行（英文 JSON 不摆出来；真需要看原文时，鼠标移到主文案上有气泡）
+    const rawClean = rawFeedbackLine(a.last_detail, msgShow);
+    const rawShow = rawClean && rawClean !== msgShow ? rawClean.slice(0, 220) : '';
+    const rawTip = !rawShow && rawText ? ` data-tip="网站原始返回：${esc(rawText.slice(0, 600))}"` : '';
     // 换路记录只在「真的换过一条路线」时展示（没有换路时它只是一句「路线：CF 直连」，
     // 那是站点徽章已经在说的事，不必再占一行）。
     const routeShow = /自动改走|都没成功/.test(routeNote) ? routeNote : '';
@@ -2273,14 +2295,17 @@ async function loadAccounts() {
     // 页面上显示时去掉「建议：/说明：」前缀（前面的 💡 已经说明它是提示了），
     // 顺手去掉 markdown 强调符 —— 完整原文仍然留在悬浮气泡里。
     const hintShow = String(hintText).replace(/^(?:建议|说明)：/, '').replace(/\*\*/g, '').trim();
-    return `
     // data-label 是给窄屏用的：小屏上表格会变成一张张卡片（每格前面带列名），
     // 手机上不用再左右拖表了。
+    // 【踩坑】这两行注释以前写在 `return \`` 的下一行 —— 那就成了模板字符串的**内容**，
+    // 每一行账号都会把这段注释渲染成文字（表格里还会被浏览器提到表格上方），
+    // 排版被撑得乱七八糟。注释必须在 return 之前。
+    return `
     <tr>
       <td class="site-cell" data-label="站点" data-exec-cell="${a.id}">${execCell}</td>
       <td class="c" data-label="全局签到"><div class="sched-cell"><div data-tp-acc="${a.id}" title="点一下给这个账号单独设时间；不点就一直跟全局（当前全局签到 ${GLOBAL_HOUR}）"></div></div></td>
       <td class="c" data-label="状态">${statusBadge}</td>
-      <td class="msg" data-label="网站反馈"><div class="msg-main">${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${routeShow ? `<div class="msg-route" data-tip="${esc(routeShow)}">${esc(routeShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-tip" data-tip="${esc(hintText)}">${esc(hintShow)}</span></div>` : ''}</td>
+      <td class="msg" data-label="网站反馈"><div class="msg-main"${rawTip}>${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${routeShow ? `<div class="msg-route" data-tip="${esc(routeShow)}">${esc(routeShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-tip" data-tip="${esc(hintText)}">${esc(hintShow)}</span></div>` : ''}</td>
       <td class="muted c mono" data-label="上次运行">${fmtTime(a.last_run_at)}</td>
 
       <td class="c" data-label="启用"><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
@@ -3113,14 +3138,20 @@ async function loadLogs() {
   const { runs } = await api('/api/runs?' + q.toString());
   const tb = $('logs-body');
   if (!runs.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">暂无符合条件的记录。</td></tr>'; return; }
-  tb.innerHTML = runs.map((r) => `
+  tb.innerHTML = runs.map((r) => {
+    // 网站回馈那一行：英文 JSON 不摆出来（主文案已经是网站那句话时它就是重复的），
+    // 真需要看原文时鼠标移上去有气泡。详见 rawFeedbackLine 的说明。
+    const detailLine = rawFeedbackLine(r.detail, r.message);
+    const rawTip = !detailLine && r.detail ? ` data-tip="网站原始返回：${esc(String(r.detail).slice(0, 600))}"` : '';
+    return `
     <tr>
       <td class="muted" style="white-space:nowrap">${fmtTime(r.created_at)}</td>
       <td><b>${esc(r.name)}</b> <span class="badge site">${esc(siteName(r.site))}</span></td>
       <td>${r.status === 'ok' ? '<span class="badge ok">成功</span>' : r.status === 'skip' ? '<span class="badge skip">跳过</span>' : '<span class="badge fail">失败</span>'}</td>
       <td class="muted" style="white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
-      <td class="msg">${esc(r.message || '')}${r.detail ? `<br><span class="muted">网站回馈：${esc(r.detail)}</span>` : ''}</td>
-    </tr>`).join('');
+      <td class="msg"${rawTip}>${esc(r.message || '')}${detailLine ? `<br><span class="muted">网站回馈：${esc(detailLine)}</span>` : ''}</td>
+    </tr>`;
+  }).join('');
 }
 $('btn-refresh-logs').onclick = loadLogs;
 $('btn-clear-logs').onclick = async () => {
