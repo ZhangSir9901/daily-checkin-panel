@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { v2ex } from '../src/sites/v2ex.js';
 import { misign } from '../src/sites/misign.js';
 import { kanxue } from '../src/sites/kanxue.js';
-import { wuaipojie } from '../src/sites/wuaipojie.js';
+import { wuaipojie, buttonState } from '../src/sites/wuaipojie.js';
 import { nodeseek } from '../src/sites/nodeseek.js';
 
 let n = 0;
@@ -149,6 +149,25 @@ await t('52pojie：已签到（签到完毕）算成功，不再报未识别', a
   assert.match(r.message, /已签到|签到完毕/);
 });
 
+// 线上真实现象：本地网络中继下，签到接口被网宿 WAF 吊死到超时（用户看到
+// 「中继执行超时（45秒），已放弃该请求」），而那一次其实已经签到成功。
+// 修法：先用任务页判定「今天是否已领过」，已签到就直接返回，连签到接口都不打。
+await t('52pojie：任务页显示「签到完毕」→ 直接判已签到，不再打签到接口', async () => {
+  const urls = [];
+  const orig = globalThis.fetch;
+  mockFetch([
+    { match: (u) => u.includes('mod=task') && !u.includes('do=apply'), body: '<html>每日签到 <span>签到完毕</span></html>' },
+    { match: () => true, body: '<html>不该走到这里</html>' },
+  ]);
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (url, init) => { urls.push(String(url)); return inner(url, init); };
+  const r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }, { relayDb: {} });
+  globalThis.fetch = orig;
+  assert.equal(r.ok, true);
+  assert.match(r.message, /已签到|签到完毕/);
+  assert.ok(!urls.some((u) => u.includes('do=apply')), '已签到就不该再去打卡住的签到接口：' + JSON.stringify(urls));
+});
+
 // 线上真实现象（已确认根因）：门户页 portal.php 的「最新公告」块里常年挂着
 // 「开放注册期间论坛暂停签到」。早期实现拿「暂停签到」扫整个首页，
 // 把一个完全正常的账号报成「论坛官方暂停签到，等恢复后再试」，死活签不上。
@@ -187,6 +206,127 @@ await t('52pojie：签到页确实说暂停 → 给出暂停结论', async () =>
   ]);
   const err = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }).catch((e) => e);
   assert.match(err.message, /暂停签到/);
+});
+
+// ---------- 52pojie 的两态识别（用户截图确认的站点按钮语义） ----------
+// 未签到 → 顶部按钮「📋 打卡签到」（橙色、可点）；已签到 → 「✅ 签到完毕」（绿色、点了没反应）。
+// 注意：<a> 的 title 属性里常年写着「打卡签到」，所以只能读按钮元素自己的文字。
+await t('52pojie：buttonState 三态（文字版 / 图片版 / 无按钮）', async () => {
+  const signedText = '<html><a class="click-qiandao zzhuti_qd_2" title="打卡签到"><i class="icon-Sign2"></i><br>签到完毕</a></html>';
+  const unsignedText = '<html><a class="click-qiandao zzhuti_qd_1" title="打卡签到"><i class="icon-Sign"></i><br>打卡签到</a></html>';
+  // 52pojie 实际就是这样（用户 DevTools 截图）：状态被画在 qds.png 里，文本节点是空的，
+  // 只能靠「那个「去签到」链接还在不在」来判断
+  const unsignedImg = '<html><body><p><a href="home.php?mod=task&do=apply&id=2&referer=%2Fhome.php%3Fmod%3Dspacecp">'
+    + '<img src="https://static.52pojie.cn/static/image/common/qds.png" class="qq_bind" align="absmiddle" alt></a>'
+    + '<span class="pipe">|</span></p></body></html>';
+  const signedImg = '<html><body><p><span class="qq_bind_done"><img src="https://static.52pojie.cn/static/image/common/qds.png"></span>签到完毕</p></body></html>';
+  const unknown = '<html>普通页面，没有那个按钮</html>';
+  assert.equal(buttonState(signedText), 'signed');
+  assert.equal(buttonState(unsignedText), 'unsigned');
+  assert.equal(buttonState(unsignedImg), 'unsigned', '图片版状态：链接还在就是未签到');
+  assert.equal(buttonState(signedImg), 'signed');
+  assert.equal(buttonState(unknown), 'unknown');
+});
+
+// 已签到（服务器渲染）→ 顶栏那个 apply 链接已经没了，任务行写着「已完成」
+await t('52pojie：任务页显示已签到 → 直接判已签到，不打签到接口', async () => {
+  const page = '<html><span>签到完毕</span>'
+    + '<table><tr id="task_2"><td>每日签到</td><td>已完成</td></tr></table></html>';
+  const urls = [];
+  const te0 = new TextEncoder();
+  const mkRes = (body) => ({ status: 200, url: 'https://www.52pojie.cn/x', headers: { get: () => null }, text: async () => body, arrayBuffer: async () => te0.encode(body).buffer });
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => { urls.push(String(url)); return mkRes(page); };
+  let r = null;
+  try { r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }, { relayDb: {} }); } finally { globalThis.fetch = origFetch; }
+  assert.ok(r && r.ok, '应判已签到：' + JSON.stringify(r));
+  assert.match(r.message, /已签到/);
+  assert.ok(!urls.some((u) => u.includes('do=apply')), '已签到就不该再打签到接口：' + JSON.stringify(urls));
+});
+
+// 反过来：顶栏还挂着 qds.png 那个「去签到」链接（图片版未签到）→ 去签，不能提前判成功
+await t('52pojie：顶栏还挂着「去签到」链接 → 不判已签到，去执行签到', async () => {
+  const te0 = new TextEncoder();
+  const mkRes = (body) => ({ status: 200, url: 'https://www.52pojie.cn/x', headers: { get: () => null }, text: async () => body, arrayBuffer: async () => te0.encode(body).buffer });
+  const UNSIGNED = '<html><p><a href="home.php?mod=task&do=apply&id=2"><img src="https://static.52pojie.cn/static/image/common/qds.png"></a></p>'
+    + '<table><tr id="task_2"><td>每日签到</td><td>立即申请</td></tr></table></html>';
+  const SUCCESS = '<html><script>showmessage(\'恭喜您，任务已完成\', \'home.php?mod=task\');</script></html>';
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => mkRes(String(url).includes('do=apply') ? SUCCESS : UNSIGNED);
+  let r = null;
+  try { r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }, { relayDb: {} }); } finally { globalThis.fetch = origFetch; }
+  assert.ok(r && r.ok, '应真的去签到：' + JSON.stringify(r));
+  assert.match(r.message, /签到成功|任务已完成/);
+});
+
+// 线上真实现象：本地网络中继下签到接口被吊死到超时（用户看到「中继执行超时（45秒）」）。
+// 修法之后：超时不再拍脑袋报失败——先看站点按钮，还是「打卡签到」就是明确的未签到，
+// 直说原因 + 下一步怎么操作（以前只会报一句「未识别到成功标识」）。
+await t('52pojie：中继超时 + 网站按钮仍是「打卡签到」→ 明确报未签到并给操作建议', async () => {
+  const te0 = new TextEncoder();
+  const mkRes = (body) => ({
+    status: 200,
+    url: 'https://www.52pojie.cn/x',
+    headers: { get: () => null },
+    text: async () => body,
+    arrayBuffer: async () => te0.encode(body).buffer,
+  });
+  const UNSIGNED_PAGE = '<html><a class="click-qiandao zzhuti_qd_1"><br>打卡签到</a> 每日签到</html>';
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('mod=task') && !u.includes('do=apply')) return mkRes(UNSIGNED_PAGE);
+    throw new Error('中继执行超时（45秒），已放弃该请求');
+  };
+  const err = await (async () => { try { await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }, { relayDb: {} }); } catch (e) { return e; } finally { globalThis.fetch = origFetch; } return null; })();
+  assert.ok(err instanceof Error, '不应报成功');
+  assert.match(err.message, /打卡签到/);
+  assert.match(err.message, /没有生效/);
+  assert.equal(err.outcome, 'unsigned');
+});
+
+// 反向：超时前其实已经签上了（按钮已经是「签到完毕」）→ 必须判成功，不能报失败
+await t('52pojie：中继超时但按钮已是「签到完毕」→ 判已签到', async () => {
+  const te0 = new TextEncoder();
+  const mkRes = (body) => ({ status: 200, url: 'https://www.52pojie.cn/x', headers: { get: () => null }, text: async () => body, arrayBuffer: async () => te0.encode(body).buffer });
+  const SIGNED_PAGE = '<html><a class="click-qiandao zzhuti_qd_2" title="打卡签到"><br>签到完毕</a></html>';
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.includes('mod=task') && !u.includes('do=apply')) return mkRes(SIGNED_PAGE);
+    throw new Error('中继执行超时（45秒），已放弃该请求');
+  };
+  let r = null;
+  try { r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }, { relayDb: {} }); } finally { globalThis.fetch = origFetch; }
+  assert.ok(r, '应返回结果而不是抛错');
+  assert.equal(r.ok, true);
+  assert.match(r.message, /已签到/);
+});
+
+// 浏览器/导航模式（52pojie 的默认执行方式）也要认两态：
+// 扩展把标签页导航到签到地址后读页面，不能把「打卡签到」当成签到成功。
+await t('52pojie：浏览器模式巡检 — 按钮两态各自的结论', async () => {
+  const fn = new Function('return (' + wuaipojie.browserScript + ')')();
+  const mkDoc = (btnText) => ({
+    documentElement: { innerHTML: '<a class="click-qiandao"><br>' + (btnText || '') + '</a>' },
+    body: { innerText: btnText || '' },
+    title: '每日签到',
+    querySelector: () => (btnText === null ? null : { innerText: btnText, textContent: btnText }),
+  });
+  const origDoc = globalThis.document;
+  try {
+    globalThis.document = mkDoc('签到完毕');
+    const signed = await fn({});
+    assert.equal(signed.ok, true, JSON.stringify(signed));
+    assert.match(signed.message, /已签到/);
+
+    globalThis.document = mkDoc('打卡签到');
+    const unsigned = await fn({});
+    assert.equal(unsigned.ok, false, '「打卡签到」是未签到，不能算成功：' + JSON.stringify(unsigned));
+    assert.match(unsigned.message, /打卡签到/);
+  } finally {
+    globalThis.document = origDoc;
+  }
 });
 
 await t('52pojie：WAF 拦截提示', async () => {
@@ -312,6 +452,28 @@ await t('nodeseek：今日已签到算成功并带回馈', async () => {
   assert.match(r.message, /今日已签到/);
 });
 
+// 线上真实响应（面板「网站反馈」列展示的就是这句）：
+// {"success":false,"message":"今天已完成签到，请勿重复操作"}
+// 以前这里被归纳成我们自己的「今日已签到，不能重复签到」，用户看不到网站怎么说。
+await t('nodeseek：已签到的反馈用网站原话，不再换成我们的套话', async () => {
+  const body = JSON.stringify({ success: false, message: '今天已完成签到，请勿重复操作' });
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), body }]);
+  const r = await nodeseek.run({ cookie: 'a=1' }, {});
+  assert.equal(r.ok, true);
+  assert.equal(r.message, '今天已完成签到，请勿重复操作');
+  assert.doesNotMatch(r.message, /不能重复签到/);
+});
+
+// 线上真实成功响应：{"success":true,"message":"今天的签到收益是2个鸡腿","gain":2,"current":1811}
+await t('nodeseek：成功反馈＝网站原话 + 响应里的收益数字', async () => {
+  const body = JSON.stringify({ success: true, message: '今天的签到收益是2个鸡腿', gain: 2, current: 1811 });
+  mockFetch([{ match: (u) => u.includes('/api/attendance'), body }]);
+  const r = await nodeseek.run({ cookie: 'a=1' }, {});
+  assert.equal(r.ok, true);
+  assert.match(r.message, /^今天的签到收益是2个鸡腿/);
+  assert.match(r.message, /本次 \+2，累计 1811/);
+});
+
 await t('nodeseek：失败时错误带 detail', async () => {
   const body = JSON.stringify({ success: false, message: '参数错误' });
   mockFetch([{ match: (u) => u.includes('/api/attendance'), body }]);
@@ -358,6 +520,39 @@ await t('52pojie：GBK 页面按 GBK 解码，网站回馈不乱码', async () =
   assert.equal(r.ok, true);
   assert.match(r.message, /恭喜签到成功/, '实际：' + r.message);
   assert.ok(!/ï¿½|\uFFFD/.test(r.message), '不应出现替换字符');
+});
+
+// 52pojie 浏览器任务：扩展要先去「任务列表页」（普通页面），自己找那个「去签到」入口再触发。
+// 为什么要这样（来自社区脚本的校准，2026-09）：
+//   · 站点把当天状态画在 <a href="home.php?mod=task&do=apply&id=2"><img src="…/qds.png"></a> 里，
+//     文本节点是空的 —— 链接还在 = 今天还没签（脚本界通行判法）；
+//   · 任务 id / 地址由论坛后台配，硬编码 id=2 换站就不灵，所以以页面上的链接为准。
+await t('52pojie：browserJob 给扩展的是任务列表页 + 签到地址，不带过期硬编码', async () => {
+  const job = wuaipojie.browserJob();
+  assert.equal(job.domain, 'www.52pojie.cn');
+  assert.match(job.navigate_url, /home\.php\?mod=task$/, '先落到任务列表页，扩展自己找入口');
+  assert.match(job.sign_url, /do=apply&id=\d+/, '兜底的签到地址');
+});
+
+// 站点改版把任务 id 换掉时，面板不能只会打 id=2：要能从任务页上读出真实链接
+await t('52pojie：任务页上的签到链接（id 变了）优先于硬编码 id', async () => {
+  const te0 = new TextEncoder();
+  const mkRes = (body) => ({ status: 200, url: 'https://www.52pojie.cn/x', headers: { get: () => null }, text: async () => body, arrayBuffer: async () => te0.encode(body).buffer });
+  const TASKLIST = '<html><p><a href="home.php?mod=task&do=apply&id=77&amp;referer=%2Fportal.php">'
+    + '<img src="https://static.52pojie.cn/static/image/common/qds.png"></a></p>'
+    + '<table><tr><td>每日签到</td><td>立即申请</td></tr></table></html>';
+  const urls = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url); urls.push(u);
+    if (u.includes('do=apply')) return mkRes('<html><script>showmessage(\'恭喜您，任务已完成\');</script></html>');
+    return mkRes(TASKLIST);
+  };
+  let r = null;
+  try { r = await wuaipojie.run({ cookie: 'c=x', user_agent: 'UA' }); } finally { globalThis.fetch = origFetch; }
+  assert.ok(r && r.ok, JSON.stringify(r));
+  assert.ok(urls.some((u) => u.includes('id=77')), '应该照页面上的链接签：' + JSON.stringify(urls));
+  assert.ok(!urls.some((u) => /do=apply&id=2(?!\d)/.test(u)), '不该打过期硬编码的 id=2');
 });
 
 console.log(`\n${n} 组通过`);

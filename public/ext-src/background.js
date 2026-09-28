@@ -5,7 +5,7 @@
 const DEFAULT_PANEL_URL = '__PANEL_URL__';
 
 const ALARM_NAME = 'checkin-jobs';
-const CHECK_INTERVAL_MIN = 5; // 每 5 分钟领一次待办签到任务（面板点“执行”后无需等一小时）
+const CHECK_INTERVAL_MIN = 1; // 每分钟领一次「浏览器导航签到」任务（面板点「浏览器签到」后很快就会被领走）
 const RELAY_ALARM = 'relay-poll';
 // 注意：Chrome 会把 alarms 的周期压到最小 0.5 分钟，靠短轮询做不到「秒级响应」。
 // 所以中继改成「长轮询」：请求挂起最多 20 秒，一有任务 Worker 立刻返回；
@@ -15,8 +15,17 @@ const RELAY_LONGPOLL_MS = 15000; // 单次长轮询挂起时长（Worker 端上�
 const RELAY_GAP_MS = 200; // 两轮长轮询之间的间隔
 const RELAY_BURST_ROUNDS = 24; // 单次突发最多跑几轮长轮询（防止无限循环/异常时死循环）
 const RELAY_BURST_IDLE = 6; // 连续几轮没接到任务就结束本次突发（6×15s≈90s 空转覆盖）
-const RELAY_JOB_TIMEOUT_MS = 60000; // 单个中继任务硬超时，超时也要回传，避免任务永久卡在 pending
-const RELAY_FETCH_TIMEOUT_MS = 30000; // 页面内单次 fetch 的超时（52pojie 这类慢站需要更久）
+const RELAY_FETCH_TIMEOUT_MS = 30000; // 页面内单次 fetch 的超时（52pojie / 糊涂鳄这类慢站需要更久）
+// 第一次尝试用较短超时：普通站点几百毫秒就回来了，只有「后台标签里反爬挑战跑不动」的站点会超时。
+// 超时后把标签激活到前台再试一次（见 executeRelayJob）。
+const RELAY_FIRST_TRY_MS = 12000;
+const RELAY_ACTIVATE_WAIT_MS = 1200; // 激活前台后等页面里的挑战/定时脚本醒过来
+// 任务级硬超时：超时也要回传，避免任务永久卡在 pending。
+// 【必须能装下「首次试探 + 激活前台 + 前台重试」】—— 否则第二次明明快要拿到响应了，
+// 也会被硬超时掐掉。线上就是这么坏的：45 秒的硬超时把 12 + 1.2 + 30 的重试链条掐死，
+// 面板上永远只看到「中继执行超时」，而那个 POST 其实已经发出去了（站点可能已签到）。
+// 所以下面的值用公式算，改上面任何一个常量都不会再踩这个坑。
+const RELAY_JOB_TIMEOUT_MS = RELAY_FIRST_TRY_MS + RELAY_ACTIVATE_WAIT_MS + RELAY_FETCH_TIMEOUT_MS + 15000; // = 58.2s
 
 // 获取面板地址和 API Key
 async function getConfig() {
@@ -55,7 +64,16 @@ async function reportResult(panelUrl, apiKey, accountId, status, message, durati
 }
 
 // 原生页面巡检：不依赖 eval / new Function（MV3 已禁止），用于读取网站真实反馈。
-// 返回 { ok, message } 或 null。
+// 返回 { ok, message, unsigned?, href? } 或 null。
+//
+// 判定顺序很关键（都是踩过的坑）：
+//   ① 验证码/WAF 优先 —— 这些页面里也夹带「签到」字样
+//   ② 再有「已验证签到」的正信号（Discuz 任务：「签到完毕 / 您已完成过此任务 / 恭喜…获得 N 吾爱币」）
+//   ③ 才看「去签到链接」还在不在：
+//      论坛（尤其吾爱破解）把当天状态画在图片里（qds.png），文本节点是空的，
+//      但**链接还在 = 服务端认为今天还没签**；签完之后链接就没了。
+//      注意：必须**限定在链接自己所在的那一行**找「任务/签到」字样 —— 任务列表页里
+//      还有其他任务（验证邮箱等）也带 apply 链接，拿整页搜会搞错。
 async function inspectPage(tabId) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
@@ -75,22 +93,146 @@ async function inspectPage(tabId) {
       if (WAF.some((m) => all.includes(m))) {
         return { ok: false, message: '遇到网站安全防护（WAF），请在浏览器完成验证后重试｜页面：' + title };
       }
-      // 2) 签到成功
-      if (/任务已完成|签到成功|打卡成功|签到完毕|签到完成|已连续签到|领取成功|成功领取|恭喜.{0,12}(获得|领到|签到)|获得.{0,10}(鸡腿|积分|金币|铜币|银币|AK|币|空间|MB|GB|M|G)/.test(all)) {
+
+      // ---- 找「去签到」入口（Discuz 系论坛通用）----
+      // 已签到的视觉特征：文字或图片里直接写着已签/已打卡/连续签到
+      const ALREADY = /已签到|已经签到|已打卡|签到完毕|签到完成|连续签到|今日已签|明天再来|下期再来/;
+      // 未签到的视觉特征：文字
+      const SIGN_TEXT = /打卡签到|立即签到|点击签到|点击打卡|签到领奖|每日签到|每日打卡|签个到|去签到|未打卡|没有签到|还没有签到|今天还没有签到|今天还没有|立即打卡/;
+      // 未签到的视觉特征：图片（各 Discuz 签到插件用的图）
+      const SIGN_IMG = /qds\.png|signin_no\.png|pperwb\.gif|wb\.png|qiandao|qdbg|sign_?in/i;
+      // 已知的签到按钮 id / class（来自各社区签到脚本：discuz 任务、dsu_paulsign、k_misign、zqlj_sign 等）
+      const SIGN_SEL = '#kx,#JD_sign,#addsign,#sg_sign,#dcsignin_tips,#tt_sign,.punch_btn,.go-user-qiandao,a.initiate-checkin,#my_amupper,#pper_a,#sign_title,#setsign,.click-qiandao,.zzhuti_qd_1,.user-index-qd,.taskbtn';
+
+      const attrOf = (el) => ((el.getAttribute && el.getAttribute('href') || '') + ' ' +
+        (el.id || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute && el.getAttribute('title') || '')).replace(/\s+/g, ' ');
+      const textOf = (el) => String(el.innerText || el.textContent || '').replace(/\s+/g, '');
+      const imgsOf = (el) => Array.from(el.querySelectorAll ? el.querySelectorAll('img') : [])
+        .concat(el.tagName === 'IMG' ? [el] : [])
+        .map((i) => (i.getAttribute('src') || '') + ' ' + (i.getAttribute('alt') || '')).join(' ');
+
+      const findSignLink = () => {
+        // ① Discuz 任务申请链接（吾爱破解这类：mod=task&do=apply&id=N）
+        const applies = Array.from(document.querySelectorAll('a[href*="do=apply"], a[href*="do=draw"]'))
+          .filter((a) => /mod=task/i.test(a.getAttribute('href') || ''));
+        for (const a of applies) {
+          const own = textOf(a) + ' ' + attrOf(a) + ' ' + imgsOf(a);
+          if (ALREADY.test(textOf(a))) continue;
+          const row = a.closest('tr') || a.closest('li') || a.closest('table') || a.parentElement;
+          const rowTxt = ((row && row.innerText) || '').replace(/\s+/g, ' ').slice(0, 200);
+          // 任务列表里那个「已完成」是隔壁任务的，必须限定在链接所在行
+          const rowDone = /已完成|已申请|已领取|已打卡/.test(rowTxt) && !/立即申请|马上申请|申请任务/.test(rowTxt);
+          if (rowDone) return { href: a.getAttribute('href') || '', label: (textOf(a) || '签到'), done: true };
+          if (/qds\.png|打卡|每日|签到/i.test(own + ' ' + rowTxt) || applies.length === 1) {
+            return { href: a.getAttribute('href') || '', label: (textOf(a) || '打卡签到'), done: false };
+          }
+        }
+        // ② 已知的签到按钮（可能是 <a href>，也可能是 JS 点击的 <span>/<div>/<img>）
+        const known = Array.from(document.querySelectorAll(SIGN_SEL));
+        for (const el of known) {
+          const own = textOf(el) + ' ' + attrOf(el) + ' ' + imgsOf(el);
+          if (ALREADY.test(own)) continue;
+          const href = (el.getAttribute && el.getAttribute('href')) || '';
+          const usable = href && !/^javascript:void/i.test(href) ? href : '';
+          return { href: usable, clickSel: true, label: (textOf(el) || '签到'), done: false };
+        }
+        // ③ 兜底：页面上写着「打卡签到 / 每日签到」的可点元素
+        const cands = Array.from(document.querySelectorAll('a,button,[onclick],img'));
+        for (const el of cands) {
+          const t = textOf(el);
+          const im = imgsOf(el);
+          if (ALREADY.test(t + ' ' + im)) continue;
+          const hit = SIGN_TEXT.test(t) || SIGN_IMG.test(im);
+          if (!hit) continue;
+          const href = (el.getAttribute && el.getAttribute('href')) || '';
+          if (!href && !el.onclick && !el.getAttribute('onclick')) continue;   // 纯展示元素，点了也没用
+          return { href: /^javascript:/i.test(href) ? '' : href, clickSel: true, label: (t || '签到'), done: false };
+        }
+        return null;
+      };
+      const markForClick = (res) => {
+        if (!res || !res.clickSel) return '';
+        const el = document.querySelector(SIGN_SEL) || (SIGN_TEXT.test(compact) ? document.querySelector('a[href*="do=apply"]') : null);
+        if (!el) return '';
+        el.setAttribute('data-panel-sign', '1');
+        return '[data-panel-sign="1"]';
+      };
+
+      // 2) 「已完成」的强信号（Discuz：您已完成过此任务 / 今日已签到 / 恭喜…获得…）
+      const SIGNED = /签到完毕|签到完成|您已完成过此任务|您已经完成此任务|您今日已经签到|您今天已经签到|今天已经签到|已经签到过|已经完成签到|今日任务已完成|今日已签到|今天已完成签到|已连续签到|下期再来|明天再来|无需重复|恭喜.{0,14}(完成|获得|领到|签到)/;
+      // 成功信号：任务页直接告诉用户拿到了什么
+      const SUCCESS = /任务已完成|签到成功|打卡成功|领取成功|成功领取|获得.{0,10}(鸡腿|积分|金币|铜币|银币|吾爱币|AK|币|空间|MB|GB)/;
+      // 注入环境可能没有 DOM API（部分页面/测试台架）：退回到纯文本 + 正则，
+      // 只认「do=apply 链接 + 签到图/签到字样」这个最硬的组合。
+      let link = null;
+      try { link = findSignLink(); } catch (e) { link = null; }
+      if (!link) {
+        const am = all.match(/<a[^>]*href=["']([^"']*mod=task[^"']*do=(?:apply|draw)[^"']*)["'][^>]*>/i);
+        if (am && /qds\.png|打卡签到|每日签到|每日打卡|签到完毕/i.test(all) && !/已完成过此任务|您已经完成此任务/.test(all)) {
+          link = { href: am[1].replace(/&amp;/g, '&'), label: '打卡签到', done: false };
+        }
+      }
+      if (SUCCESS.test(all)) {
         return { ok: true, message: '签到成功｜' + (compact.slice(0, 120) || title) };
       }
-      // 3) 今日已签到（Discuz 重复申请会返回「您已完成过此任务」）
-      if (/今日已签到|今天已签到|已经签到|已签到|重复签到|请勿重复|无需重复|下期再来|已完成过此任务|已领取/.test(all)) {
-        return { ok: true, message: '今日已签到，无需重复' };
-      }
-      // 4) 未登录
-      if (/需要先登录|请先登录|还未登录|请登录后|登录已失效|登录失效|请重新登录|未登录/.test(all)) {
+      // 强信号优先于「还挂着链接」：例如任务列表里签到那条已「已完成」，
+      // 而顶栏还挂着别的任务的 apply 链接
+      if (SIGNED.test(all)) return { ok: true, message: '今日已签到，无需重复' };
+      if (link && link.done) return { ok: true, message: '今日已签到（任务页显示：已完成）' };
+      // 4) 未登录（Discuz 游客页会写「注册[Register]」）—— 比「未签到」更优先：
+      //    登录失效时页面导航里也有「每日签到」这类字样，不能把它当成“还没签到”。
+      if (/需要先登录|请先登录|还未登录|请登录后|登录已失效|登录失效|请重新登录|未登录|注册\[Register\]|立即注册|登录后才能/.test(all)) {
         return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+      }
+      // 页面上写着「还没签到」却找不到可点的入口（插件式签到页、被遮挡的按钮）：
+      // 如实报未签到，并说清要人工处理，不要吐一句“未识别到成功标识”。
+      if (!link && /打卡签到|立即签到|点击打卡|每日签到|每日打卡|还没有签到|未打卡/.test(all)) {
+        return { ok: false, unsigned: true, href: '', clickSel: '',
+                 message: '网站显示还没签到，但页面上找不到可点的签到入口' };
+      }
+      if (link) {
+        let clickSel = '';
+        try { clickSel = markForClick(link); } catch (e) { clickSel = ''; }
+        return {
+          ok: false, unsigned: true, href: link.href || '', clickSel,
+          message: '网站还挂着「' + (link.label || '签到') + '」入口 —— 今天还没签上',
+        };
       }
       return { ok: false, message: '未识别到成功标识｜页面：' + title + '｜' + compact.slice(0, 140) };
     },
   });
   return (results && results[0] && results[0].result) || null;
+}
+
+// 把页面里找到的「去签到」链接解析成绝对地址，并做同源校验。
+// 页面内容不可信：只允许跳到当前站点的同源地址（http/https + 同 host）。
+function resolveSignHref(result, tab) {
+  const raw = result && result.href;
+  if (!raw) return '';
+  try {
+    const base = (tab && tab.url) || ('https://' + (tab && tab.pendingUrl ? '' : ''));
+    const u = new URL(raw, base || undefined);
+    const cur = tab && tab.url ? new URL(tab.url) : null;
+    if (cur && u.host !== cur.host) return '';
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    return u.href;
+  } catch {
+    return '';
+  }
+}
+
+// 等待标签页加载完成（带超时），用于导航后复查
+function waitTabComplete(tabId, timeoutMs) {
+  return new Promise((resolve) => {
+    const listener = (id, info) => {
+      if (id === tabId && info.status === 'complete') {
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve();
+      }
+    };
+    chrome.tabs.onUpdated.addListener(listener);
+    setTimeout(() => { chrome.tabs.onUpdated.removeListener(listener); resolve(); }, timeoutMs || 20000);
+  });
 }
 
 // 尝试执行面板下发的脚本字符串。
@@ -169,6 +311,56 @@ async function executeJob(job) {
     }
     if (!result) result = await inspectPage(tab.id);
     if (!result) throw new Error('无法读取页面内容（标签页可能已关闭或被重定向）');
+
+    // 页面还挂着「打卡签到」入口 = 服务端认为今天没签。
+    // ① 是链接（吾爱破解这类 Discuz 任务）→ 导航过去，等同人手点一下；
+    // ② 是 JS 按钮（dsu_paulsign / k_misign 等插件）→ 在页面里点一下。
+    // 两条路都是真实用户行为，之前实测过：脚本化 fetch 会被 WAF 吊死，而导航/点击能过。
+    if (!result.ok && result.unsigned) {
+      const signHref = resolveSignHref(result, tab);
+      try {
+        if (signHref) {
+          await chrome.tabs.update(tab.id, { url: signHref });
+          await waitTabComplete(tab.id, 20000);
+          await new Promise((r) => setTimeout(r, 2000));
+        } else if (result.clickSel) {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (sel) => { const el = document.querySelector(sel); if (el) el.click(); },
+            args: [result.clickSel],
+          });
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        const after = (signHref || result.clickSel) ? await inspectPage(tab.id) : null;
+        if (after) result = after;
+      } catch (e) {
+        console.log('[签到面板] 触发签到失败：', e.message || e);
+      }
+    }
+
+    // 连入口都没认出来（站点改版/插件页），但面板给了「签到地址」——那是站点模块自己知道的，
+    // 再试一次，别白自放弃（同源校验后仍然只跳本域）。
+    if (!result.ok && result.unsigned && !result.href && !result.clickSel && job.sign_url) {
+      try {
+        const u = new URL(job.sign_url);
+        const sameHost = !job.domain || u.hostname === job.domain || u.hostname.endsWith('.' + job.domain);
+        if ((u.protocol === 'http:' || u.protocol === 'https:') && sameHost) {
+          await chrome.tabs.update(tab.id, { url: u.href });
+          await waitTabComplete(tab.id, 20000);
+          await new Promise((r) => setTimeout(r, 2000));
+          const after = await inspectPage(tab.id);
+          if (after) result = after;
+        }
+      } catch (e) {
+        console.log('[签到面板] 兑底签到地址不可用：', e.message || e);
+      }
+    }
+
+    // 明确未签到、且始终找不到可点的入口/地址 → 把「接下来怎么办」说清楚，
+    // 不要只丢一句含糊的“未识别到成功标识”。
+    if (!result.ok && result.unsigned && !result.href && !result.clickSel) {
+      result = { ...result, message: String(result.message || '今天还没签上') + '；页面上找不到可点的签到入口，请在浏览器手动签一次' };
+    }
 
     return {
       status: result.ok ? 'ok' : 'fail',
@@ -261,11 +453,20 @@ async function submitRelayResult(panelUrl, apiKey, jobId, result) {
 }
 
 // 在目标域名的页面上下文中执行单个 HTTP 请求（携带用户 Cookie）
+//
+// 为什么要「先短超时、超时就激活标签重试」：
+// 实测（2026-09-28）发现，对 www.52pojie.cn 这类**带反爬挑战的主站**，从**后台标签**发
+// fetch 会一直挂到硬超时（同一时刻同一浏览器：example.com 与 static.52pojie.cn 都正常返回 200，
+// 只有主站的 robots.txt / portal.php / home.php 全部超时）。
+// 原因是挑战/验证脚本在后台标签里被节流，服务端一直等不到「验证完成」，连接就不回包。
+// 所以：第一次用短超时快速试探；若超时，就把标签**激活到前台**再试一次，跑完把焦点还给用户。
 async function executeRelayJob(job) {
   const url = new URL(job.url);
   const domain = url.hostname;
   let tab = null;
   let created = false;
+  let prevActiveId = null;
+  let activated = false;
   try {
     const tabs = await chrome.tabs.query({ url: `*://${domain}/*` });
     if (tabs.length > 0) {
@@ -285,59 +486,98 @@ async function executeRelayJob(job) {
       });
     }
 
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: async (url, method, headers, bodyB64, options, timeoutMs) => {
-        const b64ToBytes = (b64) => {
-          const s = atob(b64);
-          const arr = new Uint8Array(s.length);
-          for (let i = 0; i < s.length; i++) arr[i] = s.charCodeAt(i);
-          return arr;
+    const injectFetch = async (url, method, headers, bodyB64, options, timeoutMs) => {
+      const b64ToBytes = (b64) => {
+        const s = atob(b64);
+        const arr = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) arr[i] = s.charCodeAt(i);
+        return arr;
+      };
+      const bytesToB64 = (bytes) => {
+        let s = '';
+        for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s);
+      };
+      const init = {
+        method,
+        headers,
+        credentials: 'include', // 始终携带用户 Cookie
+        // 页面里拿不到 opaqueredirect 的响应头，manual 等于白跑一轮，统一 follow
+        redirect: options.redirect === 'manual' ? 'follow' : (options.redirect || 'follow'),
+      };
+      if (bodyB64) init.body = b64ToBytes(bodyB64);
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      if (ctrl) init.signal = ctrl.signal;
+      let timer = null;
+      // 不依赖 AbortController：某些受限环境里它不存在，那样整个任务会挂到硬超时。
+      // 用 Promise.race 做兜底，保证无论如何都在 timeoutMs 内**返回**（返回超时标记，不抛出）。
+      const timeout = new Promise((resolve) => {
+        timer = setTimeout(() => {
+          try { if (ctrl) ctrl.abort(); } catch { /* 忽略 */ }
+          resolve({ timeout: true });
+        }, timeoutMs || 18000);
+      });
+      const call = (async () => {
+        const resp = await fetch(url, init);
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        const h = {};
+        resp.headers.forEach((v, k) => { h[k] = v; });
+        return {
+          status: resp.status,
+          headers: h,
+          body_base64: bytesToB64(buf),
+          url: resp.url, // 最终 URL（跟随重定向后）
         };
-        const bytesToB64 = (bytes) => {
-          let s = '';
-          for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-          return btoa(s);
-        };
-        const init = {
-          method,
-          headers,
-          credentials: 'include', // 始终携带用户 Cookie
-          // 页面里拿不到 opaqueredirect 的响应头，manual 等于白跑一轮，统一 follow
-          redirect: options.redirect === 'manual' ? 'follow' : (options.redirect || 'follow'),
-        };
-        if (bodyB64) init.body = b64ToBytes(bodyB64);
-        // 页面内自超时：即便站点把连接吊死，也要抛出错误而不是让整个任务卡到硬超时
-        // （AbortController 在某些受限环境里不存在，存在性判断不能省）
-        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs || 18000) : null;
-        if (ctrl) init.signal = ctrl.signal;
-        try {
-          const resp = await fetch(url, init);
-          const buf = new Uint8Array(await resp.arrayBuffer());
-          const h = {};
-          resp.headers.forEach((v, k) => { h[k] = v; });
-          return {
-            status: resp.status,
-            headers: h,
-            body_base64: bytesToB64(buf),
-            url: resp.url, // 最终 URL（跟随重定向后）
-          };
-        } finally {
-          clearTimeout(timer);
-        }
-      },
-      args: [job.url, job.method, job.headers || {}, job.body_base64 || null, job.options || {}, RELAY_FETCH_TIMEOUT_MS],
-    });
+      })();
+      try {
+        return await Promise.race([call, timeout]);
+      } finally {
+        clearTimeout(timer);
+        call.catch(() => {}); // 超时后迟到的失败不要变成未处理拒绝
+      }
+    };
 
-    const r = results && results[0] && results[0].result;
+    const runOnce = async (timeoutMs) => {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: injectFetch,
+        args: [job.url, job.method, job.headers || {}, job.body_base64 || null, job.options || {}, timeoutMs],
+      });
+      return (results && results[0] && results[0].result) || null;
+    };
+
+    let r = await runOnce(RELAY_FIRST_TRY_MS);
+    if (r && r.timeout) {
+      // 后台标签里反爬挑战跑不动 → 把标签拿到前台重试一次
+      try {
+        const [cur] = await chrome.tabs.query({ active: true, currentWindow: true });
+        prevActiveId = cur && cur.id != null ? cur.id : null;
+        await chrome.tabs.update(tab.id, { active: true });
+        activated = true;
+        await new Promise((res) => setTimeout(res, RELAY_ACTIVATE_WAIT_MS)); // 给页面里的定时/挑战脚本一点时间
+      } catch { /* 激活失败也得继续试 */ }
+      r = await runOnce(RELAY_FETCH_TIMEOUT_MS);
+    }
     if (!r) throw new Error('无返回结果');
+    if (r.timeout) {
+      // 把话说清楚：请求**已经发出去了**，只是没等到响应。
+      // 签到这类写操作可能已经生效，面板不能当成「失败」（面板会记为「结果未知」并稍后自动复核）。
+      return {
+        error: activated
+          ? `中继请求超时（前台标签也没等到响应，${Math.round(RELAY_FETCH_TIMEOUT_MS / 1000)}秒）：请求已发出但没收到回包。该站点的反爬可能要求人工验证，或站点暂时不可达 —— 若站点其实处理了，签到可能已生效`
+          : `中继请求超时（${Math.round(RELAY_FETCH_TIMEOUT_MS / 1000)}秒）：请求已发出但没收到回包，站点可能已记录（结果未知）`,
+      };
+    }
     // 把最终 URL 放入特殊头，Worker 端可读取
     const headers = { ...(r.headers || {}), 'x-relay-url': r.url || job.url };
     return { status: r.status, headers, body_base64: r.body_base64 };
   } catch (e) {
     return { error: String(e.message || e).slice(0, 500) };
   } finally {
+    // 把焦点还给用户原来的标签
+    if (activated && prevActiveId != null) {
+      chrome.tabs.update(prevActiveId, { active: true }).catch(() => {});
+    }
     // 复用的标签页保留，自己新建的关闭（避免堆积）
     if (created && tab && tab.id) {
       chrome.tabs.remove(tab.id).catch(() => {});
@@ -373,7 +613,7 @@ async function runRelayRound() {
       // 硬超时：即使页面 fetch 或注入挂起，也必须回传结果，否则任务会永久卡在队列
       const result = await Promise.race([
         executeRelayJob(job),
-        new Promise((resolve) => setTimeout(() => resolve({ error: `中继执行超时（${RELAY_JOB_TIMEOUT_MS / 1000}秒），已放弃该请求` }), RELAY_JOB_TIMEOUT_MS)),
+        new Promise((resolve) => setTimeout(() => resolve({ error: `中继执行超时（${Math.round(RELAY_JOB_TIMEOUT_MS / 1000)}秒）：请求已发出但没收到回包，站点可能已记录（结果未知）` }), RELAY_JOB_TIMEOUT_MS)),
       ]);
       await submitRelayResult(panelUrl, apiKey, job.id, result);
     } catch (e) {

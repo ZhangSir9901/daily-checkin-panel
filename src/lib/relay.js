@@ -46,12 +46,18 @@ export async function queueRelayJob(db, { url, method = 'GET', headers = {}, bod
 // 52pojie 这类慢站：扩展端 fetch 超时 30s + 任务超时 60s，Worker 端给 90s 兜底
 export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 300) {
   const deadline = Date.now() + timeoutMs;
+  let lastJob = null; // 超时告警里要写清卡在哪个请求
   while (Date.now() < deadline) {
     const job = await db.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(jobId).first();
     if (!job) throw new Error('中继任务不存在');
+    lastJob = job;
+    // 报错时把「卡住的到底是哪个请求」一并带上（存放 detail）。
+    // 吾爱破解这类超时以前只显示一句「已放弃该请求」，用户在面板上完全看不出卡在哪一步。
+    const where = `中继请求：${String(job.method || 'GET').toUpperCase()} ${String(job.url || '').slice(0, 160)}`;
     if (job.status === 'failed') {
       const err = new Error('本地网络失败：' + (job.error || '未知错误'));
       err.outcome = 'relay';
+      err.detail = where;
       throw err;
     }
     if (job.status === 'done') {
@@ -70,7 +76,10 @@ export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 300
     }
     await sleep(pollMs);
   }
-  throw new Error('等待本地网络响应超时：扩展没有在 ' + Math.round(timeoutMs / 1000) + ' 秒内回传（扩展可能休眠、被关闭，或未配置 API Key）');
+  const err = new Error('等待本地网络响应超时：扩展没有在 ' + Math.round(timeoutMs / 1000) + ' 秒内回传（扩展可能休眠、被关闭，或未配置 API Key）');
+  err.outcome = 'relay';
+  err.detail = `中继请求：${lastJob ? String(lastJob.method || 'GET').toUpperCase() + ' ' + String(lastJob.url || '').slice(0, 160) : '（未取到任务信息）'}`;
+  throw err;
 }
 
 // 模拟 fetch 的中继版本：在用户本地网络中执行 HTTP 请求

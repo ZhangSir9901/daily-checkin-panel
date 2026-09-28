@@ -1,0 +1,43 @@
+{
+  "schema": "daily-checkin-site/1",
+  "id": "simple_api_signin",
+  "name": "示例：单次请求签到（JSON 接口）",
+  "desc": "最常见的形态：带 Cookie 打一个接口，返回里含成功字样就算签到成功",
+  "author": "guoxpeng",
+  "version": "1.0.0",
+  "domain": "",
+  "execution": "server",
+  "fields": [
+    {
+      "key": "site_url",
+      "label": "站点地址",
+      "type": "text",
+      "required": true,
+      "placeholder": "https://example.com（末尾不要带 /）"
+    },
+    {
+      "key": "cookie",
+      "label": "Cookie",
+      "type": "textarea",
+      "required": true,
+      "placeholder": "登录后用浏览器扩展「一键复制全部信息」"
+    }
+  ],
+  "steps": [
+    {
+      "name": "每日签到",
+      "method": "POST",
+      "url": "{{site_url}}/api/checkin",
+      "headers": {
+        "Cookie": "{{cookie}}",
+        "Content-Type": "application/json"
+      },
+      "body": {
+        "action": "checkin"
+      },
+      "expect_status": 200,
+      "expect_contains": "成功"
+    }
+  ],
+  "tips": "这是教学示例：把 site_url / 接口路径 / 成功关键字换成你自己站点的即可。重复签到（站点回「今日已签到」）不会被判成失败。"
+}

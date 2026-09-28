@@ -49,7 +49,9 @@ function cardByTitle(title, from = 0, to = html.length) {
   const m = sec.match(re);
   if (!m) throw new Error('找不到卡片：' + title);
   const h2Abs = from + m.index;
-  const cardStart = html.lastIndexOf('<div class="card">', h2Abs);
+  // 注意：不是 '<div class="card">'——卡上带 style（如 <div class="card" style="padding:18px 20px">）时
+  // 会匹配不到，lastIndexOf 就会往回找到上一张卡，把两张卡搞混。
+  const cardStart = html.lastIndexOf('<div class="card"', h2Abs);
   if (cardStart < 0) throw new Error('卡片没有 <div class="card"> 外壳：' + title);
   return balancedDivAt(cardStart);
 }
@@ -59,15 +61,30 @@ const accSecEnd = html.indexOf('<section id="tab-logs"');
 if (accSecStart < 0 || accSecEnd <= accSecStart) throw new Error('找不到「签到账号」区块');
 
 const topbar = balancedDivByTag('<div class="topbar">');
+// 「签到时间 + 添加账号 + 扩展下载」现在是同一张两栏卡（左：时间/扩展，右：粘贴添加）
 const schedCard = cardByTitle('签到时间', accSecStart, accSecEnd);
-const cookieCard = cardByTitle('添加 / 更新账号', accSecStart, accSecEnd);
+const comCard = cardByTitle('🌍 社区站点', accSecStart, accSecEnd);
+const footStart = html.indexOf('<div class="foot">', accSecStart);
+const foot = footStart < 0 ? '' : balancedDivAt(footStart);
 const extCard = cardByTitle('🔌 浏览器扩展', html.indexOf('<section id="tab-settings"'));
+const accCard = cardByTitle('签到账号', accSecStart, accSecEnd);
 
-// 时间选择器脚本段（预览页要用它把胶囊/滚轮真正渲染出来）
+// 时间选择器 + 时区选择器脚本段（预览页要用它们把胶囊/滚轮/时区弹窗真正渲染出来）
+// 起点：时间选择器；终点：let tzPicker = null;（即 renderTzPicker 定义完）
 const jsStart = html.indexOf('// ---------- 时间选择器');
-const jsEnd = html.indexOf('// ---------- 签到时间设置 ----------');
-if (jsStart < 0 || jsEnd <= jsStart) throw new Error('找不到时间选择器脚本段');
+const jsEnd = html.indexOf('let tzPicker = null;');
+if (jsStart < 0 || jsEnd <= jsStart) throw new Error('找不到时间/时区选择器脚本段');
 const js = html.slice(jsStart, jsEnd);
+
+// Cookie 解析器那一段（要真的点一下看排版，就得把它的代码也带上）。
+// 它依赖 public/cookie-tools.js 里的 explainCookieText/describeCookieName，
+// 以及面板全局的 SITES / guessSiteByDomain（预览里给空实现，只看样式）。
+const ckJsStart = html.indexOf('// ---------- Cookie 解析器');
+const ckJsEnd = html.indexOf('// 「填到上面并保存」');
+const ckJs = (ckJsStart >= 0 && ckJsEnd > ckJsStart) ? html.slice(ckJsStart, ckJsEnd) : '';
+const readPublic = (f) => readFileSync(resolve(root, 'public', f), 'utf8');
+const curlJs = readPublic('curl-import.js');
+const cookieToolsJs = readPublic('cookie-tools.js');
 
 function stateTopbar(cls, text, sub) {
   return topbar
@@ -94,26 +111,52 @@ const page = `<!DOCTYPE html>
   <h2 style="margin-top:18px">首页顶栏 · 扩展在线（绿，呼吸点）</h2>
   ${stateTopbar('on', '扩展在线（自动中继已启用）', '可切「本地网络」：请求经您的浏览器发出')}
 
-  <h2 style="margin-top:22px">签到时间（已移到「签到账号」页，账号表下面）</h2>
+  <h2 style="margin-top:22px">签到账号（表格）</h2>
+  ${accCard}
+
+  <h2 style="margin-top:22px">签到时间 + 添加账号 + 扩展下载（同一张两栏卡）</h2>
   ${schedCard}
 
-  <h2 style="margin-top:22px">添加 / 更新账号（一个粘贴框搞定）</h2>
-  ${cookieCard}
+  <h2 style="margin-top:22px">社区站点（开源共享：导入 / 导出同一张卡）</h2>
+  ${comCard}
 
   <h2 style="margin-top:22px">设置页 · 浏览器扩展</h2>
   ${extCard}
+
+  <h2 style="margin-top:22px">页脚说明（含开源仓库地址）</h2>
+  ${foot}
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+${curlJs}
+${cookieToolsJs}
 ${js}
+const SITES = [];
+const guessSiteByDomain = () => '';
+${ckJs}
+
+// 把 Cookie 解析器展开并跑一遍，直接看到「每一段是什么」的真实排版
+{
+  const box = $('ck-analyze-box');
+  const ta = $('ck-analyze');
+  if (box && ta) {
+    box.open = true;
+    ta.value = 'Cookie: PHPSESSID=abc123def456ghi; wordpress_logged_in_a=laoguo%7C1730000000%7Cabcdef0123456789; wzws_cid=0123456789abcdef0123456789abcdef; cf_clearance=xyz123abc-1759000000-1.2.3.4.5; _ga=GA1.2.987654321\\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0 Safari/537.36';
+    $('btn-ck-analyze').click();
+  }
+}
 
 const sched = $('sched-tp');
 if (sched) {
   const p = renderTimePicker(sched, '08:00', { noFollow: true, large: true });
   p.set('08:30');
 }
-const sel = $('sched-tz');
-if (sel) sel.innerHTML = ['Asia/Shanghai', 'UTC', 'America/New_York'].map((z) => '<option>' + z + '</option>').join('');
+const tzBox = $('sched-tz');
+let tzPick = null;
+if (tzBox) tzPick = renderTzPicker(tzBox, 'Asia/Shanghai');
+// 预览里直接把时区弹窗展开，省得手动去点
+if (tzPick) setTimeout(() => { const b = document.querySelector('.tz-chip'); if (b) b.onclick({ stopPropagation(){} }); }, 30);
 </script>
 </body>
 </html>

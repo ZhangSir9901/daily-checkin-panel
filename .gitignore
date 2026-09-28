@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+dist/
+
+# Wrangler / Cloudflare 本地状态（里面有你的账号信息，别提交）
+.wrangler/
+.dev.vars
+.wrangler.toml
+
+# 打包产物（自己本地打出来的 zip）
+*.zip
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*~

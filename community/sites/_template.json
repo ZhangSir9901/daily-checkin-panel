@@ -1,0 +1,49 @@
+{
+  "schema": "daily-checkin-site/1",
+  "id": "bbs_example_com",
+  "name": "示例论坛（请改成本站名）",
+  "desc": "模板：把这份复制走，改成你要适配的站点",
+  "author": "你的 GitHub ID",
+  "version": "1.0.0",
+  "domain": "bbs.example.com",
+  "execution": "server",
+  "fields": [
+    {
+      "key": "site_url",
+      "label": "站点地址",
+      "type": "text",
+      "required": true,
+      "placeholder": "https://bbs.example.com（末尾不要带 /）"
+    },
+    {
+      "key": "cookie",
+      "label": "Cookie",
+      "type": "textarea",
+      "required": true,
+      "placeholder": "在该网站登录后，用浏览器扩展「一键复制全部信息」"
+    },
+    {
+      "key": "user_agent",
+      "label": "User-Agent",
+      "type": "text",
+      "required": false,
+      "placeholder": "扩展复制时通常会自动带上，可留空"
+    }
+  ],
+  "steps": [
+    {
+      "name": "签到",
+      "method": "POST",
+      "url": "{{site_url}}/api/sign",
+      "headers": {
+        "Cookie": "{{cookie}}",
+        "User-Agent": "{{user_agent}}",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      "body": "action=sign&inajax=1",
+      "expect_status": 200,
+      "expect_contains": "成功"
+    }
+  ],
+  "tips": "这份是模板：字段名、地址、说明都按你自己的站点改。改完在「添加账号」里测试运行，通过后再提交。"
+}

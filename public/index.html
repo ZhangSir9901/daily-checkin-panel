@@ -198,17 +198,38 @@
   .ck-more[open] > summary::before { content:"▾ "; }
   .ck-more > summary:hover { color:var(--text); }
   .ck-more-body { padding:2px 14px 14px; border-top:1px solid var(--line); }
+  /* Cookie 解析器：每段后面跟一个小标签说明它属于哪一类 */
+  .ck-tag { display:inline-block; padding:1px 7px; border-radius:999px; font-size:10.5px; font-weight:600;
+            border:1px solid var(--line2); color:var(--muted); background:rgba(255,255,255,.03); }
+  .ck-tag.k-login { color:#5cdd9e; border-color:rgba(61,220,132,.45); background:rgba(61,220,132,.12); }
+  .ck-tag.k-waf { color:#ffb020; border-color:rgba(255,176,32,.45); background:rgba(255,176,32,.12); }
+  .ck-tag.k-csrf { color:#7aa5ff; border-color:rgba(91,140,255,.45); background:rgba(91,140,255,.12); }
+  .ck-tag.k-stat { color:var(--muted2); }
+  .ck-tag.k-pref { color:var(--muted); }
+  .ck-tag.k-other { color:#ff8181; border-color:rgba(255,107,107,.4); background:rgba(255,107,107,.1); }
 
-  /* 签到时间一行布局（紧凑） */
-  /* 签到时间控制条：单独一条浅底区域，宽度不够时整组换行，
-     不会像以前那样把标题挤歪、或者按钮掉到下面显得散。 */
-  .sched-bar { margin-top:10px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px; }
-  .sched-bar .sched-field { display:flex; flex-direction:column; gap:8px; }
+  /* 签到时间控制条：一块内层面板，圆角/描边/内边距和页面里其他内层块（扩展下载、社区块）
+     完全一致 —— 整页的「框」看起来是一套。窄屏时整组换行，不会把标题挤歪。 */
+  .sched-bar { margin-top:10px; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px;
+               padding:14px 16px; border-radius:var(--radius-sm);
+               background:rgba(255,255,255,.015); border:1px solid var(--line); }
+  /* 两个字段均分这一行（flex:1 1 0）—— 里面的胶囊 width:100%，所以两个胶囊等宽等高，
+     不会出现一个 84px、一个 139px 那种看着像没对齐的情况 */
+  .sched-bar .sched-field { display:flex; flex-direction:column; gap:6px; flex:1 1 0; min-width:0; }
   .sched-bar .sched-field > label { margin:0; font-size:12px; color:var(--muted2); font-weight:500; }
+  /* 两个胶囊 + 保存按钮统一度量：同高同宽同圆角、文字居中，排成一条像一套控件 */
+  .sched-bar .tp-chip.lg, .sched-bar .tz-chip {
+    width:100%; height:44px; padding:0 12px; justify-content:center;
+    border-radius:var(--radius-sm); font-size:15px; font-weight:600; }
+  .sched-bar .tp-chip.lg .tp-dot { width:8px; height:8px; }
+  @media (max-width:520px) {
+    .sched-bar .sched-field { flex:1 1 100%; }
+  }
   /* 时区选择器：和时间胶囊（大号）同风格 */
+  /* flex:none：中文时区名比「08:30」长，不能被压得比文字还窄（否则字会溢出胶囊） */
   .tz-chip { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:8px 16px; border-radius:var(--radius-sm);
              background:var(--card2); border:1px solid var(--line); color:var(--text); font-size:17px;
-             font-weight:600; cursor:pointer; box-shadow:none; white-space:nowrap; min-width:176px;
+             font-weight:600; cursor:pointer; box-shadow:none; white-space:nowrap; min-width:176px; flex:none;
              font-variant-numeric:tabular-nums;
              transition:border-color .15s, box-shadow .15s; }
   .tz-chip:hover { transform:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); }
@@ -216,20 +237,30 @@
   .tz-chip .tz-dot { width:8px; height:8px; border-radius:50%; background:var(--accent2); flex:none;
                     box-shadow:0 0 0 3px var(--accent-dim); }
   /* 时区弹窗：和时间选择器弹窗同风格同动画 */
-  .tz-pop { position:fixed; z-index:70; width:220px; padding:10px; border-radius:var(--radius);
+  /* 选项多了（24 个时区）后弹窗会很高：限高 + 内部滚动，不再跑到屏幕外被截掉 */
+  .tz-pop { position:fixed; z-index:70; width:250px; padding:12px; border-radius:var(--radius);
+            max-height:min(64vh, 460px); overflow-y:auto; overscroll-behavior:contain;
             background:#141c33;
             border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
   .tz-pop.hidden { display:none; }
-  .tz-opt { display:block; width:100%; text-align:center; padding:8px 0; border:0; border-radius:var(--radius-sm);
-            background:transparent; color:var(--muted); font-size:13.5px; font-weight:500; cursor:pointer; box-shadow:none;
-            transition:background .12s, color .12s; }
+  /* 深色页面里不能冒出系统默认的浅色滚动条（Chrome 121+ 的 scrollbar-width 会覆盖
+     ::-webkit-scrollbar，所以两边一起写，和 .tpx-list 同一个思路） */
+  .tz-pop { scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  .tz-pop::-webkit-scrollbar { width:8px; }
+  .tz-pop::-webkit-scrollbar-thumb { background:var(--line2); border-radius:8px; }
+  .tz-pop::-webkit-scrollbar-track { background:transparent; }
+  .tz-opt { position:relative; display:block; width:100%; text-align:center; padding:9px 0; border:0;
+            border-radius:var(--radius-sm); background:transparent; color:var(--muted); font-size:13.5px;
+            font-weight:500; cursor:pointer; box-shadow:none; transition:background .12s, color .12s; }
   .tz-opt:hover { background:rgba(91,140,255,.14); color:var(--text); transform:none; box-shadow:none; }
   .tz-opt.sel:hover { background:var(--accent); color:#fff; }
   .tz-opt.sel { background:var(--accent); color:#fff;
                 font-weight:700; box-shadow:0 4px 12px rgba(91,140,255,.35); }
+  /* 选中的那个打勾 —— 「点一下即确定」（与时间浮层的「完成」同义） */
+  .tz-opt.sel::before { content:"✓"; position:absolute; left:12px; font-size:12px; opacity:.9; }
   .sched-bar button { margin:0; }
-  /* 保存按钮：和时间/时区大号胶囊同尺寸，文字居中 */
-  #btn-save-sched { border-radius:var(--radius-sm); padding:8px 32px; font-size:17px; font-weight:600;
+  /* 保存按钮：和时间/时区大号胶囊同一高度与圆角，文字居中 */
+  #btn-save-sched { height:34px; margin:0; border-radius:var(--radius-sm); padding:0 22px; font-size:13px; font-weight:600;
                     display:inline-flex; align-items:center; justify-content:center;
                     border:1px solid transparent; box-shadow:0 4px 14px rgba(91,140,255,.3); }
   .sched-tip { align-self:center; margin-left:auto; font-size:11.5px; color:var(--muted2); }
@@ -260,36 +291,42 @@
   /* 表格里该居中的列居中（数值/徽章/开关/按钮） */
   th.c, td.c { text-align:center; }
   td.c { white-space:nowrap; }
-  .site-cell { min-width:140px; text-align:center; }
-  /* 包裹层居中，内部右对齐：切换按钮右边缘与徽章右边缘对齐 */
-  .site-wrap { display:inline-block; text-align:right; width:148px; }
+  .site-cell { min-width:148px; text-align:center; }
+  /* 站点名、网络徽章、切换按钮整组居中（名字与下面的网络小模块对齐在同一中轴线上） */
+  .site-wrap { display:inline-block; text-align:center; width:156px; }
   .site-wrap .badge { width:100%; box-sizing:border-box; justify-content:center; }
   .site-wrap .site-line { margin-bottom:4px; }
-  .site-head { display:flex; align-items:center; justify-content:flex-end; gap:6px; margin-bottom:4px; }
+  .site-head { display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:4px; }
   .site-head b { font-size:14px; }
   /* 切换按钮：边框提亮 */
   .exec-switch { font-size:11px !important; padding:3px 10px !important; white-space:nowrap; flex-shrink:0;
                  border-color:rgba(91,140,255,.45) !important; color:var(--accent2) !important; }
   .exec-switch:hover { border-color:var(--accent) !important; background:var(--accent-dim) !important; }
-  /* 网络徽章：右对齐，与切换按钮右边缘对齐；宽度拉满与分段器一致 */
-  .site-line { display:flex; align-items:center; justify-content:flex-end; margin-top:0; margin-bottom:4px; }
+  /* 网络徽章：居中，与站点名同一中轴线；宽度拉满与分段器一致 */
+  .site-line { display:flex; align-items:center; justify-content:center; margin-top:0; margin-bottom:4px; }
   .site-line .badge { flex-shrink:0; width:100%; justify-content:center; box-sizing:border-box; }
-  /* 网站反馈占剩下的宽度，否则字被挤成一列一列地折，行高很难看 */
-  td.msg { width:100%; min-width:160px; max-width:280px; }
-  .msg-main { font-size:12.5px; line-height:1.5;
-              display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-  .msg-line { display:flex; align-items:flex-start; gap:8px; }
+  /* 网站反馈占剩下的宽度，并直接展示全部内容：
+     不再用 line-clamp 截成两行（以前鼠标不移上去看不到全文），也不再靠横向滚动条。
+     宽度靠 table-layout:auto + min-width:0 自适应，窄屏下在卡片内折行而不是溢出。 */
+  table { table-layout:auto; }
+  th, td { min-width:0; }
+  td.msg { width:100%; max-width:320px; }
+  .msg-main { font-size:12.5px; line-height:1.5; overflow-wrap:anywhere; }
+  /* 主文案是网站原话时的小标记：让人知道这句不是面板替网站说的 */
+  .msg-by { margin-left:6px; padding:1px 6px; border-radius:999px; font-size:10px; white-space:nowrap;
+            background:rgba(61,220,132,.13); color:#5cdd9e; border:1px solid rgba(61,220,132,.3); }
   .msg-raw { margin-top:5px; font-size:11px; line-height:1.5; color:var(--muted2);
-             border-left:2px solid var(--line2); padding-left:8px; word-break:break-word;
-             display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+             border-left:2px solid var(--line2); padding-left:8px; overflow-wrap:anywhere; }
+  /* 红标（说明/建议）固定在「网站反馈」的末尾：主文案 → 网站原文 → 这里 */
+  .msg-foot { margin-top:6px; display:flex; align-items:center; gap:6px; }
+  .hint-tag { font-size:10.5px; color:#ff9a9a; letter-spacing:.3px; }
+  .msg-foot .hint-dot { width:17px; height:17px; font-size:11.5px; }
+  /* 上次运行：固定两行（日期 / 时刻），每行都不折行，列宽稳定、不要横向滚动条 */
+  .run-time { font-size:12px; line-height:1.5; }
+  .run-time .t-date, .run-time .t-time { white-space:nowrap; display:inline-block; }
+  .run-time .t-time { color:var(--muted2); }
 
-  /* 扩展下载区：常驻可见（之前塞进折叠里，用户根本找不到） */
-  .ext-box { margin-top:16px; padding:14px 16px; border-radius:var(--radius-sm);
-             background:rgba(91,140,255,.06); border:1px solid rgba(91,140,255,.22); }
-  .ext-box-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .ext-box-head h3 { margin:0; font-size:14px; }
-  .ext-box-head .grow { flex:1 1 auto; }
-  .ext-box > p { margin:8px 0 0; font-size:12.5px; line-height:1.7; color:var(--muted); }
+  /* 扩展下载区：紧凑版（.ext-mini）放在「签到时间」下面；这里只共用步骤序号样式 */
   /* 步骤用 ol + counter，比「一整段 <br>」的行距和缩进稳得多 */
   .steps { margin:10px 0 0; padding:0; list-style:none; counter-reset:st; }
   .steps > li { position:relative; padding:5px 0 5px 30px; font-size:12.5px; line-height:1.7; color:var(--muted); }
@@ -331,7 +368,7 @@
   .tp-chip .tp-dot { width:6px; height:6px; border-radius:50%; background:var(--muted2); flex:none; }
   .tp-chip:not(.is-follow) .tp-dot { background:var(--accent2); box-shadow:0 0 0 3px var(--accent-dim); }
 
-  .tpx-pop { position:fixed; z-index:70; width:250px; padding:14px; border-radius:var(--radius);
+  .tpx-pop { position:fixed; z-index:70; width:250px; padding:12px; border-radius:var(--radius);
              background:#141c33;
              border:1px solid var(--line2); box-shadow:var(--shadow); animation:slideUp .25s; }
   .tpx-pop.hidden { display:none; }
@@ -379,6 +416,65 @@
 
   /* 账号列表里的时间单元格 */
   .sched-cell { display:flex; align-items:center; gap:6px; justify-content:center; }
+
+  /* ---------- 账号页：两栏（左：签到时间 + 扩展下载｜右：粘贴添加） ----------
+     用 grid + 一根竖线，而不是 flex:1 的两块 —— 窄屏时自动叠成一列，不会互相挤。 */
+  .two-col { display:grid; grid-template-columns:minmax(0,1fr) 1px minmax(0,1.06fr); gap:20px; }
+  .two-col > .vline { background:linear-gradient(180deg, transparent, var(--line2), transparent); }
+  @media (max-width:860px) { .two-col { grid-template-columns:1fr; gap:16px; } .two-col > .vline { display:none; } }
+
+  /* 扩展下载（紧凑版）：就放在「签到时间」下面那块空白里 */
+  .ext-mini { margin-top:16px; padding:14px 16px; border-radius:var(--radius-sm);
+              background:linear-gradient(180deg, rgba(91,140,255,.10), rgba(91,140,255,.03));
+              border:1px solid rgba(91,140,255,.24); }
+  .ext-mini-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .ext-mini-head b { font-size:13px; }
+  .ext-mini-head .grow { flex:1 1 auto; }
+  .ext-mini-head .bookmarklet { padding:5px 12px; font-size:12px; margin:0; }
+  .ext-mini > p { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--muted); }
+  .ext-mini .steps { margin-top:6px; }
+  .ext-mini .steps > li { padding:3px 0 3px 26px; font-size:12px; line-height:1.6; }
+  .ext-mini .steps > li::before { width:17px; height:17px; font-size:10.5px; top:4px; }
+  .ext-mini kbd { background:rgba(255,255,255,.08); border:1px solid var(--line); border-radius:5px;
+                  padding:0 4px; font-size:11px; font-family:inherit; }
+
+  /* ---------- 社区站点（开源共享） ---------- */
+  .badge.com { background:rgba(61,220,132,.15); color:#5cdd9e; }
+  .com-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:14px; margin-top:4px; }
+  @media (max-width:860px) { .com-grid { grid-template-columns:1fr; } }
+  .com-box { border:1px solid var(--line); border-radius:var(--radius-sm); padding:13px 14px;
+             background:rgba(255,255,255,.015); }
+  .com-box > h4 { margin:0 0 8px; font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:6px; }
+  .com-box > p { margin:0 0 8px; font-size:12px; line-height:1.65; color:var(--muted); }
+  .com-box textarea { min-height:78px; font-size:12px; }
+  .com-box .row { gap:8px; }
+  .com-list { display:flex; flex-direction:column; gap:8px; margin-top:12px; }
+  .com-item { display:flex; align-items:center; gap:10px; padding:9px 12px; flex-wrap:wrap;
+              border-radius:10px; background:var(--card2); border:1px solid var(--line); }
+  .com-item .grow { flex:1 1 140px; min-width:0; }
+  .com-item b { font-size:13px; }
+  .com-item .meta { font-size:11.5px; color:var(--muted2); line-height:1.6; overflow-wrap:anywhere; }
+  .com-item .ghost.sm button, .com-item button { white-space:nowrap; }
+  .com-empty { padding:12px; text-align:center; font-size:12px; color:var(--muted2);
+               border:1px dashed var(--line); border-radius:10px; }
+  .com-msg { margin-top:10px; padding:10px 12px; border-radius:10px; font-size:12.5px; line-height:1.7; }
+  .com-msg.ok { background:var(--ok-dim); border:1px solid rgba(61,220,132,.3); color:var(--ok); }
+  .com-msg.bad { background:var(--fail-dim); border:1px solid rgba(255,107,107,.3); color:var(--fail); }
+  .com-msg.warn { background:var(--warn-dim); border:1px solid rgba(255,176,32,.3); color:var(--warn); }
+  .json-box { width:100%; min-height:170px; font-family:ui-monospace,monospace; font-size:11.5px;
+              line-height:1.55; white-space:pre; }
+  .com-tbl { width:100%; margin:8px 0 0; }
+  .com-tbl th, .com-tbl td { padding:5px 8px; font-size:12px; text-align:left; }
+  .com-tbl th { color:var(--muted2); font-weight:500; }
+
+  /* 页面底部说明（含开源仓库地址） */
+  .foot { margin-top:18px; padding:15px 18px; border-radius:var(--radius-sm); text-align:center;
+          border:1px dashed var(--line2); background:rgba(255,255,255,.015);
+          font-size:12px; line-height:2; color:var(--muted2); }
+  .foot b { color:var(--muted); }
+  .foot a { color:var(--accent2); text-decoration:none; }
+  .foot a:hover { text-decoration:underline; }
+  .foot .dot { padding:0 7px; opacity:.5; }
 
   @media (max-width:640px) {
     .wrap { padding:16px 12px 60px; }
@@ -449,18 +545,40 @@
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
-      <div class="card" style="padding:18px 20px">
-      <div class="row" style="align-items:flex-start; gap:18px">
-      <div style="flex:1; min-width:0">
-        <h2 style="margin-bottom:10px">签到时间</h2>
-        <div class="sched-bar" style="gap:12px">
-          <div class="sched-field" style="gap:5px"><label>每天执行时间</label><div id="sched-tp"></div></div>
-          <div class="sched-field" style="gap:5px"><label>时区</label><div id="sched-tz"></div></div>
-          <div class="sched-field" style="gap:5px"><label>&nbsp;</label><button id="btn-save-sched">保存</button></div>
+      <div class="card">
+      <div class="two-col">
+      <div>
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <h2 style="margin-bottom:10px">签到时间</h2>
+          <button id="btn-save-sched">保存</button>
+        </div>
+        <div class="sched-bar">
+          <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
+          <div class="sched-field"><label>时区（国家或地区 · 城市）</label><div id="sched-tz"></div></div>
+        </div>
+        <p class="muted" style="font-size:12px;margin:10px 0 0">💡 点胶囊展开下拉，鼠标移开会自动收起；时区列表点中哪个就是哪个（带 ✓ 的就是当前值），选好点右上角「保存」。单个账号也能在「签到时间」列点一下设独立时间。</p>
+
+        <!-- 扩展下载：放在「签到时间」下面这块空白里，不再单独占一整张卡 -->
+        <div class="ext-mini">
+          <div class="ext-mini-head">
+            <b>🧩 浏览器扩展 cookie插件2.2</b>
+            <span id="ext-box-state" class="badge off">检测中…</span>
+            <span class="grow"></span>
+            <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载</a>
+          </div>
+          <p>它干两件事：<b>① 一键取 Cookie</b>（连 HttpOnly 都能读，NodeSeek 这类站也行）；
+            <b>② 当「本地网络中继」</b>，让吾爱破解这些屏蔽机房 IP 的站点也能签。
+            用不着在弹窗里点任何「执行」——面板点一下，它自己接单（旧版那个「立即执行待办签到」按钮已删掉）。</p>
+          <ol class="steps">
+            <li>点上面的「⬇️ 下载」得到 zip，解压到任意文件夹</li>
+            <li>地址栏输入 <kbd>chrome://extensions/</kbd>（Edge：<kbd>edge://extensions/</kbd>）→ 打开右上角「开发者模式」</li>
+            <li>点「加载已解压的扩展程序」，选中解压出的<b>文件夹</b>（不是 zip 本身）</li>
+            <li>点扩展图标（工具栏上那个蓝色<b>「签」</b>）→ 填「API Key」（在「设置」页复制）→ 点「🔌 面板连接检查」</li>
+          </ol>
         </div>
       </div>
-      <div style="width:1px; align-self:stretch; background:var(--line); flex:none"></div>
-      <div style="flex:1; min-width:0">
+      <div class="vline"></div>
+      <div>
         <h2 style="margin-bottom:8px">添加 / 更新账号</h2>
         <p class="muted" style="font-size:12.5px">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回到这里按 <b>Ctrl+V</b> 粘贴。
           面板会自动认出站点、自动填好 Cookie 和 User-Agent（<b>UA 不用自己找</b>），保存后立刻可用。</p>
@@ -471,28 +589,82 @@
         </div>
         <div id="ck-preview" class="hidden"></div>
 
+        <!-- Cookie 解析器：只拆分讲解，不保存（想真用就点「填到上面并保存」） -->
+        <details class="ck-more" id="ck-analyze-box" style="margin-top:12px">
+          <summary>🔍 Cookie 解析器 —— 粘进来逐段拆解（只看不存）</summary>
+          <div class="ck-more-body">
+            <p class="muted" style="font-size:12px;margin:10px 0 6px">支持：扩展「📋 一键复制全部信息」的 JSON、F12 里复制的请求头、右键「复制为 cURL」、cookie.txt、光秃秃的 <code>name=value; name2=value2</code>。
+              解析结果会告诉你每一段是什么、哪些是登录必需、哪些只是统计。</p>
+            <textarea id="ck-analyze" rows="3" placeholder="把 Cookie / 请求头 / cURL / 扩展 JSON 粘到这里…"></textarea>
+            <div class="row" style="margin:8px 0 0;gap:8px">
+              <button class="ghost sm" id="btn-ck-analyze" type="button">🔍 拆分看看</button>
+              <button class="ghost sm" id="btn-ck-analyze-fill" type="button">↗️ 填到上面并保存</button>
+            </div>
+            <div id="ck-analyze-out"></div>
+          </div>
+        </details>
+
       </div>
       </div>
       </div>
 
-      <div class="card" style="margin-top:16px">
-        <div class="ext-box" style="border:0; background:transparent; padding:0">
-          <div class="ext-box-head">
-            <h3>🧩 浏览器扩展 cookie插件2.2</h3>
-            <span id="ext-box-state" class="badge off">检测中…</span>
-            <span class="grow"></span>
-            <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2</a>
-          </div>
-          <p>它干两件事：<b>① 一键取 Cookie</b>（能读到 HttpOnly，NodeSeek 这类站也行）；
-            <b>② 做「本地网络中继」</b>，让吾爱破解这些屏蔽机房 IP 的站点也能签到。</p>
-          <ol class="steps">
-            <li>点右侧「⬇️ 下载 cookie插件2.2」，得到 zip，解压到任意文件夹</li>
-            <li>浏览器地址栏输入 <kbd>chrome://extensions/</kbd>（Edge 用 <kbd>edge://extensions/</kbd>），打开右上角「开发者模式」</li>
-            <li>点「加载已解压的扩展程序」，选中解压出来的<b>文件夹</b>（不是 zip 本身）</li>
-            <li>点扩展图标 → 填「API Key」（在「设置」页复制）→ 点「🔌 面板连接检查」</li>
-          </ol>
-          <p style="font-size:11.5px;color:var(--muted2)">💡 从本面板下载的扩展已自动填好面板地址；以后改了域名，在扩展弹窗里同步改一下即可。</p>
+      <!-- ---------- 社区站点（开源共享）：导入 / 导出 ---------- -->
+      <div class="card" id="card-community">
+        <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:10px">
+          <h2 style="margin:0">🌍 社区站点（开源共享）</h2>
+          <a class="ghost sm bookmarklet" href="https://github.com/guoxpeng/daily-checkin-panel" target="_blank" rel="noreferrer" style="text-decoration:none">⭐ GitHub 仓库</a>
         </div>
+        <p class="muted">面板内置的站点是写死在代码里的；<b>没有内置的网站，谁都可以贡献一份适配</b>：
+          你用自己的面板把该网站的签到调通（「自定义 HTTP」多步录制，或直接导入别人发的 JSON）
+          → 点「导出为社区配置」拿到一段 JSON → 发到 GitHub 的 Issue / PR 或任意网盘 → 别人粘贴导入就能用。
+          配置里<b>只会带占位符（{{cookie}} 这种），不会带你的 Cookie</b>，可以放心分享。</p>
+
+        <div class="com-grid">
+          <div class="com-box">
+            <h4>📥 导入一份配置</h4>
+            <p>粘贴别人分享的 JSON。也可以只填一条<b>原始链接</b>（GitHub raw / Gist / 自己的网址都行），面板会自己拉取。</p>
+            <textarea id="com-paste" placeholder='把配置 JSON 粘贴到这里：{"schema":"daily-checkin-site/1","id":"bbs_example_com", ...}'></textarea>
+            <div class="row" style="margin:0 0 8px">
+              <input id="com-url" type="text" placeholder="或：配置的原始链接 https://raw.githubusercontent.com/..." style="flex:1;margin:0">
+            </div>
+            <div class="row" style="margin:0">
+              <button class="ghost sm" id="btn-com-check" type="button">🔎 校验预览</button>
+              <button id="btn-com-import" type="button">⬇️ 导入</button>
+            </div>
+            <div id="com-msg"></div>
+          </div>
+
+          <div class="com-box">
+            <h4>📤 导出我的配置</h4>
+            <p>选一个你已经调通的账号（「自定义 HTTP」录了多步的账号最合适），导出成可分享的 JSON。
+              凭据会自动换成占位符。</p>
+            <label style="margin-top:0">选择账号</label>
+            <select id="com-export-account"></select>
+            <label>署名（开源署名，会写进导出的配置里）</label>
+            <input id="com-author" type="text" placeholder="你的 GitHub ID 或昵称">
+            <div class="row" style="margin:0">
+              <button class="ghost sm" id="btn-com-export" type="button">📤 导出为社区配置</button>
+              <button class="ghost sm" id="btn-com-copy" type="button" style="display:none">📋 复制</button>
+              <button class="ghost sm" id="btn-com-download" type="button" style="display:none">💾 存为 .json</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="com-msg2"></div>
+        <textarea id="com-out" class="json-box hidden" readonly spellcheck="false"></textarea>
+
+        <div style="margin-top:14px">
+          <b style="font-size:13px">已导入的社区站点</b>
+          <div id="com-list" class="com-list"><div class="com-empty">加载中…</div></div>
+        </div>
+      </div>
+
+      <div class="foot">
+        <b>签到面板</b> · 跑在 Cloudflare Workers 上（免费额度就够）
+        <span class="dot">·</span>
+        <a href="https://github.com/guoxpeng/daily-checkin-panel" target="_blank" rel="noreferrer">github.com/guoxpeng/daily-checkin-panel</a>
+        <br>
+        属于什么、怎么部署、怎么贡献站点适配 —— 都写在仓库的 <b>README.md</b>（照着做就能部署）和 <b>CONTRIBUTING.md</b> 里。
       </div>
     </section>
 
@@ -663,12 +835,16 @@ function toast(msg, ms = 2200) {
   t._h = setTimeout(() => (t.style.display = 'none'), ms);
 }
 
+// 上次运行时间：固定显示两行（上：月-日，下：时:分:秒），整段完整展示。
+// 拆两行是为了列窄一点、不要再出现横向滚动条；完整时间放 title 里方便对照。
 function fmtTime(ts) {
   if (!ts) return '-';
   const d = new Date(ts);
-  const date = d.toLocaleDateString('zh-CN');
-  const time = d.toLocaleTimeString('zh-CN', { hour12: false });
-  return `${date}<br><span style="color:var(--muted2)">${time}</span>`;
+  const p = (n) => String(n).padStart(2, '0');
+  const date = `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const time = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return `<span class="run-time" title="${d.toLocaleString('zh-CN')}">`
+    + `<span class="t-date">${date}</span><br><span class="t-time">${time}</span></span>`;
 }
 
 function esc(s) {
@@ -758,6 +934,28 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 // 两种形态：opts.inline=true → 内嵌时/分两列滚轮（设置页）；否则 → 紧凑胶囊，点开浮层（账号列表）
 // 返回 { get(), set(hhmm), setFollow(bool) }；用户改动时在 container 上派发 'tp-change'，点“跟随全局”派发 'tp-follow'
 let _tpxPop = null;
+
+// 浮层「鼠标移开自动收起」（时间与时区两个浮层共用）：
+//   离开胶囊或浮层后等 320ms 再收（留给鼠标从胶囊滑进浮层的余量），
+//   期间只要鼠标又进了任一方就取消。点选项 / 完成按钮仍是立即确定的路径。
+function bindAutoHide(pop, chip, delay = 320) {
+  let timer = 0;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+  // 只在浮层真的开着时才倒数 —— 否则「点选项收起」也会因鼠标离场排一个定时器，
+  // 下次刚打开就被它关掉。
+  const arm = () => {
+    cancel();
+    if (pop.classList.contains('hidden')) return;
+    timer = setTimeout(() => { pop.classList.add('hidden'); timer = 0; }, delay);
+  };
+  pop.onmouseenter = cancel;
+  pop.onmouseleave = arm;
+  if (chip) {
+    chip.onmouseenter = cancel;
+    chip.onmouseleave = arm;
+  }
+  return { cancel, arm };
+}
 function _tpxPopover() {
   if (_tpxPop) return _tpxPop;
   const el = document.createElement('div');
@@ -863,7 +1061,7 @@ function renderTimePicker(container, initial, opts = {}) {
     pop.querySelector('.tpx-done').onclick = (e) => { e.stopPropagation(); pop.classList.add('hidden'); };
     pop.classList.remove('hidden');
     const r = chip.getBoundingClientRect();
-    const w = 238;
+    const w = 250; // 与 .tpx-pop 的 CSS 宽度一致（不一致会让浮层歪一边）
     const left = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), window.innerWidth - w - 8);
     let top = r.bottom + 8;
     if (top + 330 > window.innerHeight) top = Math.max(8, r.top - 338);
@@ -872,6 +1070,7 @@ function renderTimePicker(container, initial, opts = {}) {
     requestAnimationFrame(() => center(pop));
   };
   chip.onclick = (e) => { e.stopPropagation(); open(); };
+  bindAutoHide(pop, chip);
 
   return {
     get: time,
@@ -881,8 +1080,43 @@ function renderTimePicker(container, initial, opts = {}) {
 }
 
 // ---------- 签到时间设置 ----------
-const TZ_OPTS = ['Asia/Shanghai', 'Asia/Taipei', 'Asia/Hong_Kong', 'Asia/Tokyo', 'Asia/Singapore', 'UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney'];
-const TZ_CN = { 'Asia/Shanghai': '北京时间', 'Asia/Taipei': '台北时间', 'Asia/Hong_Kong': '香港时间', 'Asia/Tokyo': '东京时间', 'Asia/Singapore': '新加坡时间', 'UTC': 'UTC 时间', 'Europe/London': '伦敦时间', 'Europe/Berlin': '柏林时间', 'America/New_York': '纽约时间', 'America/Chicago': '芝加哥时间', 'America/Denver': '丹佛时间', 'America/Los_Angeles': '洛杉矶时间', 'Australia/Sydney': '悉尼时间' };
+// 时区：面板里存的是 IANA 名称（Asia/Shanghai 这种），显示一律用「国家或地区 · 城市（UTC 偏移）」，
+// 不需要对着英文城市名猜是哪儿。
+const TZ_OPTS = [
+  'Asia/Shanghai', 'Asia/Hong_Kong', 'Asia/Macau', 'Asia/Taipei', 'Asia/Tokyo', 'Asia/Seoul',
+  'Asia/Singapore', 'Asia/Bangkok', 'Asia/Jakarta', 'Asia/Kolkata', 'Asia/Dubai',
+  'Europe/London', 'Europe/Paris', 'Europe/Berlin', 'Europe/Moscow',
+  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Toronto',
+  'America/Sao_Paulo', 'Australia/Sydney', 'Pacific/Auckland', 'UTC',
+];
+const TZ_CN = {
+  'Asia/Shanghai': '中国 · 北京', 'Asia/Hong_Kong': '中国香港', 'Asia/Macau': '中国澳门',
+  'Asia/Taipei': '中国台湾 · 台北', 'Asia/Tokyo': '日本 · 东京', 'Asia/Seoul': '韩国 · 首尔',
+  'Asia/Singapore': '新加坡', 'Asia/Bangkok': '泰国 · 曼谷', 'Asia/Jakarta': '印尼 · 雅加达',
+  'Asia/Kolkata': '印度 · 新德里', 'Asia/Dubai': '阿联酋 · 迪拜',
+  'Europe/London': '英国 · 伦敦', 'Europe/Paris': '法国 · 巴黎', 'Europe/Berlin': '德国 · 柏林',
+  'Europe/Moscow': '俄罗斯 · 莫斯科',
+  'America/New_York': '美国 · 纽约', 'America/Chicago': '美国 · 芝加哥', 'America/Denver': '美国 · 丹佛',
+  'America/Los_Angeles': '美国 · 洛杉矶', 'America/Toronto': '加拿大 · 多伦多',
+  'America/Sao_Paulo': '巴西 · 圣保罗', 'Australia/Sydney': '澳大利亚 · 悉尼',
+  'Pacific/Auckland': '新西兰 · 奥克兰', 'UTC': '协调世界时（UTC）',
+};
+// 当前偏移量（UTC+8 / UTC-5 这种），跟着夏令时自动变
+function tzOffsetText(z) {
+  try {
+    const p = new Intl.DateTimeFormat('en-US', { timeZone: z, timeZoneName: 'shortOffset' })
+      .formatToParts(new Date()).find((x) => x.type === 'timeZoneName');
+    return p ? String(p.value).replace('GMT', 'UTC') : ''; // GMT+8 → UTC+8，GMT → UTC
+  } catch { return ''; }
+}
+// 胶囊 / 顶栏用的短文案：中国 · 北京
+function tzLabel(z) { return TZ_CN[z] || z || ''; }
+// 下拉选项用的完整文案：中国 · 北京 · UTC+8（用间隔符而不是括号——
+// 这句会被塞进「每天 08:00（…）」里，双重括号很难看）
+function tzLabelFull(z) {
+  const off = tzOffsetText(z);
+  return /^UTC[+\-]/.test(off) ? `${tzLabel(z)} · ${off}` : tzLabel(z);
+}
 // 自定义时区选择器：按钮+弹窗，风格与时间选择器一致
 let _tzPop = null, _tzValue = 'Asia/Shanghai';
 function _tzPopover() {
@@ -902,13 +1136,13 @@ function renderTzPicker(container, initial) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = 'tz-chip';
-  const label = () => `${TZ_CN[_tzValue] || _tzValue}`;
+  const label = () => tzLabel(_tzValue);
   const paint = () => { btn.innerHTML = `<span class="tz-dot"></span><span>${esc(label())}</span><span class="tz-arrow">▼</span>`; };
   paint();
   btn.onclick = (e) => {
     e.stopPropagation();
     const pop = _tzPopover();
-    pop.innerHTML = TZ_OPTS.map((z) => `<button type="button" class="tz-opt${z === _tzValue ? ' sel' : ''}" data-z="${z}">${esc(TZ_CN[z] || z)}</button>`).join('');
+    pop.innerHTML = TZ_OPTS.map((z) => `<button type="button" class="tz-opt${z === _tzValue ? ' sel' : ''}" data-z="${z}">${esc(tzLabelFull(z))}</button>`).join('');
     pop.querySelectorAll('.tz-opt').forEach((b) => {
       b.onclick = (ev) => {
         ev.stopPropagation();
@@ -919,13 +1153,15 @@ function renderTzPicker(container, initial) {
     });
     const r = btn.getBoundingClientRect();
     pop.classList.remove('hidden');
-    const pw = 220, ph = pop.offsetHeight;
+    const pw = 250, ph = pop.offsetHeight; // 与 .tz-pop 的 CSS 宽度一致
     let left = r.left + r.width / 2 - pw / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
     let top = r.bottom + 8;
     if (top + ph > window.innerHeight - 8) top = Math.max(8, r.top - ph - 8);
     pop.style.left = left + 'px';
     pop.style.top = top + 'px';
+    // 鼠标移开（胶囊或列表）→ 自动收起；点中某一项就是确定（立即生效并收起）
+    bindAutoHide(pop, btn);
   };
   container.innerHTML = '';
   container.appendChild(btn);
@@ -936,21 +1172,34 @@ let GLOBAL_HOUR = '08'; // 全局签到时间（整点小时），账号独立�
 let SCHED_TZ = 'Asia/Shanghai'; // 面板设置的时区：状态列「今天」也按它算
 let schedPicker = null;
 
-// 「今天」按面板设置的时区计算（与签到时间同口径）。
+// 某个时区的「今天」（YYYY-MM-DD）。
 // 跨过当地 00:00 就算新的一天，状态才会统一回到「未签到」。
-function todayInSchedTz() {
+function todayInTz(tz) {
   try {
-    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SCHED_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz || SCHED_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
     const p = {};
     for (const x of parts) p[x.type] = x.value;
     return `${p.year}-${p.month}-${p.day}`;
   } catch { return ''; }
 }
+function todayInSchedTz() { return todayInTz(SCHED_TZ); }
 
-// 跨零点自动刷新：不刷新页面也能看到状态变回「未签到」
-let LAST_TODAY = todayInSchedTz();
+// 某个账号该按哪个时区判「今天」：站点声明了 dayTz 就按它（如糊涂鳄按 UTC，
+// 北京时间 08:00 才重置），否则跟面板设置一致。
+function accountDay(a) {
+  const s = SITES.find((x) => x.id === a.site);
+  return todayInTz((s && s.dayTz) || SCHED_TZ);
+}
+
+// 跨零点自动刷新：不刷新页面也能看到状态变回「未签到」。
+// 签名里带上每个站点的日界时区：糊涂鳄的 UTC 日界（北京时间 08:00）也会触发刷新。
+function daySignature() {
+  const zs = ['', ...SITES.map((s) => s.dayTz || '')];
+  return zs.map((z) => todayInTz(z || SCHED_TZ)).join('|');
+}
+let LAST_TODAY = daySignature();
 function watchNewDay() {
-  const t = todayInSchedTz();
+  const t = daySignature();
   if (!t || t === LAST_TODAY) return false;
   LAST_TODAY = t;
   toast('已进入新的一天，签到状态已重置为「未签到」');
@@ -967,7 +1216,7 @@ async function loadSchedule() {
     SCHED_TZ = s.tz || 'Asia/Shanghai';
     // 规范化显示：旧的 "08" 显示为 "08:00"
     const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
-    $('sched-line').textContent = `每天 ${displayTime}（${TZ_CN[s.tz] || s.tz}）自动签到 · 也可手动执行`;
+    $('sched-line').textContent = `每天 ${displayTime}（${tzLabel(s.tz)}）自动签到 · 也可手动执行`;
     // 全局签到时间：紧凑胶囊（点开滚轮浮层），noFollow 因为它就是「全局」本身
     if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { noFollow: true, large: true });
     else schedPicker.set(displayTime);
@@ -1029,74 +1278,61 @@ $('btn-akile-bm').onclick = async () => {
 //   ③ 浏览器「复制为 cURL」的命令
 //   ④ Cookie-Editor / Netscape cookie.txt 导出的内容
 //   ⑤ 光秃秃的 name=value; name=value（控制台 document.cookie 拷出来的）
+// 识别逻辑本身在 public/cookie-tools.js（有单测）；这里只调用，不在页面里再写一份。
 function parsePasteBox() {
-  const raw = $('ck-paste').value.trim();
-  if (!raw) throw new Error('请先在目标网站用扩展「📋 一键复制全部信息」，然后在这里粘贴');
-  const v = raw.replace(/^["']|["'];?$/g, '');
-
-  // ①/④ JSON：扩展格式带 cookies 字段；数组则是 Cookie-Editor 导出
-  if (v.startsWith('{') || v.startsWith('[')) {
-    let d = null;
-    try { d = JSON.parse(v); } catch { throw new Error('JSON 格式不对，请在扩展里点「📋 一键复制全部信息」重新复制一次'); }
-    if (Array.isArray(d)) {
-      return { cookie: parseCookieEditorJson(v), domain: '', userAgent: '', format: 'Cookie-Editor JSON' };
-    }
-    if (!d || !d.cookies) throw new Error('这段 JSON 里没有 Cookie，请确认是扩展「一键复制全部信息」复制出来的');
-    return {
-      cookie: String(d.cookies),
-      domain: String(d.domain || ''),
-      userAgent: String(d.userAgent || ''),
-      cookieList: Array.isArray(d.cookieList) ? d.cookieList : [],
-      localStorage: d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {},
-      stats: d.stats || null,
-      format: '扩展「一键复制全部信息」',
-    };
-  }
-
-  // ③ cURL：浏览器右键「复制为 cURL」
-  if (/^curl\s|curl\s+'https?:/i.test(v)) {
-    const r = extractCookieFromCurl(v);
-    return { cookie: r.cookie, domain: '', userAgent: r.userAgent || '', format: '浏览器复制的 cURL 命令' };
-  }
-
-  // ② 请求头文本：带 Cookie: / User-Agent: 这类头
-  if (/^\s*cookie\s*:/im.test(v) || /^\s*user-agent\s*:/im.test(v)) {
-    const r = extractCookieFromHeaders(v);
-    return { cookie: r.cookie, domain: '', userAgent: r.userAgent || '', format: '浏览器复制的请求头' };
-  }
-
-  // ④ Netscape cookie.txt：以 # 开头的注释 + 制表符分隔的 7 列
-  if (/^#(?: Netscape )?HTTP Cookie File/im.test(v) || v.split('\n').some((l) => l.split('\t').length === 7)) {
-    return { cookie: parseNetscapeCookies(v), domain: '', userAgent: '', format: 'cookie.txt（Netscape 格式）' };
-  }
-
-  // ⑤ 纯 Cookie 串
-  if (v.includes('=')) {
-    return { cookie: v, domain: '', userAgent: '', format: '纯 Cookie 字符串' };
-  }
-  throw new Error('没看出这是 Cookie，请用扩展的「📋 一键复制全部信息」再试一次');
+  return parsePasteText($('ck-paste').value);
 }
 
-// 把 Cookie 串拆成一段段，并给每段中文说明（只看名字和属性，不展示值）
-function splitCookieParts(cookie, cookieList) {
-  if (Array.isArray(cookieList) && cookieList.length) {
-    return cookieList.map((c) => ({
-      name: String(c.name || ''),
-      note: [
-        c.httpOnly ? 'HttpOnly（脚本读不到、只能用扩展抓）' : '',
-        c.session ? '会话 Cookie（关浏览器就失效）' : '',
-        c.path && c.path !== '/' ? '路径 ' + c.path : '',
-        c.expirationDate ? '有效期至 ' + new Date(c.expirationDate * 1000).toLocaleDateString('zh-CN') : '',
-      ].filter(Boolean).join('，') || '普通 Cookie',
-    }));
-  }
-  return String(cookie || '')
-    .split(';')
-    .map((s) => s.trim())
-    .filter(Boolean)
-    .map((s) => ({ name: s.split('=')[0].trim(), note: '普通 Cookie' }))
-    .filter((x) => x.name);
+// ---------- Cookie 解析器（只解析、不保存）----------
+// 每个 name=value 段的中文含义在 public/cookie-tools.js 里（有单测），
+// 这里只负责渲染；脚本万一没加载也不把页面搞崩。
+// 一份「段类型 → 中文标签/颜色」的对照，只用于渲染；分类本身在 cookie-tools.js。
+const COOKIE_KIND_CN = { login: '登录必需', waf: '网站安全校验', csrf: '表单防护', pref: '界面偏好', stat: '统计（可忽略）', other: '未归类' };
+const COOKIE_KIND_CLS = { login: 'k-login', waf: 'k-waf', csrf: 'k-csrf', pref: 'k-pref', stat: 'k-stat', other: 'k-other' };
+
+// 把 explainCookieText 的结果渲染成「每一段是什么」的列表（纯展示，不改数据）
+function renderCookieAnalysis(info) {
+  const out = $('ck-analyze-out');
+  if (!out) return;
+  const siteId = info.domain ? guessSiteByDomain(info.domain) : '';
+  const site = SITES.find((s) => s.id === siteId);
+  const head = [
+    ['识别为', esc(info.format || '未知格式')],
+    ['Web 站点', info.domain ? esc(info.domain) : '（这段内容里没带域名）'],
+    ['对应面板站点', site ? '<b>' + esc(site.name) + '</b>' : '未识别（可用「↗️ 填到上面并保存」后手动选）'],
+    ['总体', esc(info.summary)],
+    ['User-Agent', info.userAgent ? esc(String(info.userAgent).slice(0, 80)) + '…' : '（没带，面板会自动用当前浏览器 UA 兜底）'],
+  ].map(([k, v]) => '<div class="ckb-row"><span class="ckb-k">' + esc(k) + '</span><span class="ckb-v">' + v + '</span></div>').join('');
+  const parts = info.parts.map((p) => '<div class="ckb-row"><span class="ckb-k">' + esc(p.name) + '</span><span class="ckb-v">' +
+    '<span class="ck-tag ' + (COOKIE_KIND_CLS[p.kind] || 'k-other') + '">' + esc(COOKIE_KIND_CN[p.kind] || '未归类') + '</span> ' +
+    esc(p.desc) + '<br><span class="muted" style="font-size:11px">' + esc(p.detail) + '</span></span></div>').join('');
+  const extra = Object.keys(info.localStorage || {}).length
+    ? '<div class="ckb-row"><span class="ckb-k">localStorage</span><span class="ckb-v">' + Object.keys(info.localStorage).length + ' 项（有些站把登录 token 放这里）</span></div>'
+    : '';
+  out.innerHTML = '<div class="ckb"><div class="ckb-title">🔍 拆好了：每一段是什么</div><div class="ckb-rows">' + head + extra + '</div>'
+    + '<div class="ckb-rows" style="margin-top:6px">' + parts + '</div>'
+    + '<div class="ckb-status">只拆分说明，<b>没有保存</b>任何东西；要真用就点上面的「↗️ 填到上面并保存」。</div></div>';
 }
+
+$('btn-ck-analyze').onclick = () => {
+  try {
+    renderCookieAnalysis(explainCookieText($('ck-analyze').value));
+  } catch (e) {
+    const out = $('ck-analyze-out');
+    if (out) out.innerHTML = '<div class="ckb ckb-bad"><div class="ckb-title">✗ 没看懂这段内容</div><div class="ckb-row">' + esc(e && e.message ? e.message : String(e)) +
+      '</div><div class="ckb-row">支持：扩展「一键复制全部信息」的 JSON、F12 复制出来的请求头、右键「复制为 cURL」、cookie.txt、光秃秃的 name=value 串。</div></div>';
+  }
+};
+
+// 「填到上面并保存」：解析结果直接进主粘贴框，然后走原来的自动建号流程
+$('btn-ck-analyze-fill').onclick = () => {
+  try {
+    const raw = $('ck-analyze').value.trim();
+    if (!raw) return toast('请先把内容粘到解析框里');
+    $('ck-paste').value = raw;
+    $('btn-parse-paste').click();
+  } catch (e) { toast('解析失败：' + (e && e.message ? e.message : e)); }
+};
 
 // 渲染「中文分解」面板：这个框告诉你面板到底读到了什么、每一段是什么
 function renderPasteBreakdown(info, status) {
@@ -1418,6 +1654,7 @@ async function initMain() {
   await loadSchedule(); // 先加载全局时间，供账号列表的"跟随全局"显示
   await refreshExtState(); // 扩展在线状态：首页右上角展示，并决定能否切「本地网络」
   await loadAccounts();
+  await loadCommunity(); // 社区站点：列表 + 导出下拉（失败也不影响主流程）
   checkCookieHash();
 }
 
@@ -1432,7 +1669,7 @@ let ACCTS = [];
 // 站点级推荐说明：只在当前模式不是本地网络时显示，提醒用户某站必须用本机网络
 // （CF 机房 IP 会被这些站点的 WAF / IPv6 要求直接挡下）
 const SITE_MODE_HINT = {
-  wuaipojie: '吾爱破解屏蔽了 CF 网络（403 UrlACL），必须用「本地网络」；本地网络需安装并打开浏览器扩展',
+  wuaipojie: '吾爱破解主站被网宿 WAF 保护：脚本化请求（含本地中继）整站读不到，已自动改用「浏览器导航签到」——点下面的「🌐 浏览器签到」立即执行，或直接点「执行」（也会自动走这条路）',
   nodeseek: 'NodeSeek 登录有人机验证、CF 网络又没有 IPv6，请切「本地网络」',
   hutue: '糊涂鳄对机房 IP 更严格，建议切「本地网络」',
   kanxue: '看雪建议用「本地网络」（CF 网络常被拦）',
@@ -1458,13 +1695,55 @@ function execCellHTML(a, execOverride) {
   // 站点级推荐（如吾爱破解只能走本地网络），只在当前不是本地网络时提醒，避免添乱
   const hint = !isLocalExec && SITE_MODE_HINT[a.site] ? SITE_MODE_HINT[a.site] : '';
   const pills = togglePills(a);
+  // 社区导入的站点：名字旁挂一个绿标，鼠标移上去看出处（作者 / 版本 / 来源）
+  const com = site && site.community;
+  const comTip = com
+    ? `社区共享的站点适配：${com.author ? '作者 ' + com.author : '匿名'}${com.version ? ' · v' + com.version : ''}`
+      + (com.source ? `\n来源：${com.source}` : '\n在「社区站点」卡片里可以删除或重新导入')
+    : '';
+  const comBadge = com ? `<span class="badge com" data-tip="${esc(comTip)}" style="padding:1px 7px;font-size:10.5px">社区</span>` : '';
+  // 支持「浏览器导航签到」的站点（如吾爱破解）：给一个手动触发入口。
+  // 它的意义在于：该站点的脚本化请求会被 WAF 整站拦死，只有真实页导航能签上。
+  const bsign = site && site.hasBrowserJob
+    ? `<button class="pill bsign" data-bsign="${a.id}" title="让浏览器扩展打开该网站的签到页（等同人手点一下），适合被 WAF 拦死的站点">🌐 浏览器签到</button>`
+    : '';
   return {
     isLocalExec,
     siteHint: hint,
-    html: `<div class="site-wrap"><div class="site-head"><b>${esc(a.name)}</b>`
+    html: `<div class="site-wrap"><div class="site-head"><b>${esc(a.name)}</b>${comBadge}`
       + `<button class="ghost sm exec-switch" data-exec="${a.id}" title="${esc(execTitle)}">切换</button>`
-      + `</div><div class="site-line">${execBadge}</div>${pills}</div>`,
+      + `</div><div class="site-line">${execBadge}</div>${bsign}${pills}</div>`,
   };
+}
+
+// ---------- 网站反馈：尽量展示「网站原话」----------
+// 我们的站点模块有时会把网站的说法归纳成套话（「今日已签到，不能重复签到」），
+// 但用户要看的是**网站到底说了什么**。所以：
+//   ① 网站原文里的 \u 转义先还原成人话（糊涂鳄返回的就是全转义 JSON）
+//   ② 当主文案是我们自己的套话、而原文里能读到网站自己的 message 时，改用网站原话
+
+// 还原 \u4eca\u65e5 这类 JSON 转义
+function decodeEscapes(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\\//g, '/');
+}
+
+// 我们自己的套话（不含任何站点信息，只有判定）
+const BOILERPLATE_MSG = [
+  '今日已签到，不能重复签到', '今日已签到，无需重复', '今日已签到，请明日再来',
+  '今日已签到', '签到成功', '签到失败', '请求成功', '领取成功', '签到完毕',
+];
+
+// 从网站原文里抠出网站自己的那句话（JSON 的 message / msg / errmsg / status_msg…）
+function siteOwnMessage(raw) {
+  const m = String(raw || '').match(/"(?:message|msg|errmsg|info|status_msg)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+  if (!m) return '';
+  let s = decodeEscapes(m[1]).replace(/\s+/g, ' ').trim();
+  // 太短（如单个「0」）或太长（整段 HTML）都不当反馈
+  if (s.length < 4 || s.length > 120) return '';
+  if (BOILERPLATE_MSG.includes(s)) return '';
+  return s;
 }
 
 // 网站反馈的「怎么办」提示：根据回传的原始文本判断失败类型，给一句可执行的中文建议。
@@ -1479,14 +1758,34 @@ function feedbackHint(msg, siteId, isLocalExec) {
   if (/人机验证|验证码|captcha|turnstile|请先完成验证/i.test(m)) {
     return '建议：该网站需要人工验证，请在浏览器里登录/过一次验证，再点扩展图标重新获取 Cookie';
   }
+  // 「结果未知」要在「已签到」那条之前判：它的文案里会提到「若已签到网站会直接回今日已签到」，
+  // 否则会被下面那条当成「已经签过了」而什么都不提示。
+  if (/结果未知/.test(m)) {
+    return '建议：这次请求已经发出去了、但没等到网站回包，签到**可能已经生效** —— 面板会自动复核（约 15 分钟后）；'
+      + '想立刻确认就过一分钟再点一次「执行」，若已签到，网站会直接回「今日已签到」';
+  }
   if (/最少等待|一天只能|已签到|重复签到/.test(m)) return '';
   if (/Cookie.*(失效|过期)|未登录|login required|请先登录/i.test(m)) {
     return isLocalExec
       ? '建议：浏览器里登录该网站后，点扩展图标「一键复制 Cookie」，回面板粘贴保存'
       : '建议：Cookie 已过期，请重新登录后再复制一次 Cookie；若仍失败可切「本地网络」';
   }
+  // 站点自己的按钮写着「打卡签到」= 站点说今天还没签上（比从超时去猜可靠得多）
+  if (/没有生效|打卡签到|未签到/.test(m)) {
+    return siteId === 'wuaipojie'
+      ? '说明：网站顶部那个按钮仍是「打卡签到」，今天确实还没签上。'
+        + '吾爱破解的签到接口受网宿 WAF 保护，用「本地网络」（中继）时常把连接吊死；'
+        + '请在浏览器打开 www.52pojie.cn 手动点一次那个按钮（可能要先过滑块），然后再回面板执行一次就会读到「签到完毕」'
+      : '说明：网站按钮显示还没签到。请在浏览器里手动点一次签到按钮，再回面板执行一次';
+  }
   if (/中继执行超时|超时|timed? ?out/i.test(m)) {
-    return '建议：请确认浏览器扩展在线（点扩展图标看连接状态），并保持该网站的标签页可以正常打开';
+    return '建议：这次请求超时了，网站可能实际已经签到成功 —— 先刷新网站看一下顶部按钮：'
+      + '显示「签到完毕」就是签上了；再确认浏览器扩展在线（点扩展图标看连接状态）';
+  }
+  // 糊涂鳄按 UTC 计日（北京时间 08:00 才重置），不解释一句很容易被当成「假签到」
+  if (siteId === 'hutue' && /已签到|明日再来|重复/.test(m)) {
+    return '说明：糊涂鳄按 UTC 计日 —— 北京时间 08:00 才算它的一天，所以 08:00 之前它都会回「今日已签到」。'
+      + '如果你在网站里点签到还能领到积分，把「签到时间」设到 08:00 之后（例如 08:05）就能每天自动领到';
   }
   if (/扩展(离线|不在线)|中继不可用|relay unavailable/i.test(m)) {
     return '建议：打开浏览器、确认扩展已安装并处于在线状态；中继任务由扩展接单执行';
@@ -1537,31 +1836,45 @@ async function loadAccounts() {
       execOverride = m.execution || '';
       lastSigninDate = m.last_signin_date || '';
     } catch { /* 忽略 */ }
-    // 今日是否已签到：比较面板设置时区下的日期（跨零点自动回到「未签到」）
-    const today = todayInSchedTz();
-    const signedToday = lastSigninDate === today;
+    // 今日是否已签到：按该账号所属站点的日界时区比较日期
+    // （跨零点自动回到「未签到」；糊涂鳄按 UTC 计日，北京时间 08:00 才算新的一天）
+    const signedToday = lastSigninDate === accountDay(a);
+    // 「结果未知」（请求发出去了但没等到回包）：既没凭据说「已签到」，也不该武断说「未签到」——
+    // 网站很可能已经签了。单独给一个「待确认」，鼠标移上去说清怎么核实。
+    const unknown = !signedToday && a.last_status === 'skip' && /结果未知/.test(String(a.last_msg || ''));
     const statusBadge = signedToday
       ? '<span class="badge ok">已签到</span>'
-      : '<span class="badge fail">未签到</span>';
+      : unknown
+        ? '<span class="badge skip" data-tip="这次请求已经发出去了，但没等到网站回包 —— 签到可能已经生效。面板会自动复核（约 15 分钟后）；想立刻知道就点「执行」再跑一次：若已签到，网站会直接回「今日已签到」。">待确认</span>'
+        : '<span class="badge fail">未签到</span>';
     const { html: execCell, isLocalExec, siteHint } = execCellHTML(a, execOverride);
     const rawMsg = String(a.last_msg || '');
     // 旧版本遗留的提示文案（已无意义），不展示
     const msg = (rawMsg.includes('浏览器模式') || rawMsg.includes('请确保扩展')) ? '' : rawMsg;
-    // 网站原文（站点模块回传的 detail）：让人能直接对照网站到底说了什么
-    const rawText = String(a.last_detail || '').replace(/^网站返回：/, '').trim();
-    const rawShow = rawText && rawText !== msg ? rawText.slice(0, 220) : '';
+    // 网站原文（站点模块回传的 detail）：让人能直接对照网站到底说了什么。
+    // \uXXXX 转义先还原成人话（糊涂鳄回的是一整串转义 JSON，直接展示没法看）。
+    const rawText = decodeEscapes(String(a.last_detail || '')).replace(/^网站返回：/, '').trim();
+    // 主文案：如果只有我们的套话，而原文里能读到网站自己的 message，就换用网站原话
+    let msgShow = msg;
+    let bySite = false;
+    if (!msg || BOILERPLATE_MSG.includes(msg.trim())) {
+      const own = siteOwnMessage(rawText);
+      if (own && own !== msg) { msgShow = own; bySite = true; }
+    }
+    const rawShow = rawText && rawText !== msgShow ? rawText.slice(0, 220) : '';
     // 红标提示要拿「反馈 + 网站原文」一起判：
     // 比如吾爱的 message 只有「HTTP 403」，真正能认出是网宿 UrlACL 的关键词在原文里。
     // 站点级推荐（如糊涂鳄建议切本地网络）也统一放到网站反馈后面
-    let hintText = feedbackHint(msg + '\n' + rawText, a.site, isLocalExec);
+    let hintText = feedbackHint((bySite ? msg + '\n' : '') + msgShow + '\n' + rawText, a.site, isLocalExec);
     if (siteHint) hintText = (hintText ? hintText + '\n' : '') + '推荐：' + siteHint;
     return `
     <tr>
       <td class="site-cell" data-exec-cell="${a.id}">${execCell}</td>
       <td class="c"><div class="sched-cell"><div data-tp-acc="${a.id}" title="点击设置该账号的独立签到时间（跟随全局：${GLOBAL_HOUR}）"></div></div></td>
       <td class="c">${statusBadge}</td>
-      <td class="msg"><div class="msg-line"><span class="msg-main">${msg ? esc(msg) : '-'}</span>${hintText ? `<span class="hint-dot" data-tip="${esc(hintText)}">!</span>` : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}</td>
+      <td class="msg"><div class="msg-main">${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-dot" data-tip="${esc(hintText)}">!</span><span class="hint-tag">怎么办</span></div>` : ''}</td>
       <td class="muted c">${fmtTime(a.last_run_at)}</td>
+
       <td class="c"><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
       <td class="c"><div style="display:inline-flex;gap:6px;white-space:nowrap">
         <button class="ghost sm" data-run="${a.id}" title="执行签到" style="white-space:nowrap">执行</button>
@@ -1599,6 +1912,7 @@ async function loadAccounts() {
 
   refreshCkSelect();
   refreshLogAccountFilter();
+  refreshExportAccounts(); // 「导出为社区配置」的下拉跟着账号列表走
 }
 
 // 给一定范围内的行按钮绑定事件。单独抽出来是因为「就地更新一行」之后也要重新绑定。
@@ -1620,6 +1934,22 @@ function bindRowActions(tb, accounts) {
       } catch { /* 忽略 */ }
     }
     applyExecToRow(id);
+  }));
+
+  // 🌐 浏览器签到：让扩展打开该站的签到页（适合脚本化请求被 WAF 整站拦死的站点）
+  tb.querySelectorAll('[data-bsign]').forEach((b) => (b.onclick = async () => {
+    const id = b.dataset.bsign;
+    const orig = b.innerHTML;
+    b.disabled = true; b.textContent = '已交给浏览器…';
+    try {
+      const r = await api('/api/accounts/' + id + '/browser-sign', 'POST');
+      toast(r.hint || '已交给浏览器执行，稍后自动写回结果', 4200);
+      // 任务已入队，但对扩展是秒级窗口；给个提示后重新拉一次列表
+      setTimeout(loadAccounts, 1500);
+    } catch (e) {
+      toast('浏览器签到失败：' + e.message, 3600);
+      b.disabled = false; b.innerHTML = orig;
+    }
   }));
 
   tb.querySelectorAll('[data-toggle]').forEach((b) => (b.onclick = async () => {
@@ -1932,7 +2262,7 @@ $('btn-probe').onclick = async () => {
 };
 
 async function openModal(id) {
-  $('f-site').innerHTML = SITES.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
+  renderModalSites();
   HTTP_MODE = 'single';
   HTTP_STEPS = [];
   if (id) {
@@ -1983,6 +2313,224 @@ $('btn-save').onclick = async () => {
     $('modal-bg').classList.add('hidden');
     toast('已保存'); loadAccounts();
   } catch (e) { toast(e.message); }
+};
+
+// ---------- 社区站点（开源共享）：导入 / 导出 / 删除 ----------
+// 一段配置长得什么样，面板要给人看懂：站点名、作者、版本、要填几个字段、几步请求。
+function communitySummary(cfg) {
+  if (!cfg) return '';
+  const fields = (cfg.fields || []).map((f) => f.label || f.key).join('、') || '无（不需填任何东西）';
+  const steps = (cfg.steps || []).map((st, i) => `${i + 1}. ${esc(st.name || '步骤')} ${esc((st.method || 'GET').toUpperCase())} ${esc(st.url || '')}`).join('<br>');
+  return `<table class="com-tbl">
+    <tr><th>站点</th><td>${esc(cfg.name || '-')} ${cfg.domain ? `<span class="muted">(${esc(cfg.domain)})</span>` : ''}</td></tr>
+    <tr><th>作者 / 版本</th><td>${esc(cfg.author || '匿名')}${cfg.version ? ' · v' + esc(cfg.version) : ''}</td></tr>
+    <tr><th>内码 id</th><td><code>${esc(cfg.id || '-')}</code></td></tr>
+    <tr><th>要填的字段</th><td>${esc(fields)}</td></tr>
+    <tr><th>请求步骤</th><td>${steps || '-'}</td></tr>
+    ${cfg.tips ? `<tr><th>使用说明</th><td>${esc(cfg.tips)}</td></tr>` : ''}
+  </table>`;
+}
+
+function communityMsg(el, cls, html) {
+  el.innerHTML = html ? `<div class="com-msg ${cls}">${html}</div>` : '';
+}
+
+async function loadCommunity() {
+  let list = [];
+  try {
+    const r = await api('/api/sites/community');
+    list = r.sites || [];
+    if (r.author && !$('com-author').value) $('com-author').value = r.author;
+  } catch (e) {
+    $('com-list').innerHTML = `<div class="com-empty">读取失败：${esc(e.message)}</div>`;
+    return;
+  }
+  const box = $('com-list');
+  if (!list.length) {
+    box.innerHTML = '<div class="com-empty">还没有导入任何社区站点。把别人分享的 JSON 粘到上面导入，或把自己的账号导出后一起去仓库里共建。</div>';
+    return;
+  }
+  box.innerHTML = list.map((s) => {
+    const steps = (s.def && s.def.steps ? s.def.steps.length : 0);
+    return `<div class="com-item" data-com="${esc(s.id)}">
+      <span class="badge com">社区</span>
+      <div class="grow"><b>${esc(s.name)}</b>
+        <div class="meta">${s.def && s.def.domain ? esc(s.def.domain) + ' · ' : ''}${esc(s.author || '匿名')}${s.version ? ' · v' + esc(s.version) : ''} · ${steps} 步请求${s.source ? ` · <a href="${esc(s.source)}" target="_blank" rel="noreferrer" style="color:var(--accent2)">来源</a>` : ''}</div>
+      </div>
+      <button class="ghost sm" data-cact="view" type="button">查看</button>
+      <button class="ghost sm" data-cact="copy" type="button">复制 JSON</button>
+      <button class="danger sm" data-cact="del" type="button">删除</button>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-cact]').forEach((b) => (b.onclick = () => communityAct(b.dataset.cact, b.closest('[data-com]').dataset.com)));
+}
+
+async function communityAct(act, id) {
+  const out = $('com-out');
+  if (act === 'del') {
+    if (!confirm('删除社区站点「' + id + '」？\n用它的账号会变成未知站点（账号本身不会被删，重新导入同一份配置即可恢复）。')) return;
+    try { await api('/api/sites/community/' + encodeURIComponent(id), 'DELETE'); toast('已删除'); await reloadSites(); await loadCommunity(); }
+    catch (e) { toast(e.message); }
+    return;
+  }
+  let cfg;
+  try {
+    const r = await api('/api/sites/community/' + encodeURIComponent(id));
+    cfg = r.config;
+  } catch (e) { return toast(e.message); }
+  const text = JSON.stringify(cfg, null, 2);
+  out.value = text;
+  out.classList.remove('hidden');
+  $('btn-com-copy').style.display = '';
+  $('btn-com-download').style.display = '';
+  $('btn-com-download').dataset.name = cfg.id;
+  communityMsg($('com-msg2'), 'ok', `<b>${esc(cfg.name)}</b> 的配置（可以直接复制去分享）：${communitySummary(cfg)}`);
+  if (act === 'copy') copyCommunityOut();
+  out.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+async function copyCommunityOut() {
+  const v = $('com-out').value;
+  if (!v) return toast('还没有可复制的内容');
+  try { await navigator.clipboard.writeText(v); toast('已复制，粘到 GitHub Issue / 聊天窗就能分享'); }
+  catch { toast('复制失败：请手动全选复制'); }
+}
+
+async function reloadSites() {
+  const { sites } = await api('/api/sites');
+  SITES = sites;
+  await loadAccounts();
+  refreshExportAccounts();
+  renderModalSites();
+}
+
+// 「导出我的配置」下拉：列出可以导出的账号（自定义 HTTP / 已导入的社区站点）
+function refreshExportAccounts() {
+  const sel = $('com-export-account');
+  if (!sel) return;
+  const cur = sel.value;
+  const ok = ACCTS.filter((a) => a.site === 'http' || (SITES.find((s) => s.id === a.site) || {}).community);
+  sel.innerHTML = ok.length
+    ? ok.map((a) => `<option value="${a.id}">${esc(a.name)}（${esc(siteName(a.site))}）</option>`).join('')
+    : '<option value="">（还没有可导出的账号：先用「自定义 HTTP」录一个）</option>';
+  if (ok.some((a) => String(a.id) === cur)) sel.value = cur;
+}
+
+// 站点下拉里把社区站点标出来，并保留当前选中项
+function renderModalSites() {
+  const sel = $('f-site');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = SITES.map((s) => {
+    const tag = s.community ? `（🌍 社区${s.community.author ? ' · ' + s.community.author : ''}）` : '';
+    return `<option value="${s.id}">${esc(s.name)}${tag}</option>`;
+  }).join('');
+  if (cur && SITES.some((s) => s.id === cur)) sel.value = cur;
+}
+
+$('btn-com-check').onclick = async () => {
+  const raw = $('com-paste').value.trim();
+  const url = $('com-url').value.trim();
+  if (!raw && !url) return toast('先粘贴配置 JSON，或填一个配置链接');
+  const msg = $('com-msg');
+  communityMsg(msg, 'warn', '正在校验…');
+  try {
+    const r = await api('/api/sites/community', 'POST', { config: raw || undefined, url: url || undefined, dry_run: 1 });
+    const conf = r.config || {};
+    if (!r.ok) {
+      communityMsg(msg, 'bad', '<b>这份配置还不能导入：</b><br>' + (r.errors || []).map(esc).join('<br>'));
+      return;
+    }
+    const warn = (r.warnings || []).length ? `<div style="margin-top:6px">⚠️ ${(r.warnings || []).map(esc).join('<br>⚠️ ')}</div>` : '';
+    communityMsg(msg, 'ok', '<b>校验通过，可以导入：</b>' + communitySummary(conf) + warn);
+  } catch (e) { communityMsg(msg, 'bad', '校验失败：' + esc(e.message)); }
+};
+
+$('btn-com-import').onclick = async (e) => {
+  const raw = $('com-paste').value.trim();
+  const url = $('com-url').value.trim();
+  if (!raw && !url) return toast('先粘贴配置 JSON，或填一个配置链接');
+  const msg = $('com-msg');
+  const btn = e.target;
+  btn.disabled = true; btn.textContent = '导入中…';
+  try {
+    const payload = { config: raw || undefined, url: url || undefined };
+    let r;
+    try {
+      r = await api('/api/sites/community', 'POST', payload);
+    } catch (err) {
+      // 已经导入过：问一句再覆盖
+      if (!/已经导入过/.test(err.message)) throw err;
+      if (!confirm(err.message + '\n\n用这份新配置覆盖它？')) throw err;
+      r = await api('/api/sites/community', 'POST', { ...payload, overwrite: true });
+    }
+    communityMsg(msg, 'ok', `✅ 已导入「${esc(r.name)}」（id: ${esc(r.id)}）。现在去「添加账号」里选它，填好 Cookie 即可签到。`);
+    $('com-paste').value = ''; $('com-url').value = '';
+    await reloadSites();
+    await loadCommunity();
+  } catch (err) {
+    communityMsg(msg, 'bad', '导入失败：' + esc(err.message));
+  } finally {
+    btn.disabled = false; btn.textContent = '⬇️ 导入';
+  }
+};
+
+$('btn-com-export').onclick = async (e) => {
+  const sel = $('com-export-account');
+  const id = sel && sel.value;
+  const msg = $('com-msg2');
+  const out = $('com-out');
+  if (!id) return toast('先在「自定义 HTTP」里录一个账号，再回来导出');
+  const btn = e.target;
+  btn.disabled = true; btn.textContent = '导出中…';
+  try {
+    const author = $('com-author').value.trim();
+    if (author) await api('/api/sites/community/author', 'PUT', { author }).catch(() => {});
+    const q = new URLSearchParams();
+    // 先按账号名签一个默认 id/name，用户导入的人看到的就是这个
+    const acc = ACCTS.find((a) => String(a.id) === String(id));
+    if (acc) q.set('name', acc.name);
+    const r = await api('/api/accounts/' + id + '/export-config?' + q.toString());
+    if (r.ok === false && (r.errors || []).length) {
+      // 导出的配置自己没通过校验（作者必填项没写全之类）——把原因摊开，不假装成功
+      communityMsg(msg, 'warn', '<b>导出了，但配置还有问题，先改好再分享：</b><br>' + (r.errors || []).map(esc).join('<br>'));
+      out.value = JSON.stringify(r.config, null, 2);
+      out.classList.remove('hidden');
+      $('btn-com-copy').style.display = '';
+      $('btn-com-download').style.display = '';
+      $('btn-com-download').dataset.name = r.config.id;
+      return;
+    }
+    out.value = JSON.stringify(r.config, null, 2);
+    out.classList.remove('hidden');
+    $('btn-com-copy').style.display = '';
+    $('btn-com-download').style.display = '';
+    $('btn-com-download').dataset.name = r.config.id;
+    const warn = (r.warnings || []).length ? `<div style="margin-top:6px">⚠️ ${(r.warnings || []).map(esc).join('<br>⚠️ ')}</div>` : '';
+    communityMsg(msg, 'ok', '<b>导出成功，底部就是可分享的配置</b>：复制或存成 .json，发到仓库的 Issue / PR 即可。'
+      + communitySummary(r.config) + warn);
+    out.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  } catch (err) {
+    communityMsg(msg, 'bad', esc(err.message));
+  } finally {
+    btn.disabled = false; btn.textContent = '📤 导出为社区配置';
+  }
+};
+
+$('btn-com-copy').onclick = copyCommunityOut;
+$('btn-com-download').onclick = () => {
+  const v = $('com-out').value;
+  if (!v) return toast('还没有内容可下载');
+  const name = ($('btn-com-download').dataset.name || 'community-site') + '.json';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([v], { type: 'application/json' }));
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+  toast('已保存 ' + name);
+};
+$('com-author').onchange = () => {
+  api('/api/sites/community/author', 'PUT', { author: $('com-author').value.trim() }).catch(() => {});
 };
 
 // ---------- 日志 ----------
@@ -2067,7 +2615,7 @@ async function refreshExtState() {
   }
   if (boxState) {
     boxState.className = RELAY_ONLINE ? 'badge ok' : 'badge off';
-    boxState.textContent = RELAY_ONLINE ? '已安装 · 在线' : '未检测到（点这里看状态）';
+    boxState.textContent = RELAY_ONLINE ? '已安装 · 在线' : '未安装 / 未开启';
   }
   return RELAY_ONLINE;
 }

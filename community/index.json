@@ -1,0 +1,26 @@
+{
+  "schema": "daily-checkin-community-index/1",
+  "note": "已收录的社区站点适配。面板里可以直接把这些 raw 链接粘进「导入」框，一行一个。",
+  "sites": [
+    {
+      "id": "simple_api_signin",
+      "name": "示例：单次请求签到（JSON 接口）",
+      "author": "guoxpeng",
+      "version": "1.0.0",
+      "verified": false,
+      "raw": "https://raw.githubusercontent.com/guoxpeng/daily-checkin-panel/main/community/sites/simple-api-signin.json"
+    },
+    {
+      "id": "discuz_signin_template",
+      "name": "示例：Discuz 论坛签到（两步）",
+      "author": "guoxpeng",
+      "version": "1.0.0",
+      "verified": false,
+      "raw": "https://raw.githubusercontent.com/guoxpeng/daily-checkin-panel/main/community/sites/discuz-signin-template.json"
+    }
+  ],
+  "howto": {
+    "use": "把上面任意 raw 链接粘到面板『🌍 社区站点』卡片的『或：配置的原始链接』里 → 校验预览 → 导入",
+    "contribute": "自己录一个能跑的账号 → 『导出我的配置』→ 把 JSON 放到 community/sites/ 并更新本文件 → 开 PR"
+  }
+}

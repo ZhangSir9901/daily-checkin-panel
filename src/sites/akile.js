@@ -126,9 +126,12 @@ export const akile = {
     if (okCode(chk.body.status_code)) {
       const d = chk.body.data || {};
       const amount = d.amount ?? d.akCoin ?? d.coin ?? '';
-      return { ok: true, message: amount ? `签到成功，获得 ${amount} AK币` : `签到成功：${msg || '领取成功'}` };
+      // 站点的 status_msg 经常就是「签到成功」四个字，直接用它，不再加前缀
+      // （以前会变成「签到成功：签到成功」）；有结构化金额时用金额说人话
+      return { ok: true, message: amount ? `签到成功，获得 ${amount} AK币` : (msg || '签到成功') };
     }
-    if (msg.includes('已签到')) return { ok: true, message: '今日已签到，无需重复' };
+    // 主文案用网站原话（status_msg），拿不到才用我们的套话
+    if (msg.includes('已签到')) return { ok: true, message: msg || '今日已签到，无需重复' };
     throw new Error('签到失败：' + (msg || `status_code=${chk.body.status_code}`));
   },
 
@@ -150,12 +153,12 @@ export const akile = {
       if (okCode(body.status_code)) {
         const d = body.data || {};
         const amount = d.amount ?? d.akCoin ?? d.coin ?? '';
-        return { ok: true, message: amount ? `签到成功，获得 ${amount} AK币` : `签到成功：${msg || '领取成功'}` };
+        return { ok: true, message: amount ? `签到成功，获得 ${amount} AK币` : (msg || '签到成功') };
       }
       if (/过期|无效|未登录|unauthorized|token/i.test(msg) || res.status === 401) {
         return { ok: false, message: '登录已过期，请重新从浏览器复制 akile-token' };
       }
-      if (msg.includes('已签到')) return { ok: true, message: '今日已签到，无需重复' };
+      if (msg.includes('已签到')) return { ok: true, message: msg || '今日已签到，无需重复' };
       return { ok: false, message: '签到失败：' + (msg || `status_code=${body.status_code}`) };
     },
   },

@@ -10,7 +10,7 @@
 //
 // extract 的点路径：如 data.token；也支持 data.list.0.id。
 
-import { classifySignal, needsHuman, OUTCOME } from '../lib/signals.js';
+import { classifySignal, needsHuman, OUTCOME, siteMessageFrom } from '../lib/signals.js';
 
 function subst(str, vars) {
   return String(str == null ? '' : str).replace(/\{\{\s*([\w$]+)\s*\}\}/g, (_, k) =>
@@ -34,7 +34,16 @@ function jsonPath(text, path) {
 }
 
 function parseHeaders(raw, vars) {
-  if (!raw || !String(raw).trim()) return {};
+  if (!raw) return {};
+  // 两种写法都支持：
+  //   · 对象（社区配置里作者手写，更自然）
+  //   · JSON 字符串（账号录制器里存的就是这种）
+  if (typeof raw === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(raw)) out[k] = subst(v == null ? '' : String(v), vars);
+    return out;
+  }
+  if (!String(raw).trim()) return {};
   let h;
   try {
     h = JSON.parse(subst(raw, vars));
@@ -45,10 +54,13 @@ function parseHeaders(raw, vars) {
   return h;
 }
 
-// 执行多步场景，返回 { ok, message, vars }；失败时抛错（含步骤名）。
-export async function runHttpSteps(steps) {
+// 执行多步场景，返回 { ok, message, vars, detail }；失败时抛错（含步骤名）。
+// vars：变量表。initialVars 会先铺进去（账号字段直接当变量用，如 {{cookie}}、{{site_url}}），
+// 后续步骤 extract 出的变量可以覆盖它们；社区配置就是靠这个机制做到「零代码适配」。
+export async function runHttpSteps(steps, initialVars = {}) {
   if (!Array.isArray(steps) || steps.length === 0) throw new Error('至少需要一个步骤');
-  const vars = {};
+  const vars = { ...(initialVars || {}) };
+  let lastText = ''; // 最后一步的原始响应：作为「网站反馈」原话展示
   for (let i = 0; i < steps.length; i++) {
     const st = steps[i] || {};
     const name = st.name || `步骤${i + 1}`;
@@ -57,7 +69,9 @@ export async function runHttpSteps(steps) {
     const method = String(st.method || 'GET').toUpperCase();
     const headers = parseHeaders(st.headers, vars);
     const init = { method, headers };
-    const body = subst(st.body || '', vars);
+    // 请求体同样两种写法都收：对象（社区配置）或字符串（录制器）
+    const rawBody = st.body && typeof st.body === 'object' ? JSON.stringify(st.body) : st.body;
+    const body = subst(rawBody || '', vars);
     if (body && method !== 'GET' && method !== 'HEAD') init.body = body;
 
     let res, text;
@@ -80,6 +94,7 @@ export async function runHttpSteps(steps) {
       }
     }
 
+    lastText = text;
     const expectStatus = parseInt(st.expect_status || '200', 10);
     // 统一识别网站反馈：登录失效 / 验证码 / WAF / 已签到 都能给出可操作结论，
     // 而不是只报一个生硬的状态码。很多站点重复签到会返回非预期内容，这里不该算失败。
@@ -98,7 +113,17 @@ export async function runHttpSteps(steps) {
     }
   }
   const varDesc = Object.keys(vars).length ? `（提取变量：${Object.keys(vars).join('、')}）` : '';
-  return { ok: true, message: `${steps.length} 步全部成功${varDesc}`, vars };
+  // 主文案尽量用**网站自己的话**（响应 JSON 里的 message/msg）：
+  // 社区配置的判定是通用的，但反馈应该让用户看到网站怎么说。
+  const siteMsg = siteMessageFrom(lastText);
+  return {
+    ok: true,
+    message: steps.length === 1
+      ? (siteMsg || '签到成功')
+      : `${steps.length} 步全部成功${siteMsg ? `：${siteMsg}` : varDesc}`,
+    vars,
+    detail: lastText ? '网站返回：' + lastText.replace(/\s+/g, ' ').slice(0, 300) : '',
+  };
 }
 
 export const httpTask = {

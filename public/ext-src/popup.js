@@ -183,18 +183,17 @@ $('api-key').onchange = () => {
   chrome.storage.sync.set({ apiKey: $('api-key').value.trim() });
 };
 
-// 立即开始中继（让后台马上领任务）。
-// 后台常驻长轮询（挂起 20 秒），所以这里点一下等于“立刻唤醒”一次，
-// 配合面板端的「执行」，签到请求会在 1 秒内被扩展领走，不用再等 alarm 周期。
-$('btn-run-now').onclick = async () => {
+// 打开弹窗时顺手叫醒一次中继（后台常驻长轮询，本来就会自己跑）。
+// 以前这里还有个「立即执行待办签到」按钮——它会挂住弹窗、也让用户以为要手动点才干活，已删掉：
+// 面板点「执行」时后台会在 1 秒内接到单，不需要在弹窗上再点一次。
+// 延到下一个 tick：先把弹窗自己的 UI 初始化完，再去叫醒后台，
+// 不抢在主界面之前干活（后台不在时静默忽略，不影响取 Cookie）。
+setTimeout(() => {
   try {
-    await chrome.runtime.sendMessage({ action: 'runRelayNow' });
-    status('已唤醒中继，正在实时接单…去面板点「执行」即可', 'ok');
-    chrome.alarms.create('relay-poll', { periodInMinutes: 0.5 });
-  } catch (e) {
-    status('唤醒失败：' + (e.message || e) + '（可重新加载扩展后重试）', 'err');
-  }
-};
+    const p = chrome.runtime.sendMessage({ action: 'runRelayNow' });
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch { /* 忽略 */ }
+}, 0);
 
 // 原生页面巡检：不依赖 eval / new Function（MV3 禁止），用于读取网站真实反馈。
 async function inspectPageInPopup(tabId) {
@@ -211,14 +210,72 @@ async function inspectPageInPopup(tabId) {
       if (CAPTCHA.some((m) => all.includes(m))) return { ok: false, message: '遇到人机验证/安全验证（验证码/滑块），需人工验证后重试｜页面：' + title };
       const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'Access Denied', '403 Forbidden', '请求被拦截'];
       if (WAF.some((m) => all.includes(m))) return { ok: false, message: '遇到网站安全防护（WAF），请在浏览器完成验证后重试｜页面：' + title };
-      // 2) 签到成功
-      if (/任务已完成|签到成功|打卡成功|签到完毕|签到完成|已连续签到|领取成功|成功领取|恭喜.{0,12}(获得|领到|签到)|获得.{0,10}(鸡腿|积分|金币|铜币|银币|AK|币|空间|MB|GB|M|G)/.test(all)) {
-        return { ok: true, message: '签到成功｜' + (compact.slice(0, 120) || title) };
+      // ---- 找「去签到」入口（Discuz 系论坛通用）----
+      const ALREADY = /已签到|已经签到|已打卡|签到完毕|签到完成|连续签到|今日已签|明天再来|下期再来/;
+      const SIGN_TEXT = /打卡签到|立即签到|点击签到|点击打卡|签到领奖|每日签到|每日打卡|签个到|去签到|未打卡|还没有签到|今天还没有/;
+      const SIGN_IMG = /qds\.png|signin_no\.png|pperwb\.gif|wb\.png|qiandao|qdbg|sign_?in/i;
+      const SIGN_SEL = '#kx,#JD_sign,#addsign,#sg_sign,#dcsignin_tips,#tt_sign,.punch_btn,.go-user-qiandao,a.initiate-checkin,#my_amupper,#pper_a,#sign_title,#setsign,.click-qiandao,.zzhuti_qd_1,.user-index-qd,.taskbtn';
+      const attrOf = (el) => ((el.getAttribute && el.getAttribute('href') || '') + ' ' + (el.id || '') + ' ' +
+        (el.className || '') + ' ' + (el.getAttribute && el.getAttribute('title') || '')).replace(/\s+/g, ' ');
+      const textOf = (el) => String(el.innerText || el.textContent || '').replace(/\s+/g, '');
+      const imgsOf = (el) => Array.from(el.querySelectorAll ? el.querySelectorAll('img') : [])
+        .concat(el.tagName === 'IMG' ? [el] : [])
+        .map((i) => (i.getAttribute('src') || '') + ' ' + (i.getAttribute('alt') || '')).join(' ');
+      const findSignLink = () => {
+        const applies = Array.from(document.querySelectorAll('a[href*="do=apply"], a[href*="do=draw"]'))
+          .filter((a) => /mod=task/i.test(a.getAttribute('href') || ''));
+        for (const a of applies) {
+          if (ALREADY.test(textOf(a))) continue;
+          const own = textOf(a) + ' ' + attrOf(a) + ' ' + imgsOf(a);
+          const row = a.closest('tr') || a.closest('li') || a.closest('table') || a.parentElement;
+          const rowTxt = ((row && row.innerText) || '').replace(/\s+/g, ' ').slice(0, 200);
+          const rowDone = /已完成|已申请|已领取|已打卡/.test(rowTxt) && !/立即申请|马上申请|申请任务/.test(rowTxt);
+          if (rowDone) return { href: a.getAttribute('href') || '', label: (textOf(a) || '签到'), done: true };
+          if (/qds\.png|打卡|每日|签到/i.test(own + ' ' + rowTxt) || applies.length === 1) {
+            return { href: a.getAttribute('href') || '', label: (textOf(a) || '打卡签到'), done: false };
+          }
+        }
+        const known = Array.from(document.querySelectorAll(SIGN_SEL));
+        for (const el of known) {
+          const own = textOf(el) + ' ' + attrOf(el) + ' ' + imgsOf(el);
+          if (ALREADY.test(own)) continue;
+          const href = (el.getAttribute && el.getAttribute('href')) || '';
+          const usable = href && !/^javascript:void/i.test(href) ? href : '';
+          el.setAttribute('data-panel-sign', '1');
+          return { href: usable, clickSel: '[data-panel-sign="1"]', label: (textOf(el) || '签到'), done: false };
+        }
+        for (const el of Array.from(document.querySelectorAll('a,button,[onclick],img'))) {
+          const t = textOf(el);
+          const im = imgsOf(el);
+          if (ALREADY.test(t + ' ' + im)) continue;
+          if (!(SIGN_TEXT.test(t) || SIGN_IMG.test(im))) continue;
+          const href = (el.getAttribute && el.getAttribute('href')) || '';
+          if (!href && !el.onclick && !el.getAttribute('onclick')) continue;
+          el.setAttribute('data-panel-sign', '1');
+          return { href: /^javascript:/i.test(href) ? '' : href, clickSel: '[data-panel-sign="1"]', label: (t || '签到'), done: false };
+        }
+        return null;
+      };
+      const SIGNED = /签到完毕|签到完成|您已完成过此任务|您已经完成此任务|您今日已经签到|您今天已经签到|今天已经签到|已经签到过|已经完成签到|今日任务已完成|今日已签到|今天已完成签到|已连续签到|下期再来|明天再来|无需重复|恭喜.{0,14}(完成|获得|领到|签到)/;
+      const SUCCESS = /任务已完成|签到成功|打卡成功|领取成功|成功领取|获得.{0,10}(鸡腿|积分|金币|铜币|银币|吾爱币|AK|币|空间|MB|GB)/;
+      let link = null;
+      try { link = findSignLink(); } catch (e) { link = null; }
+      if (!link) {
+        const am = all.match(/<a[^>]*href=["']([^"']*mod=task[^"']*do=(?:apply|draw)[^"']*)["'][^>]*>/i);
+        if (am && /qds\.png|打卡签到|每日签到|每日打卡|签到完毕/i.test(all) && !/已完成过此任务|您已经完成此任务/.test(all)) {
+          link = { href: am[1].replace(/&amp;/g, '&'), label: '打卡签到', done: false };
+        }
       }
-      // 3) 今日已签到（Discuz 重复申请会返回「您已完成过此任务」）
-      if (/今日已签到|今天已签到|已经签到|已签到|重复签到|请勿重复|无需重复|下期再来|已完成过此任务|已领取/.test(all)) return { ok: true, message: '今日已签到，无需重复' };
-      // 4) 未登录
-      if (/需要先登录|请先登录|还未登录|请登录后|登录已失效|登录失效|请重新登录|未登录/.test(all)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+      if (SUCCESS.test(all)) return { ok: true, message: '签到成功｜' + (compact.slice(0, 120) || title) };
+      if (SIGNED.test(all)) return { ok: true, message: '今日已签到，无需重复' };
+      if (link && link.done) return { ok: true, message: '今日已签到（任务页显示：已完成）' };
+      // 4) 未登录（Discuz 游客页会写「注册[Register]」）——比「未签到」更优先：
+      //    登录失效时页面导航里也有「每日签到」这类字样。
+      if (/需要先登录|请先登录|还未登录|请登录后|登录已失效|登录失效|请重新登录|未登录|注册\[Register\]|立即注册|登录后才能/.test(all)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
+      if (!link && /打卡签到|立即签到|点击打卡|每日签到|每日打卡|还没有签到|未打卡/.test(all)) {
+        return { ok: false, unsigned: true, href: '', clickSel: '', message: '网站显示还没签到，但页面上找不到可点的签到入口' };
+      }
+      if (link) return { ok: false, unsigned: true, href: link.href || '', clickSel: link.clickSel || '', message: '网站还挂着「' + (link.label || '签到') + '」入口 —— 今天还没签上' };
       return { ok: false, message: '未识别到成功标识｜页面：' + title + '｜' + compact.slice(0, 140) };
     },
   });
@@ -296,6 +353,47 @@ async function executeJobInPopup(job, onStep) {
     }
     if (!result) result = await inspectPageInPopup(tab.id);
     if (!result) throw new Error('无法读取页面内容（标签页可能已关闭或被重定向）');
+
+    // 页面还挂着「打卡签到」入口 = 今天还没签：链接→导航过去，JS 按钮→在页面里点一下
+    if (!result.ok && result.unsigned && (result.href || result.clickSel)) {
+      try {
+        let navigated = false;
+        if (result.href) {
+          const base = tab.url ? new URL(tab.url) : null;
+          const u = new URL(result.href, tab.url || undefined);
+          if ((u.protocol === 'http:' || u.protocol === 'https:') && (!base || u.host === base.host)) {
+            step('网站显示还没签到，正在执行签到…');
+            await chrome.tabs.update(tab.id, { url: u.href });
+            await new Promise((resolve) => {
+              const listener = (tabId, info) => {
+                if (tabId === tab.id && info.status === 'complete') {
+                  chrome.tabs.onUpdated.removeListener(listener);
+                  resolve();
+                }
+              };
+              chrome.tabs.onUpdated.addListener(listener);
+              setTimeout(resolve, 20000);
+            });
+            await new Promise((r) => setTimeout(r, 2000));
+            navigated = true;
+          }
+        }
+        if (!navigated && result.clickSel) {
+          step('网站显示还没签到，正在点击签到按钮…');
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (sel) => { const el = document.querySelector(sel); if (el) el.click(); },
+            args: [result.clickSel],
+          });
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+        const after = await inspectPageInPopup(tab.id);
+        if (after) result = after;
+      } catch (e) {
+        console.log('[签到面板] 触发签到失败：', e.message || e);
+      }
+    }
+
     step('解析结果…');
     return {
       status: result.ok ? 'ok' : 'fail',

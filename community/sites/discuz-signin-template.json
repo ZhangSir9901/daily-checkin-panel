@@ -1,0 +1,63 @@
+{
+  "schema": "daily-checkin-site/1",
+  "id": "discuz_signin_template",
+  "name": "示例：Discuz 论坛签到（两步）",
+  "desc": "两步形态：先取页面里的 formhash，再带上它提交签到请求",
+  "author": "guoxpeng",
+  "version": "1.0.0",
+  "domain": "",
+  "execution": "browser",
+  "fields": [
+    {
+      "key": "site_url",
+      "label": "论坛地址",
+      "type": "text",
+      "required": true,
+      "placeholder": "https://bbs.example.com（末尾不要带 /）"
+    },
+    {
+      "key": "cookie",
+      "label": "Cookie",
+      "type": "textarea",
+      "required": true,
+      "placeholder": "在论坛登录后，用浏览器扩展「一键复制全部信息」"
+    },
+    {
+      "key": "user_agent",
+      "label": "User-Agent",
+      "type": "text",
+      "required": false,
+      "placeholder": "留空则用面板所在浏览器的 UA"
+    }
+  ],
+  "steps": [
+    {
+      "name": "取 formhash",
+      "method": "GET",
+      "url": "{{site_url}}/plugin.php?id=dsu_paulsign:sign",
+      "headers": {
+        "Cookie": "{{cookie}}",
+        "User-Agent": "{{user_agent}}"
+      },
+      "extract": {
+        "formhash": "formhash"
+      },
+      "expect_status": 200,
+      "expect_contains": "formhash"
+    },
+    {
+      "name": "提交签到",
+      "method": "POST",
+      "url": "{{site_url}}/plugin.php?id=dsu_paulsign:sign&operation=qiandao&infloat=1&inajax=1",
+      "headers": {
+        "Cookie": "{{cookie}}",
+        "User-Agent": "{{user_agent}}",
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      "body": "formhash={{formhash}}&qdxq=kx&qdmode=1&todaysay=&fastreply=0",
+      "expect_status": 200,
+      "expect_contains": "恭喜"
+    }
+  ],
+  "tips": "Discuz 的签到插件五花八门（dsu_paulsign / k_misign / xb_user_qiandao…），这份只示范「先取变量再提交」的写法：把两个 URL 换成你自己站点 F12 里真实抓到的那两个，并改掉 extract 的取值路径。多数论坛会拦机房 IP，所以这里写成 execution=browser（本地网络，需扩展在线）。"
+}

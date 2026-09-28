@@ -15,6 +15,30 @@
 // 注意：识别是有意「保守」的——只有命中明确的短语才算数，避免把正常页面的
 // 「登录」「签到」菜单误判成登录失效或成功。
 
+// ---------------------------------------------------------------------------
+// 「网站自己说的那句话」
+// ---------------------------------------------------------------------------
+// 面板的「网站反馈」列应该展示**网站的原话**，而不是我们的总结：
+//   · 站点的 JSON 里几乎都有 message / msg / errmsg 字段，那才是网站真正的说法
+//     （例如 NodeSeek 回 {"success":false,"message":"今天已完成签到，请勿重复操作"}）
+//   · 以前各站点模块把它归纳成自己的套话（「今日已签到，不能重复签到」），
+//     结果面板显示的是我们的口径，用户拿不到任何网站信息。
+// 所以统一提供这个提取器：能拿到网站原话就用网站原话，拿不到才回退到 fallback。
+
+export function siteMessageFrom(text, fallback = '') {
+  const t = String(text == null ? '' : text);
+  const m = t.match(/"(?:message|msg|errmsg|info|status_msg|errorMsg)"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+  if (!m) return fallback;
+  let s = m[1];
+  // JSON 里的转义（\u4eca 等）还原成人话；还原失败就用原始串
+  try { s = JSON.parse('"' + s + '"'); } catch { /* 保持原样 */ }
+  s = String(s)
+    // 机场/论坛的 message 常把促销公告一起塞进来（换行 + emoji）：主文案只取第一段
+    .split(/\n+/).map((x) => x.trim()).find(Boolean) || '';
+  s = s.replace(/\s+/g, ' ').trim();
+  return s || fallback;
+}
+
 export const OUTCOME = {
   SUCCESS: 'success', // 签到/领取成功
   ALREADY: 'already', // 今天已经签过，属正常
@@ -43,6 +67,7 @@ export const NEEDS_HUMAN = [OUTCOME.NEED_LOGIN, OUTCOME.CAPTCHA, OUTCOME.WAF];
 
 // ---------------------------------------------------------------------------
 // 短语表：顺序即优先级（先匹配到的结果胜出）。
+// 每条规则可写 marks（子串，中文直接 includes）与 pats（正则，用于需要上下文的弱词）。
 // 原则：先判「被拦截/需人工」（WAF/验证码/限流/暂停），再判登录失效，
 // 最后才判成功/已签到——因为被拦截的页面里也常带「登录」「签到」字样。
 // ---------------------------------------------------------------------------
@@ -86,14 +111,21 @@ const RULES = [
   },
   {
     outcome: OUTCOME.ALREADY,
+    // 注意：单独的「已签到」「已经签到」「已领取」太宽泛，页面模板/按钮文字里就可能带有，
+    // 曾导致没真签到却被误判为「今日已签到」——所以这里只放「不可能出现在别处」的强短语。
     marks: [
-      // 注意：单独的「已签到」「已经签到」太宽泛，页面模板/按钮文字里就可能带有，
-      // 曾导致 Cookie 失效也没真签到，却被误判为「今日已签到」。必须带「今日/今天/重复」等限定词才算。
-      '今日已签到', '今天已签到', '今日已经签到', '重复签到', '请勿重复',
-      '无需重复', '不能重复签到', '明日再来', '下期再来', '今日已领取',
+      '重复签到', '请勿重复', '无需重复', '不能重复签到', '明日再来', '下期再来',
       // Discuz 任务插件：重复申请时返回「抱歉，您已完成过此任务」
       '您已完成过此任务', '已完成过此任务',
       'already signed', 'already checked in', 'already claimed',
+    ],
+    // 弱词（已签到 / 已经签到 / 已领取）改用「带上下文的正则」判定：
+    // 必须与「今日/今天/该奖励」等限定词同现才算数，既认得出真话、又不会被模板文字骗到。
+    pats: [
+      /今[日天](?:已|已经)经?(?:签到|签过到|打过卡)/, // 今日已签到 / 您今天已经签到过了
+      /今[日天](?:已|已经)?领取(?:过)?/, // 今日已领取 / 今天已经领取过
+      /(?:该|此|本次)?奖励(?:已|已经)(?:经)?领取(?:过)?/, // 该奖励已领取 / 奖励已经领取过
+      /(?:已|已经)领取(?:过)?(?:该|此|本次)?奖励/, // 已经领取该奖励
     ],
   },
   {
@@ -143,17 +175,23 @@ export function classifySignal(input, opts = {}) {
   const status = Number(opts.status) || 0;
 
   for (const rule of RULES) {
+    let hit = false;
     for (const mark of rule.marks) {
-      const hit = mark.length > 2 && /[\u4e00-\u9fa5]/.test(mark)
+      hit = mark.length > 2 && /[\u4e00-\u9fa5]/.test(mark)
         ? text.includes(mark) // 中文短语直接包含匹配
         : new RegExp(escapeRe(mark), 'i').test(text); // 英文/混合短语忽略大小写
-      if (hit) {
-        return {
-          outcome: rule.outcome,
-          label: OUTCOME_TEXT[rule.outcome],
-          reward: rule.outcome === OUTCOME.SUCCESS ? extractReward(text) : '',
-        };
-      }
+      if (hit) break;
+    }
+    // pats：需要上下文的正则（比裸词严格，用来判定「已签到/已领取」这类弱词）
+    if (!hit && rule.pats) {
+      for (const re of rule.pats) { if (re.test(text)) { hit = true; break; } }
+    }
+    if (hit) {
+      return {
+        outcome: rule.outcome,
+        label: OUTCOME_TEXT[rule.outcome],
+        reward: rule.outcome === OUTCOME.SUCCESS ? extractReward(text) : '',
+      };
     }
   }
 

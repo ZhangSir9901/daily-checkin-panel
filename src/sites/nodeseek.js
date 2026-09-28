@@ -33,8 +33,12 @@ export const nodeseek = {
     }
     const msg = String(j.message || '');
     const okFlag = j.success === true || (j.data && j.data.success === true);
-    if (okFlag || msg.includes('鸡腿')) return { ok: true, message: '签到成功：' + (msg.slice(0, 60) || '领取成功') };
-    if (/已签到|已经签到|已完成签到/.test(msg)) return { ok: true, message: '今日已签到，不能重复签到' };
+    // 收益信息也在响应里（gain=本次、current=累计），一起报给用户。
+    // 注意：这里是 browserScript 的源码字符串（外层是反引号），内部不能再套反引号。
+    const gain = j.gain != null ? '（本次 +' + j.gain + (j.current != null ? '，累计 ' + j.current : '') + '）' : '';
+    // 直接用网站原话当反馈，不再归纳成我们的套话
+    if (okFlag || msg.includes('鸡腿')) return { ok: true, message: (msg.slice(0, 80) || '领取成功') + gain };
+    if (/已签到|已经签到|已完成签到/.test(msg)) return { ok: true, message: msg || '今日已签到，不能重复签到' };
     if (j.status === 404 || msg.includes('USER NOT FOUND')) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
     return { ok: false, message: msg ? '签到失败：' + msg.slice(0, 60) : '签到失败，稍后重试' };
   }`,
@@ -117,13 +121,17 @@ export const nodeseek = {
     // 网站原始回馈：存入日志 detail，面板日志页"网站回馈"展示
     const detail = `网站返回：${text.slice(0, 300)}`;
 
-    // 成功
+    // 成功（若响应里带了收益，一并带上）
     if (okFlag || msg.includes('鸡腿')) {
-      return { ok: true, message: `签到成功：${msg.slice(0, 60) || '领取成功'}`, detail };
+      const gain = j.gain != null ? `（本次 +${j.gain}${j.current != null ? `，累计 ${j.current}` : ''}）` : '';
+      // 主文案＝网站原话（如「今天的签到收益是2个鸡腿」），收益数字用响应里的结构化字段补上
+      return { ok: true, message: (msg.slice(0, 80) || '领取成功') + gain, detail };
     }
-    // 已签到：一天只能签一次，属正常情况
+    // 已签到：一天只能签一次，属正常情况。
+    // 主文案用**网站原话**（「今天已完成签到，请勿重复操作」）——
+    // 以前这里归纳成「今日已签到，不能重复签到」，面板上看到的全是我们的口径。
     if (msg.includes('已签到') || msg.includes('已经签到') || msg.includes('已完成签到')) {
-      return { ok: true, message: '今日已签到，不能重复签到', detail };
+      return { ok: true, message: msg || '今日已签到，不能重复签到', detail };
     }
     // 会话无效：HTTP 500 + {"message":"USER NOT FOUND","status":404}
     if (j.status === 404 || msg.includes('USER NOT FOUND')) {

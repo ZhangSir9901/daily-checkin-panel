@@ -16,8 +16,19 @@ import { hutue } from './hutue.js';
 
 export const SITES = [quark, cloud189, nodeseek, akile, v2ex, misign, kanxue, wuaipojie, v2board, hutue, httpTask];
 
-export function getSite(id) {
-  return SITES.find((s) => s.id === id);
+// 内置站点 + 社区导入的站点（声明式配置，见 src/community.js）
+// custom 由调用方从 D1 读出后传进来（保持本文件无副作用，测试也好写）。
+export function allSites(custom = []) {
+  const ids = new Set(SITES.map((s) => s.id));
+  const extra = (Array.isArray(custom) ? custom : [])
+    .filter((s) => s && s.id && !ids.has(s.id));
+  return [...SITES, ...extra];
+}
+
+export function getSite(id, custom = []) {
+  const s = SITES.find((x) => x.id === id);
+  if (s) return s;
+  return (Array.isArray(custom) ? custom : []).find((x) => x && x.id === id);
 }
 
 // 登录协助提示：面板据此打开登录页、并提前告诉用户会遇到什么验证。
@@ -36,8 +47,8 @@ const LOGIN_HINTS = {
   http: { kind: 'cookie', captcha: 'maybe', url: '', note: '' },
 };
 
-export function siteMeta() {
-  return SITES.map((s) => {
+export function siteMeta(custom = []) {
+  return allSites(custom).map((s) => {
     const hint = LOGIN_HINTS[s.id] || {};
     const own = s.login || {};
     return {
@@ -49,7 +60,16 @@ export function siteMeta() {
       toggles: s.toggles || [],
       execution: s.execution || 'server', // 默认执行模式
       domain: s.domain || '', // 浏览器执行时的目标域名
+      // 站点自己的「一天」以哪个时区算（空 = 跟面板设置一致）。
+      // 面板状态列的「已签到/未签到」用它判定，站点日界不同时才不会出现假签到。
+      dayTz: s.dayTz || '',
+      // 社区导入的站点：带上作者/版本/来源，面板据此显示「社区」徽章与出处
+      community: s.community || null,
       hasBrowserScript: !!s.browserScript, // 是否有浏览器端签到脚本
+      // 是否支持「浏览器导航签到」：脚本化请求被整站拦死（如吾爱破解的网宿 WAF）时，
+      // 由扩展把用户的标签页导航到签到页（等同人手点一下）来完成签到。
+      hasBrowserJob: typeof s.browserJob === 'function',
+      preferNavigationSign: !!s.preferNavigationSign,
       // 登录协助：面板用它渲染「去登录/验证」入口，扩展用它决定打开哪个地址
       login: {
         kind: own.kind || hint.kind || 'cookie', // cookie / token / password / none

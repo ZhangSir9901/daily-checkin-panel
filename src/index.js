@@ -6,9 +6,10 @@ import { hashPassword, verifyPassword, encryptJSON, decryptJSON, randomHex } fro
 import { handleExtZip } from './ext-zip.js';
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
+import { listCommunitySites, importSiteConfig, deleteCommunitySite, validateSiteConfig, makeCommunitySite, exportAccountConfig } from './community.js';
 import { getNotifyConfig, setNotifyConfig } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
-import { shouldRun, validHour, validTime, validTz, accountHour, dayInTz, dayStartInTz } from './schedule.js';
+import { shouldRun, nextLastKey, validHour, validTime, validTz, accountHour, dayInTz, dayStartInTz } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
 import { verifyExternalRequest } from './lib/ext-auth.js';
 
@@ -82,6 +83,16 @@ async function createSession(env) {
     .bind(sid, now, now + SESSION_TTL_MS)
     .run();
   return sid;
+}
+
+// 内置站点 + 社区导入的站点：每次请求读一次 D1（量很小，导入后立刻生效，不用重启）
+async function loadCustomSites(env) {
+  try {
+    const list = await listCommunitySites(env.DB);
+    return list.map((r) => makeCommunitySite(r.def));
+  } catch {
+    return [];
+  }
 }
 
 async function handleApi(req, env, url) {
@@ -204,10 +215,73 @@ async function handleApi(req, env, url) {
   // 站点逻辑仍在 Worker，HTTP 请求由扩展在用户本地网络中执行（见 runner.js），
   // 既解决了 MV3 无法执行面板脚本的问题，也避免与中继重复执行。
   // 若站点需要人工过人机验证，请用面板上的「打开验证页」，验证后重新「一键发送」刷新 Cookie。
+  // ---- 浏览器导航签到（browser jobs）----
+  // 适用于「脚本化请求整站读不到」的站点（典型：吾爱破解被网宿 WAF 保护，
+  // 实测连 robots.txt 经中继都超时，只有真实页导航才能过挑战）。
+  // 扩展每隔 1 分钟来领一次：导航到签到页 → 读结果 → POST /api/external/report 回填。
   if (path === '/api/external/browser-jobs' && method === 'GET') {
     const deny = await extGuard();
     if (deny) return deny;
-    return json({ jobs: [] });
+    const custom = await loadCustomSites(env);
+    const jobs = [];
+    const today = dayInTz(new Date(), await scheduleTz(env.DB));
+    const now = Date.now();
+
+    // 把一个账号变成扩展能执行的「导航签到」工单
+    const jobFor = async (acc, site) => {
+      if (!acc || !acc.enabled || !site || typeof site.browserJob !== 'function') return null;
+      const creds = await decryptJSON(env, env.DB, acc.creds).catch(() => ({}));
+      let meta = {};
+      try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+      const j = site.browserJob(creds, { meta, env }) || {};
+      const navigate = j.navigate_url || site.navigateUrl || '';
+      if (!navigate) return null;
+      return {
+        account_id: acc.id,
+        site: acc.site,
+        site_name: site.name,
+        domain: j.domain || site.domain || '',
+        navigate_url: navigate,
+        // 扩展端拿到页面后，如果还没签到，可以再去这个地址（页面上那个「去签到」链接的原样地址）
+        sign_url: j.sign_url || site.navigateUrl || navigate,
+        script: null, // MV3 禁止 new Function，页内判定由扩展原生巡检验完成
+        params: {},
+      };
+    };
+
+    // ① 手动队列：面板点「浏览器签到」时写入，最优先
+    const { results: manual } = await env.DB.prepare(
+      'SELECT id, account_id FROM browser_manual_jobs ORDER BY created_at LIMIT 10'
+    ).all().catch(() => ({ results: [] }));
+    const queued = new Set();
+    for (const row of manual || []) {
+      // 领走就删（不管成不成），避免每分钟重复下发
+      await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE id = ?').bind(row.id).run().catch(() => {});
+      const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(row.account_id).first();
+      const j = await jobFor(acc, acc && getSite(acc.site, custom));
+      if (j) { jobs.push(j); queued.add(acc.id); }
+    }
+
+    // ② 自动工单：声明了浏览器签到的站点（如吾爱破解），当天还没签上就交给扩展去导航签到。
+    //    节流：同一账号至少隔 60 分钟才自动下发一次，避免反复开标签页。
+    const { results: autos } = await env.DB.prepare(
+      'SELECT * FROM accounts WHERE enabled = 1 ORDER BY id'
+    ).all();
+    for (const acc of autos || []) {
+      if (queued.has(acc.id)) continue;
+      const site = getSite(acc.site, custom);
+      if (!site || typeof site.browserJob !== 'function') continue;
+      let m = {};
+      try { m = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
+      if (m.last_signin_date === today) continue; // 今天已签上，不用再打扰
+      if (m.browser_job_at && now - m.browser_job_at < 60 * 60 * 1000) continue;
+      const j = await jobFor(acc, site);
+      if (!j) continue;
+      m.browser_job_at = now;
+      await env.DB.prepare('UPDATE accounts SET meta = ? WHERE id = ?').bind(JSON.stringify(m), acc.id).run().catch(() => {});
+      jobs.push(j);
+    }
+    return json({ jobs });
   }
 
   // ---- 一次性交接码（扩展 → 面板）----
@@ -446,7 +520,94 @@ async function handleApi(req, env, url) {
 
   if (path === '/api/me' && method === 'GET') return json({ logged_in: true });
 
-  if (path === '/api/sites' && method === 'GET') return json({ sites: siteMeta() });
+  if (path === '/api/sites' && method === 'GET') return json({ sites: siteMeta(await loadCustomSites(env)) });
+
+  // ---- 社区站点配置（开源配套）：导入 / 列出 / 删除 / 导出 ----
+  // 导入：粘贴一段 JSON，或给一个原始链接（Gist / raw 文件都行）
+  if (path === '/api/sites/community' && method === 'GET') {
+    const list = await listCommunitySites(env.DB);
+    // author：导出配置时默认署的名字（开源共建署名，存在设置里）
+    const author = (await getSetting(env.DB, 'community_author')) || '';
+    return json({ sites: list, author });
+  }
+  if (path === '/api/sites/community/author' && method === 'PUT') {
+    const { author } = await readBody(req);
+    await setSetting(env.DB, 'community_author', String(author || '').slice(0, 60));
+    return json({ ok: true });
+  }
+  if (path === '/api/sites/community' && method === 'POST') {
+    const body = await readBody(req);
+    let raw = body.config;
+    const url = String(body.url || '').trim();
+    if (!raw && url) {
+      if (!/^https?:\/\//i.test(url)) return json({ error: '链接必须是 http(s) 开头' }, 400);
+      try {
+        const r = await fetch(url, { headers: { Accept: 'application/json,text/plain,*/*' } });
+        if (!r.ok) return json({ error: `拉取配置失败：HTTP ${r.status}` }, 502);
+        raw = (await r.text()).slice(0, 200000);
+      } catch (e) {
+        return json({ error: '拉取配置失败：' + String((e && e.message) || e) }, 502);
+      }
+    }
+    if (!raw) return json({ error: '请粘贴配置 JSON，或给出配置的原始链接' }, 400);
+    const v = validateSiteConfig(raw);
+    // 先预览后导入：dry_run=1 时只校验，不写库
+    if (body.dry_run) return json({ ok: v.ok, errors: v.errors, warnings: v.warnings, config: v.def || null });
+    if (!v.ok) return json({ error: v.errors.join('；'), errors: v.errors }, 400);
+    try {
+      const r = await importSiteConfig(env.DB, v.def, { overwrite: !!body.overwrite, source: url });
+      return json({ ok: true, id: r.id, name: r.def.name, warnings: r.warnings });
+    } catch (e) {
+      return json({ error: String((e && e.message) || e), need_overwrite: !!e.needOverwrite }, e.needOverwrite ? 409 : 400);
+    }
+  }
+  // 导入前先校验（dry_run）：面板据此显示“这份配置是什么、缺什么、会不会带凭据”
+  if (path === '/api/sites/community/check' && method === 'POST') {
+    const body = await readBody(req);
+    const v = validateSiteConfig(body.config || body || {});
+    return json({ ok: v.ok, errors: v.errors, warnings: v.warnings, config: v.def || null });
+  }
+
+  const mCommunity = path.match(/^\/api\/sites\/community\/([A-Za-z0-9_\-]+)$/);
+  if (mCommunity && method === 'DELETE') {
+    await deleteCommunitySite(env.DB, mCommunity[1]);
+    return json({ ok: true });
+  }
+  if (mCommunity && method === 'GET') {
+    const list = await listCommunitySites(env.DB);
+    const one = list.find((s) => s.id === mCommunity[1]);
+    if (!one) return json({ error: '没有导入过这个站点配置' }, 404);
+    return json({ config: one.def, meta: { author: one.author, version: one.version, source: one.source } });
+  }
+
+  // ---- 反向：把一个账号录好的请求序列导出成可分享的社区配置 ----
+  // 这是「开源共建」的另一半：你录一遍 → 导出 JSON → 发到 GitHub → 别人导入即可用。
+  const mExport = path.match(/^\/api\/accounts\/(\d+)\/export-config$/);
+  if (mExport && method === 'GET') {
+    const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(Number(mExport[1])).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    const creds = await decryptJSON(env, env.DB, acc.creds);
+    const meta = siteMeta(await loadCustomSites(env)).find((s) => s.id === acc.site) || {};
+    const q = url.searchParams;
+    const r = exportAccountConfig(
+      { id: acc.id, name: acc.name, site: acc.site, creds },
+      meta,
+      {
+        id: q.get('id') || '',
+        name: q.get('name') || '',
+        author: q.get('author') || '',
+        version: q.get('version') || '',
+        desc: q.get('desc') || '',
+        source: q.get('source') || '',
+      }
+    );
+    if (!r.ok && r.reason) return json({ error: r.reason }, 400);
+    // 把作者默认值写进去：面板设置里的「开源署名」；没设就留空由前端问
+    const author = q.get('author') || (await getSetting(env.DB, 'community_author')) || '';
+    if (!author) { /* 留空不报错，前端会提示补署名 */ }
+    if (author) r.config.author = author;
+    return json({ ok: true, config: r.config, warnings: r.warnings, errors: r.errors });
+  }
 
   // 账号列表（不含凭据，含 meta 以便前端渲染站点独立开关）
   if (path === '/api/accounts' && method === 'GET') {
@@ -512,7 +673,7 @@ async function handleApi(req, env, url) {
 
     // 手动执行单个账号（browser 模式由浏览器扩展执行，面板不直接执行）
     if (mAcc[2] === '/run' && method === 'POST') {
-      const site = getSite(acc.site);
+      const site = getSite(acc.site, await loadCustomSites(env));
       let execMode = site?.execution || 'server';
       try {
         const m = JSON.parse(acc.meta || '{}');
@@ -532,7 +693,7 @@ async function handleApi(req, env, url) {
     // 更新账号
     if (!mAcc[2] && method === 'PUT') {
       const { name, site, creds, enabled } = await readBody(req);
-      const s = getSite(site || acc.site);
+      const s = getSite(site || acc.site, await loadCustomSites(env));
       if (!s) return json({ error: '未知站点' }, 400);
       const enc = creds ? await encryptJSON(env, env.DB, creds) : acc.creds;
       await env.DB.prepare('UPDATE accounts SET name=?, site=?, creds=?, enabled=?, updated_at=? WHERE id=?')
@@ -561,7 +722,7 @@ async function handleApi(req, env, url) {
     const id = Number(mToggle[1]);
     const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
-    const site = getSite(acc.site);
+    const site = getSite(acc.site, await loadCustomSites(env));
     const { key, value } = await readBody(req);
     const def = site && site.toggles ? site.toggles.find((t) => t.key === key) : null;
     if (!def) return json({ error: '该站点不支持此开关' }, 400);
@@ -789,12 +950,40 @@ async function handleApi(req, env, url) {
     return json({ ok: true, require_sign: !!require_sign });
   }
 
+  // ---- 浏览器导航签到：面板点一下，让扩展开标签页去真的打开签到页（适合被 WAF 拦死的站点）----
+  // 返回后立即返回，结果由扩展跑完 POST /api/external/report 回填到这一行。
+  const mBrowserSign = path.match(/^\/api\/accounts\/(\d+)\/browser-sign$/);
+  if (mBrowserSign && method === 'POST') {
+    const id = Number(mBrowserSign[1]);
+    const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    const site = getSite(acc.site, await loadCustomSites(env));
+    if (!site || typeof site.browserJob !== 'function') {
+      return json({ error: '该站点不支持浏览器导航签到（它可以用普通请求直接签）' }, 400);
+    }
+    const { isRelayAvailable } = await import('./lib/relay.js');
+    if (!(await isRelayAvailable(env.DB))) {
+      return json({ error: '浏览器扩展离线：浏览器导航签到需要扩展在线（它会用你自己的浏览器打开签到页）' }, 400);
+    }
+    const now = Date.now();
+    await env.DB.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)').bind(id, now).run();
+    await env.DB.prepare('DELETE FROM browser_manual_jobs WHERE created_at < ?').bind(now - 3600000).run().catch(() => {});
+    const j = site.browserJob(await decryptJSON(env, env.DB, acc.creds).catch(() => ({})), { meta: {} }) || {};
+    return json({
+      ok: true,
+      queued: true,
+      site_name: site.name,
+      navigate_url: j.navigate_url || site.navigateUrl || '',
+      hint: '已交给浏览器扩展：它会打开一个标签页完成签到，完成后自动把结果写回这一行（通常 1 分钟内）',
+    });
+  }
+
   // ---- 让扩展帮某个账号打开登录页（登录/过验证后自动把新 Cookie 交接回面板）----
   if (path.startsWith('/api/accounts/') && path.endsWith('/assist') && method === 'POST') {
     const id = Number(path.slice('/api/accounts/'.length, -'/assist'.length));
     const acc = await env.DB.prepare('SELECT id, site, name FROM accounts WHERE id = ?').bind(id).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
-    const meta = siteMeta().find((s) => s.id === acc.site) || {};
+    const meta = siteMeta(await loadCustomSites(env)).find((s) => s.id === acc.site) || {};
     const login = meta.login || {};
     const loginUrl = login.url || (meta.domain ? 'https://' + meta.domain + '/' : '');
     if (!loginUrl) return json({ error: '该站点没有登记登录地址，请手动在浏览器打开站点登录后再用扩展抓取' }, 400);
@@ -831,8 +1020,9 @@ export default {
     }
   },
 
-  // Cron 触发：每小时触发一次，按各账号的签到时间（独立时间或全局时间）
-  // 判断是否到达整点才执行。每个账号独立记录上次执行 key，避免重复。
+  // Cron 触发：每分钟触发一次，按各账号的签到时间（独立时间或全局时间）
+  // 判断是否该执行。每个账号独立记录上次执行 key：成功则当天不再跑；
+  // 失败/结果未知则隔一会儿自动补跑（见 schedule.js 的 shouldRun / nextLastKey）。
   async scheduled(event, env, ctx) {
     ctx.waitUntil(
       (async () => {
@@ -840,7 +1030,8 @@ export default {
           await ensureSchema(env.DB);
           const globalTime = (await getSetting(env.DB, 'schedule_time')) || '08';
           const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
-          // 各账号上次执行 key：{ accountId: "YYYY-MM-DD HH" }
+          // 各账号上次执行记录：{ accountId: "YYYY-MM-DD HH:MM" }（成功）
+          //                    { accountId: "YYYY-MM-DD HH:MM@YYYY-MM-DD HH:MM" }（失败/结果未知，带尝试时刻）
           let lastMap = {};
           try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
           const { results } = await env.DB.prepare('SELECT id, site, meta FROM accounts WHERE enabled = 1').all();
@@ -849,7 +1040,7 @@ export default {
           for (const acc of results || []) {
             // 执行模式：browser 由扩展执行，Worker 跳过；relay/server/auto 由 runner.js 统一处理
             // （auto 时扩展在线则自动中继，否则云端直连）
-            const site = getSite(acc.site);
+            const site = getSite(acc.site, await loadCustomSites(env));
             let execMode = site?.execution || 'server';
             try {
               const m = JSON.parse(acc.meta || '{}');
@@ -858,16 +1049,21 @@ export default {
             // 浏览器模式已并入本地中继：不再跳过，由 runAccount 决定（扩展在线走本地网络，离线则记 skip）
             const hour = accountHour(acc.meta, globalTime);
             const lastKey = lastMap[String(acc.id)];
-            const { run, key } = shouldRun(now, hour, tz, lastKey);
+            const { run, key, nowKey } = shouldRun(now, hour, tz, lastKey);
             if (!run) continue;
-            lastMap[String(acc.id)] = key;
             changed = true;
+            let runRes = null;
             try {
               const full = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(acc.id).first();
-              if (full) await runAccount(env, full);
+              if (full) runRes = await runAccount(env, full);
             } catch (e) {
               console.error('[cron] account', acc.id, e);
             }
+            // 成功 → 记「今天这个时刻已完成」；失败/结果未知 → 记尝试时刻，
+            // 让 shouldRun 过 RETRY_GAP_MIN 分钟后再自动补一次（漏一分钟不再等于整天不签）。
+            // 已经交给扩展去做的（如吾爱破解转浏览器导航）不需要重试，避免排一堆重复任务。
+            const keep = runRes && runRes.retryable === false;
+            lastMap[String(acc.id)] = keep ? key : nextLastKey(key, nowKey, (runRes && runRes.status) || 'fail');
             // 账号之间稍作间隔，降低被目标站点限流的概率
             await new Promise((r) => setTimeout(r, 1200));
           }

@@ -32,8 +32,12 @@ const accounts = [
   {
     id: 1, name: 'NodeSeek', site: 'nodeseek', enabled: 1,
     meta: JSON.stringify({ toggles: { random: true }, last_signin_date: today }),
-    last_status: 'ok', last_msg: '今日已签到，不能重复签到',
-    last_detail: '网站返回：{"success":false,"message":"今日已签到"}',
+    // 这里故意用**旧的存库文案**（我们自己的套话）+ 线上真实的网站原文：
+    // 面板会改用网站原话当主文案，并打上「网站原话」标记 ——
+    // 也就是说部署后，**已经存在的那些旧记录立刻就会显示成网站原话**，不用等下一次执行。
+    last_status: 'ok',
+    last_msg: '今日已签到，不能重复签到',
+    last_detail: '网站返回：{"success":false,"message":"今天已完成签到，请勿重复操作"}',
     last_run_at: now - 4000,
   },
   {
@@ -64,7 +68,8 @@ const accounts = [
     id: 5, name: '糊涂鳄', site: 'hutue', enabled: 1,
     meta: JSON.stringify({ sched_hour: '07:00', last_signin_date: today }),
     last_status: 'ok', last_msg: '签到成功，赠送5晶石',
-    last_detail: '网站返回：{"status":1,"msg":"签到成功，赠送5晶石"}',
+    // 线上糊涂鳄返回的是全转义 JSON（\u4eca\u65e5…），面板要还原成人话
+    last_detail: '网站返回：{"status":"0","msg":"\\u4eca\\u65e5\\u5df2\\u7b7e\\u5230\\uff0c\\u8bf7\\u660e\\u65e5\\u518d\\u6765"}',
     last_run_at: now - 120000,
   },
   {
@@ -73,6 +78,15 @@ const accounts = [
     last_status: 'skip', last_msg: '需要浏览器扩展在线（本地网络中继）。',
     last_detail: '',
     last_run_at: now - 900000,
+  },
+  // 「结果未知」：请求发出去了但没等到回包 —— 状态列要显示「待确认」，而不是武断的「未签到」
+  {
+    id: 8, name: '糊涂鳄（hf）', site: 'hutue', enabled: 1,
+    meta: JSON.stringify({ sched_hour: '08:05' }),
+    last_status: 'skip',
+    last_msg: '签到结果未知：请求已发出但没等到回包（本地网络失败：中继执行超时（58秒）：请求已发出但没收到回包）。请求可能已经送达网站（签到可能已生效），也可能没有；稍后会自动复核。',
+    last_detail: '网站返回：（无响应） · 接口 user_qiandao · user_qiandao：重试仍无回包',
+    last_run_at: now - 60000,
   },
 ];
 

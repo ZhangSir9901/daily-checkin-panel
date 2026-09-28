@@ -167,8 +167,63 @@ await t('runner：中继模式的消息不带 [中继] 前缀，且站点拿得�
   const r = await runAccount(env, account);
   assert.equal(r.status, 'ok');
   assert.doesNotMatch(r.message, /\[中继\]/, '消息里不应再出现 [中继]，实际：' + r.message);
-  assert.match(r.message, /已签到/);
+  // 主文案必须是**网站原话**（NodeSeek 对已签到回「今天已完成签到，请勿重复操作」），
+  // 而不是我们归纳的「今日已签到，不能重复签到」—— 面板「网站反馈」展示的就是这句
+  assert.equal(r.message, '今天已完成签到，请勿重复操作');
   assert.equal(db.inserted.length, 1);
+});
+
+// ---- runner：按站点自己的「一天」记 last_signin_date ----
+// 线上真实现象（糊涂鳄）：面板按北京时间记「今天」，站点却按 UTC 计日（北京时间 08:00 才重置），
+// 于是 08:00 之后面板仍显示「已签到」，用户去网站手动点签到却能再领一次积分，看起来就像「假签到」。
+function fakeDbMeta() {
+  const metaWrites = [];
+  return {
+    metaWrites,
+    prepare(sql) {
+      const stmt = {
+        _args: [],
+        bind(...args) { stmt._args = args; return stmt; },
+        async run() {
+          if (/UPDATE accounts/i.test(sql)) metaWrites.push(stmt._args[4]);
+          return {};
+        },
+        async all() { return { results: [] }; },
+        async first() { return null; },
+      };
+      return stmt;
+    },
+    async batch() { return []; },
+  };
+}
+
+await t('runner：站点声明 dayTz 时按站点日界记 last_signin_date（糊涂鳄=UTC）', async () => {
+  const { dayInTz } = await import('../src/schedule.js');
+  const { getSite } = await import('../src/sites/index.js');
+  assert.equal((getSite('hutue') || {}).dayTz, 'UTC', '糊涂鳄必须声明 dayTz=UTC（本站按 UTC 计日）');
+  assert.equal((getSite('nodeseek') || {}).dayTz, undefined, '未声明的站点不能凭空多出 dayTz');
+
+  const db = fakeDbMeta();
+  const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
+  const credsEnc = await encryptJSON(env, db, { site_url: 'https://dj.hutue.cn', cookie: 'c=x' });
+  const account = { id: 11, site: 'hutue', name: '糊涂鳄', creds: credsEnc, meta: '{"execution":"server"}', enabled: 1 };
+
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const body = u.endsWith('/') ? '<html>首页</html>' : JSON.stringify({ status: 1, msg: '签到成功，赠送5积分' });
+    return { status: 200, text: async () => body, arrayBuffer: async () => new TextEncoder().encode(body).buffer };
+  };
+  let r;
+  try {
+    r = await runAccount(env, account);
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+  assert.equal(r.status, 'ok');
+  assert.equal(db.metaWrites.length, 1);
+  const meta = JSON.parse(db.metaWrites[0]);
+  assert.equal(meta.last_signin_date, dayInTz(new Date(), 'UTC'), '糊涂鳄的「今天」应按 UTC 算，实际：' + meta.last_signin_date);
 });
 
 console.log(`\n${n} 组通过`);

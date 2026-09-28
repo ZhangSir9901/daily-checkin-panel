@@ -68,6 +68,117 @@ function parseNetscapeCookies(text) {
   return parts.join('; ');
 }
 
+// ---------------------------------------------------------------------------
+// 「粘进来的到底是什么」统一识别
+// 一个函数吃下所有常见格式，免得页面与保存流程各判一次、迟早判出两种结果。
+// 支持：扩展「一键复制全部信息」JSON / Cookie-Editor JSON / 请求头文本 /
+//       cURL 命令 / Netscape cookie.txt / 光秃秃的 name=value 串
+// ---------------------------------------------------------------------------
+function parsePasteText(rawInput) {
+  const raw = String(rawInput == null ? '' : rawInput).trim();
+  if (!raw) throw new Error('请先在目标网站用扩展「📋 一键复制全部信息」，然后在这里粘贴');
+  const v = raw.replace(/^["']|["'];?$/g, '');
+
+  // ①/④ JSON：扩展格式带 cookies 字段；数组则是 Cookie-Editor 导出
+  if (v.startsWith('{') || v.startsWith('[')) {
+    let d = null;
+    try { d = JSON.parse(v); } catch { throw new Error('JSON 格式不对，请在扩展里点「📋 一键复制全部信息」重新复制一次'); }
+    if (Array.isArray(d)) {
+      return { cookie: parseCookieEditorJson(v), domain: '', userAgent: '', format: 'Cookie-Editor JSON' };
+    }
+    if (!d || !d.cookies) throw new Error('这段 JSON 里没有 Cookie，请确认是扩展「一键复制全部信息」复制出来的');
+    return {
+      cookie: String(d.cookies),
+      domain: String(d.domain || ''),
+      userAgent: String(d.userAgent || d.ua || ''),
+      cookieList: Array.isArray(d.cookieList) ? d.cookieList : [],
+      localStorage: d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {},
+      stats: d.stats || null,
+      format: '扩展「一键复制全部信息」',
+    };
+  }
+
+  // ③ cURL：浏览器右键「复制为 cURL」
+  if (/^curl\s|curl\s+'https?:/i.test(v)) {
+    const r = extractCookieFromCurl(v);
+    return { cookie: r.cookie, domain: '', userAgent: r.userAgent || '', format: '浏览器复制的 cURL 命令' };
+  }
+
+  // ② 请求头文本：带 Cookie: / User-Agent: 这类头
+  if (/^\s*cookie\s*:/im.test(v) || /^\s*user-agent\s*:/im.test(v)) {
+    const r = extractCookieFromHeaders(v);
+    return { cookie: r.cookie, domain: '', userAgent: r.userAgent || '', format: '浏览器复制的请求头' };
+  }
+
+  // ④ Netscape cookie.txt：以 # 开头的注释 + 制表符分隔的 7 列
+  if (/^#(?: Netscape )?HTTP Cookie File/im.test(v) || v.split('\n').some((l) => l.split('\t').length === 7)) {
+    return { cookie: parseNetscapeCookies(v), domain: '', userAgent: '', format: 'cookie.txt（Netscape 格式）' };
+  }
+
+  // ⑤ 纯 Cookie 串
+  if (v.includes('=')) {
+    return { cookie: v, domain: '', userAgent: '', format: '纯 Cookie 字符串' };
+  }
+  throw new Error('没看出这是 Cookie，请用扩展的「📋 一键复制全部信息」再试一次');
+}
+
+// 把解析结果拆成「一段一段 + 中文说明」，供面板直接渲染（不关心 DOM）。
+function splitCookieParts(cookie, cookieList) {
+  if (Array.isArray(cookieList) && cookieList.length) {
+    return cookieList.map((c) => ({
+      name: String(c.name || ''),
+      value: String(c.value == null ? '' : c.value),
+      note: [
+        c.httpOnly ? 'HttpOnly（脚本读不到、只能用扩展抓）' : '',
+        c.session ? '会话 Cookie（关浏览器就失效）' : '',
+        c.path && c.path !== '/' ? '路径 ' + c.path : '',
+        c.expirationDate ? '有效期至 ' + new Date(c.expirationDate * 1000).toLocaleDateString('zh-CN') : '',
+      ].filter(Boolean).join('，') || '普通 Cookie',
+    }));
+  }
+  return String(cookie || '')
+    .split(';')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      const i = s.indexOf('=');
+      return { name: (i >= 0 ? s.slice(0, i) : s).trim(), value: i >= 0 ? s.slice(i + 1) : '' };
+    })
+    .filter((x) => x.name);
+}
+
+// 给每一段加上「它是什么」：类型（登录必需/安全校验/表单防护/界面偏好/统计）+ 中文说明 + 值形态
+function explainCookieText(raw) {
+  const info = parsePasteText(raw);
+  const parts = splitCookieParts(info.cookie, info.cookieList).map((p) => {
+    const named = /^[A-Za-z0-9_.\-]+$/.test(p.name);
+    const d = named ? describeCookieName(p.name) : { desc: '名字含特殊字符，可能是值里多了分隔符', kind: 'other' };
+    const fromList = Array.isArray(info.cookieList) && info.cookieList.length;
+    return {
+      name: p.name,
+      kind: d.kind,
+      desc: d.desc,
+      detail: fromList ? p.note : describeCookieValue(p.value),
+    };
+  });
+  const counts = { login: 0, waf: 0, csrf: 0, pref: 0, stat: 0, other: 0 };
+  for (const p of parts) counts[p.kind] = (counts[p.kind] || 0) + 1;
+  return {
+    format: info.format,
+    domain: info.domain || '',
+    userAgent: info.userAgent || '',
+    cookie: info.cookie,
+    cookieList: info.cookieList || [],
+    localStorage: info.localStorage || {},
+    parts,
+    counts,
+    // 一句人话小结：登录必需的几段、安全校验几段
+    summary: '共 ' + parts.length + ' 段：登录必需 ' + counts.login + ' 段、网站安全校验 ' + counts.waf +
+      ' 段' + (counts.csrf ? '、表单防护 ' + counts.csrf + ' 段' : '') +
+      (counts.stat ? '、纯统计 ' + counts.stat + ' 段（可忽略）' : ''),
+  };
+}
+
 function extractCookieFromCurl(cmd) {
   // parseCurl 由 curl-import.js 提供（浏览器端先引入该文件，测试时先 eval 它）
   const pc = typeof parseCurl === 'function' ? parseCurl : (typeof globalThis !== 'undefined' && typeof globalThis.parseCurl === 'function' ? globalThis.parseCurl : null);
@@ -79,7 +190,62 @@ function extractCookieFromCurl(cmd) {
   return { cookie: parseCookieHeader(cookie), userAgent: ua, url: p.url };
 }
 
+// ============================================================================
+// Cookie 逐段中文说明（面板的「Cookie 解析器」用）
+// 目的：用户粘一大串 Cookie 时，能看懂哪段是登录必需的、哪段是网站安全校验
+// （比如吾爱破解的 wzws_cid）、哪些只是统计（丢了也不影响签到）。
+// ============================================================================
+const COOKIE_KNOWN = [
+  [/^PHPSESSID$/i, 'PHP 会话 ID', 'login'],
+  [/^(session|sessionid|sid|sess|bbs_sid|connect_sid)$/i, '会话标识（服务器靠它认得你）', 'login'],
+  [/^JSESSIONID$/i, 'Java 会话 ID', 'login'],
+  [/^laravel_session$/i, 'Laravel 会话 ID', 'login'],
+  [/^(ASP\.NET_SessionId|__RequestVerificationToken)$/i, 'ASP.NET 会话 / 表单令牌', 'login'],
+  [/^wordpress_(logged_in|sec)/i, 'WordPress 登录态（糊涂鳄这类站就是它）', 'login'],
+  [/^wp-settings/i, 'WordPress 界面偏好', 'pref'],
+  [/^saltkey$/i, 'Discuz 登录盐值（配合会话一起校验）', 'login'],
+  [/^(c_token|token|access_token|auth|auth_token|jwt|refresh_token|x-token)$/i, '登录令牌（很多站把它当唯一凭据）', 'login'],
+  [/^(cf_clearance|cf_chl_\w+|__cf_bm|__cfduid)$/i, 'Cloudflare 人机校验通行证（换 IP / 换浏览器会失效）', 'waf'],
+  [/^(wzws_\w+|csm_\w+)$/i, '网宿 WAF 校验（吾爱破解要的就是它，缺了会被 403）', 'waf'],
+  [/^(acw_tc|cdn_sec_tc|aliyungf_tc|cna)$/i, '阿里云 CDN / WAF 标记', 'waf'],
+  [/^(XSRF-TOKEN|csrf\w*|_csrf)$/i, '跨站请求伪造防护（提交表单时要带上）', 'csrf'],
+  [/^(_ga|_gid|_gat\w*|Hm_lvt_\w+|Hm_lpvt_\w+|CNZZDATA\w*|_clck|_clsk)$/i, '访问统计，与登录无关（丢了也不碍事）', 'stat'],
+  [/^(_pk_id|_pk_ses|matomo\w*)$/i, '站点统计', 'stat'],
+  [/^(theme|lang|language|noticeTitle|style|fontsize|_style_\w+)$/i, '界面偏好', 'pref'],
+  [/^(cookie_?consent|consent|gdpr\w*)$/i, 'Cookie 同意提示的记录', 'pref'],
+  [/^(referer|lastvisit|lastactive|online\w*)$/i, '上次访问痕迹', 'pref'],
+  [/^(seraph\w*|tt_\w+|s_v_\w+|ssid|fip)$/i, '风控 / 指纹类标记', 'waf'],
+];
+
+function describeCookieName(name) {
+  const n = String(name || '');
+  for (const [re, desc, kind] of COOKIE_KNOWN) {
+    if (re.test(n)) return { desc: desc, kind: kind };
+  }
+  return { desc: '站点自定义', kind: 'other' };
+}
+
+// 值只讲「长什么样」，不把敏感内容摊开：长度、像不像 JWT / 时间戳 / base64。
+function describeCookieValue(v) {
+  const s = String(v == null ? '' : v);
+  if (!s) return '空值（可能没抓到或已被清掉）';
+  const bits = ['长度 ' + s.length];
+  if (/^\d{10}$/.test(s)) bits.push('像 Unix 时间戳（' + new Date(Number(s) * 1000).toLocaleString('zh-CN') + '）');
+  else if (/^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}$/.test(s)) bits.push('像 JWT 令牌');
+  else if (/^[A-Za-z0-9+/]{24,}={0,2}$/.test(s)) bits.push('像 base64 数据');
+  else if (/^[0-9a-f]{32}$/i.test(s)) bits.push('像 32 位十六进制（Discuz 会话常见）');
+  else if (/\|/.test(s)) bits.push('含竖线（WordPress 登录态常见形态）');
+  if (/[^\x20-\x7E]/.test(s)) bits.push('含中文 / 非 ASCII 字符');
+  // 只露头尾给用户对一下（面板截图/录屏时不该把凭据全文摊在屏幕上）
+  return bits.join('，') + '：' + (s.length > 12 ? s.slice(0, 6) + '…' + s.slice(-4) : '短值（不展示）');
+}
+
 if (typeof globalThis !== 'undefined') {
+  globalThis.describeCookieName = describeCookieName;
+  globalThis.describeCookieValue = describeCookieValue;
+  globalThis.parsePasteText = parsePasteText;
+  globalThis.splitCookieParts = splitCookieParts;
+  globalThis.explainCookieText = explainCookieText;
   globalThis.parseCookieHeader = parseCookieHeader;
   globalThis.extractCookieFromHeaders = extractCookieFromHeaders;
   globalThis.parseCookieEditorJson = parseCookieEditorJson;

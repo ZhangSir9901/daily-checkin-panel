@@ -1,6 +1,6 @@
 // 统一网站反馈识别器测试：node test/signals.test.mjs（纯函数，不依赖网络）
 import assert from 'node:assert/strict';
-import { classifySignal, toResult, failWith, extractReward, isDone, OUTCOME } from '../src/lib/signals.js';
+import { classifySignal, toResult, failWith, extractReward, isDone, OUTCOME, siteMessageFrom } from '../src/lib/signals.js';
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; console.log('ok -', name); };
@@ -107,6 +107,23 @@ t('failWith：未知文本用站点兜底文案', () => {
   const err = (() => { try { failWith('lorem', { fallback: '未找到签到按钮' }); } catch (e) { return e; } return null; })();
   assert.equal(err.outcome, OUTCOME.UNKNOWN);
   assert.match(err.message, /未找到签到按钮/);
+});
+
+// ---------- 网站原话提取（面板「网站反馈」用） ----------
+t('siteMessageFrom：抠出网站自己的那句话（message/msg/status_msg）', () => {
+  assert.equal(siteMessageFrom('{"success":false,"message":"今天已完成签到，请勿重复操作"}'), '今天已完成签到，请勿重复操作');
+  assert.equal(siteMessageFrom('{"status":"0","msg":"今日已签到，请明日再来"}'), '今日已签到，请明日再来');
+  assert.equal(siteMessageFrom('{"status_code":0,"status_msg":"签到成功"}'), '签到成功');
+  assert.equal(siteMessageFrom('这是一页 HTML，没有 JSON'), '');
+  assert.equal(siteMessageFrom('', '兜底'), '兜底');
+});
+
+t('siteMessageFrom：还转义、只取第一段（把促销公告挡在外面）', () => {
+  // 糊涂鳄返回的是全转义 JSON
+  assert.equal(siteMessageFrom('{"status":"0","msg":"\\u4eca\\u65e5\\u5df2\\u7b7e\\u5230"}'), '今日已签到');
+  // 机场的 msg 经常把整段促销公告一起塞进来
+  const v2 = '{"ret":1,"msg":"您获得了 1.5GB 流量.\\n\\n🎉中秋活动 7.8 折"}';
+  assert.equal(siteMessageFrom(v2), '您获得了 1.5GB 流量.');
 });
 
 console.log(`\n${n} 组通过`);

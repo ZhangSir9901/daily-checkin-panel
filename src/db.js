@@ -75,6 +75,19 @@ const MIGRATIONS = [
   async (db) => db.prepare('CREATE INDEX IF NOT EXISTS idx_ext_cmd_status ON ext_commands(status, created_at)').run(),
   // v10：accounts.last_detail（网站原始回馈，账号列表「网站反馈」列直接展示网站原话）
   async (db) => ensureColumn(db, 'accounts', 'last_detail', 'TEXT'),
+  // v11：community_sites（社区共享的「站点适配配置」）
+  // 开源配套：别人把自己站点的适配配置（声明式 JSON）导出分享，
+  // 其他人导入后就能直接签到；这里只存配置本身，不存任何凭据。
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS community_sites (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    author TEXT NOT NULL DEFAULT '',
+    version TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    def TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`).run(),
 ];
 
 export async function ensureSchema(db) {

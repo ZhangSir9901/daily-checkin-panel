@@ -107,7 +107,19 @@ await t('已签到判为成功', async () => {
   ]);
   const r = await v2board.run({ domain: 'example.com', email: 'a@b.c', password: 'pw' });
   assert.equal(r.ok, true);
-  assert.match(r.message, /已签到/);
+  // 主文案必须是**网站原话**（面板「网站反馈」展示的就是这句），不再归纳成我们的套话
+  assert.equal(r.message, '您今天已经签到过了');
+});
+
+await t('签到成功：用网站原话当反馈，且不把促销公告一起刷出来', async () => {
+  mockFetch([
+    ['/auth/login', loginOk],
+    ['/user/checkin', { ret: 1, msg: '尊贵的王者Lv7，您获得了 1.535GB 流量.\n\n🎉【69云】中秋国庆季 全场 7.8 折!🎉\n📅【活动时间】9月25日' }],
+  ]);
+  const r = await v2board.run({ domain: 'example.com', email: 'a@b.c', password: 'pw' });
+  assert.equal(r.ok, true);
+  assert.equal(r.message, '尊贵的王者Lv7，您获得了 1.535GB 流量.');
+  assert.ok(!r.message.includes('7.8 折'), '促销公告不应出现在网站反馈里');
 });
 
 await t('缺字段报错', async () => {

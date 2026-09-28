@@ -15,6 +15,13 @@ import { MOBILE_UA, cookiesFrom, postForm, postJSON } from '../lib/web.js';
 
 const UA = MOBILE_UA;
 
+// 只取第一段（换行分隔），并限长：机场签到接口的 msg 里常挂着一整段促销公告
+function firstParagraph(s, max = 120) {
+  const first = String(s == null ? '' : s).split(/\n+/).map((x) => x.trim()).find(Boolean) || '';
+  const one = first.replace(/\s+/g, ' ').trim();
+  return one.length > max ? one.slice(0, max) + '…' : one;
+}
+
 function normDomain(d) {
   let s = String(d || '').trim();
   if (!s) return '';
@@ -81,11 +88,14 @@ export const v2board = {
     // 2. 签到
     const checkinUrl = `${domain}/user/checkin`;
     const { j: chk } = await postJSON(checkinUrl, {}, { cookie, pageUrl: checkinUrl, ua: UA });
-    const msg = String((chk && chk.msg) || '');
+    // 机场的 msg 常把「活动公告」一起塞进来（换行 + emoji 促销），只取第一段，
+    // 否则整段广告会刷在面板的「网站反馈」里（69 机场的真实日志就是这样）
+    const msg = firstParagraph(String((chk && chk.msg) || ''));
     if (chk && chk.ret === 1) {
-      return { ok: true, message: `签到成功：${msg || '领取成功'}` };
+      // 网站原话直接当反馈（如「尊贵的王者Lv7，您获得了 1.535GB 流量.」）
+      return { ok: true, message: msg || '签到成功' };
     }
-    if (/已签到|已经签到|签到过/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
+    if (/已签到|已经签到|签到过/.test(msg)) return { ok: true, message: msg || '今日已签到，无需重复' };
     throw new Error('签到失败：' + (msg || `ret=${chk && chk.ret}`));
   },
 
@@ -123,9 +133,10 @@ export const v2board = {
         credentials: 'include',
       });
       const chk = await chkRes.json().catch(() => null);
-      const msg = String((chk && chk.msg) || '');
-      if (chk && chk.ret === 1) return { ok: true, message: `签到成功：${msg || '领取成功'}` };
-      if (/已签到|已经签到|签到过/.test(msg)) return { ok: true, message: '今日已签到，无需重复' };
+      // 只取第一段：机场的 msg 里常挂着整段促销公告
+      const msg = firstParagraph(String((chk && chk.msg) || ''));
+      if (chk && chk.ret === 1) return { ok: true, message: msg || '签到成功' };
+      if (/已签到|已经签到|签到过/.test(msg)) return { ok: true, message: msg || '今日已签到，无需重复' };
       return { ok: false, message: '签到失败：' + (msg || `ret=${chk && chk.ret}`) };
     },
   },

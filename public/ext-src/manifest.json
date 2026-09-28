@@ -1,15 +1,27 @@
 {
   "action": {
     "default_popup": "popup.html",
-    "default_title": "cookie插件2.2"
+    "default_title": "cookie插件2.2：一键取 Cookie、本地网络中继、浏览器签到",
+    "default_icon": {
+      "16": "icon16.png",
+      "32": "icon32.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   },
   "background": {
     "service_worker": "background.js"
   },
-  "description": "签到面板本地网络代理：在您的网络中自动执行签到，支持 Cookie 一键获取",
+  "description": "签到面板助手：一键取 Cookie、本地网络中继、需要时自动完成浏览器签到",
   "host_permissions": [
     "<all_urls>"
   ],
+  "icons": {
+    "16": "icon16.png",
+    "32": "icon32.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
   "manifest_version": 3,
   "name": "cookie插件2.2",
   "permissions": [
@@ -20,5 +32,5 @@
     "alarms",
     "tabs"
   ],
-  "version": "2.2"
+  "version": "2.3"
 }

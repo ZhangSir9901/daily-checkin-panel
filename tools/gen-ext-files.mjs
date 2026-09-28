@@ -10,9 +10,15 @@ import { dirname, join } from 'node:path';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const srcDir = join(root, 'public', 'ext-src');
-const files = ['manifest.json', 'popup.html', 'popup.js', 'background.js'];
+const files = ['manifest.json', 'popup.html', 'popup.js', 'background.js', 'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png'];
 
+// PNG 是二进制：存成 base64，并在键名前加 "@b64:" 前缀告诉打包器要解码
+// （ext-zip.js 看到前缀就把 base64 解回字节，不再当文本注入面板地址）。
 const entries = files.map((name) => {
+  if (name.endsWith('.png')) {
+    const b64 = readFileSync(join(srcDir, name)).toString('base64');
+    return `  ${JSON.stringify('@b64:' + name)}: ${JSON.stringify(b64)}`;
+  }
   const text = readFileSync(join(srcDir, name), 'utf8');
   return `  ${JSON.stringify(name)}: ${JSON.stringify(text)}`;
 });

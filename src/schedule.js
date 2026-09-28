@@ -1,7 +1,18 @@
-// 签到时间设置：settings 表存 schedule_time（小时 "00"~"23"，默认 "08"）
+// 签到时间设置：settings 表存 schedule_time（"HH:MM"，如 "08:05"，默认 "08"）
 // 与 schedule_tz（IANA 时区，默认 Asia/Shanghai）。
-// Worker Cron 每小时触发一次（0 * * * *），在这里判断当前（设定时区）
-// 是否到达整点、且本小时未执行过，避免重复签到。
+// Worker Cron 每分钟触发一次（* * * * *），在这里判断当前（设定时区）
+// 是否该执行，避免重复签到。
+//
+// 【为什么不是「当前分钟必须等于设定分钟」】
+// 旧逻辑要求严格相等，后果是：只要那一分钟没被触发（Cloudflare 在部署/抖动时会漏），
+// 或者用户把时间改成了**已经过去**的时刻（例如 09:00 才把 07:00 改成 08:05），
+// 这一天就再也不会自动签到了 —— 面板看起来就像「不会自动签到」。
+// 现在改成三个规则，既可预期又不会漏：
+//   ① 到达/超过设定时刻 → 执行（当天该时刻第一次）
+//   ② 执行过且**成功** → 当天不再执行
+//   ③ 执行过但**失败/结果未知** → 隔 RETRY_GAP_MIN 分钟自动补一次，直到成功或超出补跑窗口
+// 窗口 CATCHUP_WINDOW_MIN 存在的意义：晚上才部署、或把时间从 20:00 改到 08:05 时，
+// 不该深夜突然批量签到；超出窗口就等下一个自然日（想立刻签到点面板的「执行」）。
 
 export function tzParts(date, tz) {
   const fmt = new Intl.DateTimeFormat('en-CA', {
@@ -46,30 +57,72 @@ export function dayStartInTz(date, tz) {
   return Date.parse(`${day}T00:00:00Z`) - tzOffsetMs(date, tz);
 }
 
-// now: Date；timeHH: "08"；tz: IANA；lastKey: 上次执行 key（"YYYY-MM-DD HH"）
-// 返回 { run, key }：run 为 true 表示本小时应该执行。
-export function shouldRun(now, timeHHMM, tz, lastKey) {
+// 没跑成功的补跑窗口（分钟）：默认 6 小时。
+export const CATCHUP_WINDOW_MIN = 360;
+// 失败后的重试间隔（分钟）：避免每分钟重试（那会一直占着扩展的中继通道）。
+export const RETRY_GAP_MIN = 15;
+
+// 设定时间的解析结果："08" / "08:05" 都接受，缺分钟按 00 算。
+function parseWant(timeHHMM) {
+  const t = String(timeHHMM || '');
+  if (t.includes(':')) {
+    const [h, m] = t.split(':');
+    return { wantHour: String(h).padStart(2, '0'), wantMin: String(m).padStart(2, '0') };
+  }
+  return { wantHour: String(t).padStart(2, '0'), wantMin: '00' };
+}
+
+// "YYYY-MM-DD HH:MM" → 当天的「第几分钟」，便于算间隔（不涉及时区换算，两端同一时区）。
+function clockMinutes(s) {
+  const m = String(s || '').match(/\d{4}-\d{2}-\d{2}\s+(\d{2}):(\d{2})/);
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
+
+// 上次执行记录 → { base: 设定时刻 key, at: 上次尝试时刻（同一 key 当天）, ok: 是否成功 }
+// 格式：成功 "2026-09-28 08:05"；失败/结果未知 "2026-09-28 08:05@2026-09-28 08:07"
+export function parseLastKey(lastKey) {
+  const s = String(lastKey || '');
+  const i = s.indexOf('@');
+  if (i < 0) return { base: s, at: '', ok: true };
+  return { base: s.slice(0, i), at: s.slice(i + 1), ok: false };
+}
+
+// now: Date；timeHHMM: "08:05"；tz: IANA；lastKey: 上次执行记录（见 parseLastKey）
+// 返回 { run, key, nowKey }：run 为 true 表示现在应该执行；key 记录「本设定时刻已处理」。
+export function shouldRun(now, timeHHMM, tz, lastKey, opts = {}) {
+  const windowMin = Number.isFinite(opts.windowMin) ? opts.windowMin : CATCHUP_WINDOW_MIN;
+  const retryGap = Number.isFinite(opts.retryGap) ? opts.retryGap : RETRY_GAP_MIN;
   let parts;
   try {
     parts = tzParts(now, tz);
   } catch {
     parts = tzParts(now, 'Asia/Shanghai');
   }
-  // 支持 HH:MM 格式，也兼容旧的 HH 格式
-  const t = String(timeHHMM || '');
-  let wantHour, wantMin;
-  if (t.includes(':')) {
-    const [h, m] = t.split(':');
-    wantHour = String(h).padStart(2, '0');
-    wantMin = String(m).padStart(2, '0');
-  } else {
-    wantHour = String(t).padStart(2, '0');
-    wantMin = '00';
+  const { wantHour, wantMin } = parseWant(timeHHMM);
+  const key = `${parts.day} ${wantHour}:${wantMin}`;
+  const nowKey = `${parts.day} ${parts.hour}:${parts.minute}`;
+  const nowMin = Number(parts.hour) * 60 + Number(parts.minute);
+  const wantMinTotal = Number(wantHour) * 60 + Number(wantMin);
+
+  const last = parseLastKey(lastKey);
+  if (last.base === key) {
+    if (last.ok) return { run: false, key, nowKey }; // 今天这个时刻已经成功签过
+    // 上一次尝试过但没成功（失败/结果未知）：隔 retryGap 再补一次
+    const atMin = clockMinutes(last.at);
+    if (atMin != null && nowMin - atMin < retryGap) return { run: false, key, nowKey };
   }
-  const key = `${parts.day} ${parts.hour}:${parts.minute}`;
-  if (parts.hour !== wantHour || parts.minute !== wantMin) return { run: false, key };
-  if (lastKey === key) return { run: false, key };
-  return { run: true, key };
+
+  // 还没到设定时刻 → 等
+  if (nowMin < wantMinTotal) return { run: false, key, nowKey };
+  // 已经过太久（例如晚上才部署）→ 不补跑，避免深夜突然签到
+  if (nowMin - wantMinTotal > windowMin) return { run: false, key, nowKey };
+  return { run: true, key, nowKey };
+}
+
+// 执行后要写回 lastMap 的值：成功记 key；失败/结果未知记 "key@本次时刻"，好让 shouldRun 决定何时补跑。
+export function nextLastKey(key, nowKey, status) {
+  return status === 'ok' ? key : `${key}@${nowKey}`;
 }
 
 // 全角转半角（支持全角数字和冒号输入）

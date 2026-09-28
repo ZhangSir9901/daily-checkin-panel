@@ -5,6 +5,14 @@ import { EXT_FILES } from './ext-files.js';
 
 const te = new TextEncoder();
 
+// base64 → 字节（Workers 里可用 atob；不依赖 Buffer）
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 // CRC32 表
 const CRC_TABLE = (() => {
   const t = new Uint32Array(256);
@@ -48,12 +56,15 @@ export function buildZip(files) {
     const nameBytes = te.encode(f.name);
     const crc = crc32(f.data);
     const size = f.data.length;
+    // 文件名带中文（如「项目文档-记忆与踩坑.md」）时必须置 UTF-8 标志位（bit 11），
+    // 否则 Windows 自带解压会把名字解成乱码。
+    const flags = /[^\x00-\x7F]/.test(f.name) ? 0x0800 : 0;
 
     // Local file header
     const local = concat(
       u32(0x04034b50), // signature
       u16(20),         // version needed
-      u16(0),          // flags
+      u16(flags),      // flags（中文名 → UTF-8 位）
       u16(0),          // method = STORE
       u16(0), u16(0),  // time, date
       u32(crc),
@@ -68,7 +79,7 @@ export function buildZip(files) {
       header: concat(
         u32(0x02014b50), // signature
         u16(20), u16(20), // version made by, version needed
-        u16(0), u16(0),   // flags, method
+        u16(flags), u16(0), // flags（同上）, method
         u16(0), u16(0),   // time, date
         u32(crc),
         u32(size), u32(size),
@@ -109,10 +120,16 @@ export async function handleExtZip(req, env) {
   const url = new URL(req.url);
   const origin = url.origin; // 当前面板地址，如 https://xxx.workers.dev
 
-  const fileNames = ['manifest.json', 'popup.html', 'popup.js', 'background.js'];
+  const fileNames = ['manifest.json', 'popup.html', 'popup.js', 'background.js', 'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png'];
   const files = [];
 
   for (const name of fileNames) {
+    // 图标是二进制：生成器把它存成 "@b64:icon16.png"，这里解回字节
+    const b64 = EXT_FILES['@b64:' + name];
+    if (b64 != null) {
+      files.push({ name, data: b64ToBytes(b64) });
+      continue;
+    }
     let text = EXT_FILES[name];
     if (text == null) {
       return new Response('扩展源文件缺失：' + name, { status: 500 });
