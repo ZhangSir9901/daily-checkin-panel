@@ -99,4 +99,84 @@ await t('runner：中继超时 → 记「结果未知」（skip）而不是「�
   assert.equal(db.inserted[0].args[3], 'skip');
 });
 
+// ---- relayBacklog：队列堆积时不再往里塞 ----
+// 线上现象（2026-09-28）：定时器重叠 + 扩展单飞执行 → 队列里堆了几十条请求，
+// 每个都等到 Worker 侧 90 秒超时，面板上满屏「扩展没有在 90 秒内回传」。
+await t('relayBacklog：能数出队列里堆着的请求', async () => {
+  const { relayBacklog } = await import('../src/lib/relay.js');
+  const db = { prepare: () => ({ bind() { return this; }, async first() { return { n: 7 }; } }) };
+  assert.equal(await relayBacklog(db), 7);
+  const bad = { prepare: () => { throw new Error('no table'); } };
+  assert.equal(await relayBacklog(bad), 0, '老库没有 relay_jobs 表时不能报错');
+});
+
+await t('runner：中继队列已堆积 → 跳过（不添乱）且可自动重试', async () => {
+  const { encryptJSON } = await import('../src/crypto.js');
+  const { runAccount } = await import('../src/runner.js');
+  const inserted = [];
+  const db = {
+    prepare(sql) {
+      const stmt = {
+        _args: [],
+        bind(...args) { stmt._args = args; return stmt; },
+        async run() { if (/INSERT INTO runs/i.test(sql)) inserted.push(stmt._args); return {}; },
+        async all() { return { results: [] }; },
+        async first() {
+          if (/FROM settings/i.test(sql)) return { value: String(Date.now()) };      // 扩展在线
+          if (/COUNT\(\*\)/i.test(sql)) return { n: 9 };                              // 队列堆积
+          return null;
+        },
+      };
+      return stmt;
+    },
+    async batch() { return []; },
+  };
+  const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
+  const credsEnc = await encryptJSON(env, db, { cookie: 'c=x' });
+  const account = { id: 31, site: 'nodeseek', name: 'NS忙', creds: credsEnc, meta: '{"execution":"relay"}', enabled: 1 };
+  let hitSite = false;
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async () => { hitSite = true; return { status: 200, text: async () => '{}' }; };
+  let r;
+  try { r = await runAccount(env, account); } finally { globalThis.fetch = origFetch; }
+  assert.equal(r.status, 'skip');
+  assert.equal(r.retryable, true);
+  assert.match(r.message, /中继正忙/);
+  assert.equal(hitSite, false, '忙的时候不该再去打站点');
+  assert.equal(inserted.length, 1);
+});
+
+// ---- 浏览器工单去重 ----
+// 线上现象：吾爱破解每分钟被排一次浏览器工单，扩展反复开标签页。
+await t('runner：同一账号 10 分钟内不重复排浏览器带路工单', async () => {
+  const { encryptJSON } = await import('../src/crypto.js');
+  const { runAccount } = await import('../src/runner.js');
+  const jobs = [];
+  const now = Date.now();
+  const db = {
+    prepare(sql) {
+      const stmt = {
+        _args: [],
+        bind(...a) { stmt._args = a; return stmt; },
+        async run() { if (/INSERT INTO browser_manual_jobs/i.test(sql)) jobs.push(stmt._args); return {}; },
+        async all() { return { results: [] }; },
+        async first() {
+          if (/FROM settings/i.test(sql)) return { value: String(now) };
+          if (/COUNT\(\*\)/i.test(sql)) return { n: 0 };
+          if (/FROM browser_manual_jobs/i.test(sql)) return { id: 99 }; // 已有一张刚排的工单
+          return null;
+        },
+      };
+      return stmt;
+    },
+    async batch() { return []; },
+  };
+  const env = { DB: db, ENCRYPT_KEY: 'El771KvGwTGzl6K9C2dqmMOsOBYgF3LR9pIm/FvTEbs=' };
+  const credsEnc = await encryptJSON(env, db, { cookie: 'c=x' });
+  const account = { id: 32, site: 'wuaipojie', name: '吾爱', creds: credsEnc, meta: '{}', enabled: 1 };
+  const r = await runAccount(env, account);
+  assert.equal(r.status, 'skip');
+  assert.equal(jobs.length, 0, '已有工单时不应再排一张');
+});
+
 console.log(`\n${n} 组通过`);

@@ -2,7 +2,7 @@
 //
 // 做法：把 public/index.html 的 CSS + <body> + 内联 <script> 原样搬过来，
 // 只在最前面插一段「假后端」把 window.fetch 拦掉，返回一份仿真数据。
-// 这样预览里跑的就是线上那一份真实代码（表格行、红标、提示气泡都是真的），
+// 这样预览里跑的就是线上那一份真实代码（表格行、提示小字、提示气泡都是真的），
 // 而不是重画一个近似版。
 //
 // 用法：node tools/gen-table-preview.mjs  → 输出 ../../_preview/table.html
@@ -23,6 +23,10 @@ const scriptM = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
 const bodyM = html.match(/<body>([\s\S]*?)\n<script/);
 if (!styleM || !scriptM || !bodyM) throw new Error('没找到 <style> / <body> / 内联 <script>');
 
+// 这两个文件是页面依赖的纯函数库（有单测），预览里原样内联，跑的就是线上那一份逻辑
+const toolsJs = readFileSync(resolve(root, 'public', 'cookie-tools.js'), 'utf8');
+const curlJs = readFileSync(resolve(root, 'public', 'curl-import.js'), 'utf8');
+
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' })
   .format(new Date());
 const now = Date.now();
@@ -31,7 +35,8 @@ const now = Date.now();
 const accounts = [
   {
     id: 1, name: 'NodeSeek', site: 'nodeseek', enabled: 1,
-    meta: JSON.stringify({ toggles: { random: true }, last_signin_date: today }),
+    // exec_route：runner 记下的「上次真正走通的路线」，自动模式的徽章就据此显示「自动 · 本地网络」
+    meta: JSON.stringify({ toggles: { random: true }, last_signin_date: today, exec_route: 'relay' }),
     // 这里故意用**旧的存库文案**（我们自己的套话）+ 线上真实的网站原文：
     // 面板会改用网站原话当主文案，并打上「网站原话」标记 ——
     // 也就是说部署后，**已经存在的那些旧记录立刻就会显示成网站原话**，不用等下一次执行。
@@ -48,15 +53,16 @@ const accounts = [
     last_run_at: now - 70000,
   },
   {
+    // execution：手动固定路线（徽章不带「自动」二字，也不会被自动换掉）
     id: 3, name: '69机场', site: 'v2board', enabled: 1,
-    meta: JSON.stringify({ last_signin_date: today }),
+    meta: JSON.stringify({ last_signin_date: today, execution: 'server', exec_route: 'server' }),
     last_status: 'ok', last_msg: '签到成功，获得 1.2 GB 流量',
     last_detail: '网站返回：{"ret":1,"msg":"签到成功","data":{"traffic":1288490188}}',
     last_run_at: now - 78000,
   },
   {
-    // 演示「网站反馈 + 红标提示」：未识别到成功标识本身不致命，
-    // 红标里是对着失败类型给出的中文建议
+    // 演示「网站反馈 + 提示建议」：未识别到成功标识本身不致命，
+    // 建议那行是对着失败类型给出的中文建议
     id: 4, name: '吾爱破解', site: 'wuaipojie', enabled: 1,
     meta: JSON.stringify({}),
     last_status: 'fail',
@@ -66,7 +72,7 @@ const accounts = [
   },
   {
     id: 5, name: '糊涂鳄', site: 'hutue', enabled: 1,
-    meta: JSON.stringify({ sched_hour: '07:00', last_signin_date: today }),
+    meta: JSON.stringify({ sched_hour: '07:00', last_signin_date: today, exec_route: 'server' }),
     last_status: 'ok', last_msg: '签到成功，赠送5晶石',
     // 线上糊涂鳄返回的是全转义 JSON（\u4eca\u65e5…），面板要还原成人话
     last_detail: '网站返回：{"status":"0","msg":"\\u4eca\\u65e5\\u5df2\\u7b7e\\u5230\\uff0c\\u8bf7\\u660e\\u65e5\\u518d\\u6765"}',
@@ -82,11 +88,22 @@ const accounts = [
   // 「结果未知」：请求发出去了但没等到回包 —— 状态列要显示「待确认」，而不是武断的「未签到」
   {
     id: 8, name: '糊涂鳄（hf）', site: 'hutue', enabled: 1,
-    meta: JSON.stringify({ sched_hour: '08:05' }),
+    // route_note：真的换过路线时，那一行下面会多一句「自动改走 —— CF 直连失败（…）」
+    meta: JSON.stringify({ sched_hour: '08:05', exec_route: 'relay', route_note: '自动改走 —— CF 直连失败（没等到回包）' }),
     last_status: 'skip',
     last_msg: '签到结果未知：请求已发出但没等到回包（本地网络失败：中继执行超时（58秒）：请求已发出但没收到回包）。请求可能已经送达网站（签到可能已生效），也可能没有；稍后会自动复核。',
     last_detail: '网站返回：（无响应） · 接口 user_qiandao · user_qiandao：重试仍无回包',
     last_run_at: now - 60000,
+  },
+  // 自动换路成功：直连被拦 → 自动改走本地网络 → 签上了。
+  // 用户要能从这一行看出「面板自己做了什么」，而不是只看到一个莫名其妙的失败。
+  {
+    id: 9, name: '看雪（自动换路）', site: 'kanxue', enabled: 1,
+    meta: JSON.stringify({ exec_route: 'relay', route_note: '自动改走 —— CF 直连失败（被机房 IP 拦）' }),
+    last_status: 'ok',
+    last_msg: '今日已签到',
+    last_detail: '网站返回：{"status":1,"msg":"今日已签到"}',
+    last_run_at: now - 30000,
   },
 ];
 
@@ -103,15 +120,27 @@ ${bodyM[1]}
 <script>
 // —— 预览专用假后端：拦掉 fetch，返回仿真数据 ——
 // 这样下面那段「真实面板脚本」会以为自己在跟线上 Worker 说话。
+// 账号相关的路由要能「读单个 / 改 / 新建 / 试跑」：否则点「粘贴并保存」会在
+// GET /api/accounts/<id> 那一步拿到空对象就断掉，预览里看不到后续的真流程。
 const _SITES = ${JSON.stringify(siteMeta())};
 const _ACCOUNTS = ${JSON.stringify(accounts)};
-window.fetch = async (path) => {
+window.fetch = async (path, init = {}) => {
   const p = String(path);
+  const method = ((init && init.method) || 'GET').toUpperCase();
   const ok = (obj) => new Response(JSON.stringify(obj), { status: 200, headers: { 'Content-Type': 'application/json' } });
   if (p.startsWith('/api/status')) return ok({ logged_in: true, setup_needed: false });
   if (p.startsWith('/api/sites')) return ok({ sites: _SITES });
   if (p.startsWith('/api/schedule')) return ok({ time: '08:00', tz: 'Asia/Shanghai' });
   if (p.startsWith('/api/relay-status')) return ok({ online: true, version: '2.2', last_poll: Date.now() });
+  const accRun = p.match(/^\\/api\\/accounts\\/(\\d+)\\/run$/);
+  if (accRun) return ok({ ok: true, result: { status: 'ok', message: '今日已签到，无需重复' } });
+  const accOne = p.match(/^\\/api\\/accounts\\/(\\d+)$/);
+  if (accOne && method === 'GET') {
+    const a = _ACCOUNTS.find((x) => String(x.id) === accOne[1]) || _ACCOUNTS[0];
+    return ok({ account: { ...a, creds: {} } });
+  }
+  if (accOne) return ok({ ok: true });            // PUT（改凭据/改名）
+  if (p === '/api/accounts' && method === 'POST') return ok({ ok: true, id: 99 });
   if (p.startsWith('/api/accounts')) return ok({ accounts: _ACCOUNTS });
   if (p.startsWith('/api/logs')) return ok({ logs: [], total: 0 });
   if (p.startsWith('/api/settings')) return ok({ settings: {} });
@@ -119,10 +148,23 @@ window.fetch = async (path) => {
   return ok({ ok: true });
 };
 </script>
+<!-- 页面依赖的两个外部脚本（Cookie 解析 / cURL 解析）直接内联进来：
+     预览页是本地文件，拿不到 /cookie-tools.js 这些路由；
+     不内联的话「粘贴 -> 体检」这条路在预览里会直接报 "parsePasteText is not defined"。 -->
+<script>${toolsJs}</script>
+<script>${curlJs}</script>
 <script>${scriptM[1]}</script>
 </body>
 </html>
 `;
+
+// 生成器顺手把页内每段内联脚本跑一遍语法检查。
+// 这里生成的是「代码里的代码」：模板字符串少写一层反斜杠这种事肉眼看不出来，
+// 而后果很能骗人 —— 假后端那一段整个不生效，预览页里看着像「面板认不出站点」。
+for (const m of page.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+  try { new Function(m[1]); }
+  catch (e) { throw new Error('预览页里有内联脚本语法错误：' + e.message); }
+}
 
 const out = resolve(root, '../../_preview/table.html');
 mkdirSync(dirname(out), { recursive: true });

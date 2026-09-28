@@ -9,6 +9,73 @@ const status = (msg, cls = '') => { const s = $('status'); s.textContent = msg; 
 let cookies = [];
 let domain = '';
 
+// 标题里的版本号从 manifest 读：以前 popup 里写死「2.2」而 manifest 已经是 2.3，
+// 面板上显示「扩展在线 · v2.3」、扩展里写 2.2，看着像两个东西。
+function fillVersion() {
+  try {
+    const el = $('title-ver');
+    if (el) el.textContent = 'v' + ((chrome.runtime.getManifest() || {}).version || '');
+  } catch { /* 忽略 */ }
+}
+
+// ---------- 配置读写 ----------
+// API Key 属于凭据：存 storage.local（只在本机，不会跟着浏览器账号同步上云）。
+// 老版本（≤ 2.3）把它写在 sync：这里读不到本地就回退读一次 sync，并搬过来、删掉云端那份。
+function localArea() {
+  try {
+    const l = chrome.storage && chrome.storage.local;
+    if (l && typeof l.get === 'function' && typeof l.set === 'function') return l;
+  } catch { /* 忽略 */ }
+  return chrome.storage.sync;
+}
+async function readCfg() {
+  let got = {};
+  try { got = (await localArea().get(['panelUrl', 'apiKey'])) || {}; } catch { got = {}; }
+  if (!got.apiKey) {
+    try {
+      const s = await chrome.storage.sync.get(['apiKey']);
+      if (s && s.apiKey) {
+        got.apiKey = s.apiKey;
+        try { await localArea().set({ apiKey: s.apiKey }); } catch { /* 忽略 */ }
+        try { if (typeof chrome.storage.sync.remove === 'function') await chrome.storage.sync.remove(['apiKey']); } catch { /* 忽略 */ }
+      }
+    } catch { /* 忽略 */ }
+  }
+  return got;
+}
+async function writeCfg(obj) {
+  try { await localArea().set(obj); } catch { /* 忽略 */ }
+}
+
+// 面板地址规范化 + 校验。Cookie / API Key 都要发到这里，
+// 所以除本机回环调试外一律要求 https（http 会让凭据在网络上明文传输）。
+function normalizePanelUrl(raw) {
+  const s = String(raw || '').trim().replace(/\/+$/, '');
+  if (!s) return '';
+  try {
+    const u = new URL(s);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+    const path = u.pathname && u.pathname !== '/' ? u.pathname.replace(/\/+$/, '') : '';
+    return u.origin + path;
+  } catch { return ''; }
+}
+function panelUrlProblem(url) {
+  let u;
+  try { u = new URL(url); } catch { return '面板地址不是合法网址（示例：https://xxx.workers.dev）'; }
+  const loop = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname === '[::1]';
+  if (u.protocol !== 'https:' && !loop) return '面板地址必须是 https —— 否则 Cookie 和 API Key 会明文上网';
+  return '';
+}
+// 读取输入框里的面板地址并校验；不合格时把提示写进状态栏并返回空串
+async function panelUrlFromInput(showErr = status) {
+  let url = normalizePanelUrl($('panel-url').value);
+  if (!url) { showErr('请先填写签到面板地址（示例：https://xxx.workers.dev）', 'err'); return ''; }
+  const problem = panelUrlProblem(url);
+  if (problem) { showErr(problem, 'err'); return ''; }
+  await writeCfg({ panelUrl: url });
+  return url;
+}
+
 // 采集当前标签页的 Cookie，力求“精准而全面”：
 // ① 主源 getAll({ url }) —— 与浏览器真正会发给该地址的 Cookie 完全一致
 //    （自动考虑 domain 匹配含父域、path、secure、sameSite、是否过期），对任意网站都准。
@@ -56,14 +123,14 @@ function describeCookies(list) {
 
 async function init() {
   // 读取保存的面板地址和 API Key；没有保存过则用下载时注入的默认地址（面板动态生成 zip 时填入）
-  const { panelUrl, apiKey } = await chrome.storage.sync.get(['panelUrl', 'apiKey']);
+  const { panelUrl, apiKey } = await readCfg();
   const hasDefault = typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL && DEFAULT_PANEL_URL.startsWith('http');
   if (panelUrl) {
     $('panel-url').value = panelUrl;
   } else if (hasDefault) {
     $('panel-url').value = DEFAULT_PANEL_URL;
     // 自动保存默认地址，避免下次为空
-    chrome.storage.sync.set({ panelUrl: DEFAULT_PANEL_URL }).catch(() => {});
+    writeCfg({ panelUrl: normalizePanelUrl(DEFAULT_PANEL_URL) || DEFAULT_PANEL_URL });
   }
   if (apiKey) $('api-key').value = apiKey;
 
@@ -121,8 +188,8 @@ function cookieString() {
   return cookies.map((c) => `${c.name}=${c.value}`).join('; ');
 }
 
-function fullPayload() {
-  return JSON.stringify({
+function payloadObj() {
+  return {
     domain,
     userAgent: window._pageUA || '',
     cookies: cookieString(),
@@ -141,7 +208,11 @@ function fullPayload() {
     localStorage: window._localStore || {},
     stats: describeCookies(cookies),
     ts: Date.now(),
-  });
+  };
+}
+
+function fullPayload() {
+  return JSON.stringify(payloadObj());
 }
 
 $('btn-copy').onclick = async () => {
@@ -153,35 +224,61 @@ $('btn-copy').onclick = async () => {
 
 $('btn-send').onclick = async () => {
   if (!cookies.length) return status('没有可发送的 Cookie', 'err');
-  let panelUrl = $('panel-url').value.trim().replace(/\/$/, '');
-  if (!panelUrl) return status('请先填写签到面板地址', 'err');
-  if (!panelUrl.startsWith('http')) panelUrl = 'https://' + panelUrl;
-  await chrome.storage.sync.set({ panelUrl });
+  const panelUrl = await panelUrlFromInput();
+  if (!panelUrl) return;
+  const apiKey = $('api-key').value.trim();
+  const payload = payloadObj();
 
-  // 把 Cookie + UA + 域名编码进 URL hash，面板 JS 读取后自动弹出确认框
-  // 用 base64url 编码（+/= 替换为 -_.），避免特殊字符在地址栏被转义或截断
-  const b64 = btoa(unescape(encodeURIComponent(fullPayload())));
-  const payload = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  chrome.tabs.create({ url: panelUrl + '#ext-cookies=' + payload });
-  status('已打开面板，请在面板中确认保存', 'ok');
+  // ① 首选「一次性交接码」：先把内容 POST 给面板，面板打开的地址里只带一个 16 位短码。
+  //    好处：整包 Cookie / localStorage 不再进入地址栏，也不会写进浏览历史；
+  //    短码 5 分钟有效、取一次即作废（面板端 /api/handoff/<code>）。
+  if (apiKey) {
+    try {
+      const resp = await fetch(panelUrl + '/api/external/handoff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+        body: JSON.stringify(payload),
+      });
+      if (resp.status === 401) return status('API Key 无效：请去面板「设置」页重新复制一次', 'err');
+      if (resp.ok) {
+        const data = await resp.json().catch(() => null);
+        if (data && data.code) {
+          chrome.tabs.create({ url: panelUrl + '#handoff=' + data.code });
+          return status('已打开面板，请在面板中确认保存（交接码 5 分钟内有效）', 'ok');
+        }
+      }
+    } catch { /* 面板不可达 / 老面板没有这个接口 → 走下面的回退 */ }
+  }
+
+  // ② 回退：老面板（没有交接码接口）或没填 API Key 时，把内容编码进 URL hash。
+  //    面板端 #ext-cookies= 分支还在，旧组合照旧能用。
+  //    用 base64url 编码（+/= 替换为 -_.），避免特殊字符在地址栏被转义或截断。
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const enc = b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  chrome.tabs.create({ url: panelUrl + '#ext-cookies=' + enc });
+  status(apiKey ? '面板没有交接接口，已用旧方式打开（凭据随链接传递）' : '未填 API Key，已用旧方式打开（凭据随链接传递）', 'ok');
 };
 
-$('panel-url').oninput = () => {
-  chrome.storage.sync.set({ panelUrl: $('panel-url').value.trim().replace(/\/$/, '') });
-};
+// 输入时不再「每敲一个键就写一次存储」：去抖 400ms，失焦时立刻落盘。
+// （以前每敲一下都写盘，Key 输到一半的残值也会被存进去）
+let saveTimer = null;
+function scheduleSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveCfgNow, 400);
+}
+function saveCfgNow() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  writeCfg({
+    panelUrl: $('panel-url').value.trim().replace(/\/$/, ''),
+    apiKey: $('api-key').value.trim(),
+  });
+}
+$('panel-url').oninput = scheduleSave;
+$('api-key').oninput = scheduleSave;
+$('panel-url').onchange = saveCfgNow;
+$('api-key').onchange = saveCfgNow;
 
-$('api-key').oninput = () => {
-  chrome.storage.sync.set({ apiKey: $('api-key').value.trim() });
-};
-
-// 兼容旧的 onchange（保留）
-$('panel-url').onchange = () => {
-  chrome.storage.sync.set({ panelUrl: $('panel-url').value.trim().replace(/\/$/, '') });
-};
-
-$('api-key').onchange = () => {
-  chrome.storage.sync.set({ apiKey: $('api-key').value.trim() });
-};
+fillVersion();
 
 // 打开弹窗时顺手叫醒一次中继（后台常驻长轮询，本来就会自己跑）。
 // 以前这里还有个「立即执行待办签到」按钮——它会挂住弹窗、也让用户以为要手动点才干活，已删掉：
@@ -195,228 +292,12 @@ setTimeout(() => {
   } catch { /* 忽略 */ }
 }, 0);
 
-// 原生页面巡检：不依赖 eval / new Function（MV3 禁止），用于读取网站真实反馈。
-async function inspectPageInPopup(tabId) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      const title = document.title || '';
-      const bodyText = (document.body && document.body.innerText) || '';
-      const html = document.documentElement ? document.documentElement.innerHTML : '';
-      const all = bodyText + '\n' + html;
-      const compact = bodyText.replace(/\s+/g, ' ').trim();
-      // 1) 人机验证 / 验证码 / WAF：优先判定——这些页面里往往也夹带「签到」字样
-      const CAPTCHA = ['验证码', '人机验证', '安全验证', '请完成验证', '滑动验证', '滑块', '智能验证', 'slidercaptcha', 'geetest', '极验', 'recaptcha', 'hcaptcha', 'turnstile', 'cf_chl', 'challenge-platform', 'Just a moment', 'checking your browser', 'turing.captcha.qcloud.com', 'TCaptcha', 'CaptchaAId', 'ibex'];
-      if (CAPTCHA.some((m) => all.includes(m))) return { ok: false, message: '遇到人机验证/安全验证（验证码/滑块），需人工验证后重试｜页面：' + title };
-      const WAF = ['waf_zw_verify', 'WZWS_CONFIRM_PREFIX_LABEL', 'Access Denied', '403 Forbidden', '请求被拦截'];
-      if (WAF.some((m) => all.includes(m))) return { ok: false, message: '遇到网站安全防护（WAF），请在浏览器完成验证后重试｜页面：' + title };
-      // ---- 找「去签到」入口（Discuz 系论坛通用）----
-      const ALREADY = /已签到|已经签到|已打卡|签到完毕|签到完成|连续签到|今日已签|明天再来|下期再来/;
-      const SIGN_TEXT = /打卡签到|立即签到|点击签到|点击打卡|签到领奖|每日签到|每日打卡|签个到|去签到|未打卡|还没有签到|今天还没有/;
-      const SIGN_IMG = /qds\.png|signin_no\.png|pperwb\.gif|wb\.png|qiandao|qdbg|sign_?in/i;
-      const SIGN_SEL = '#kx,#JD_sign,#addsign,#sg_sign,#dcsignin_tips,#tt_sign,.punch_btn,.go-user-qiandao,a.initiate-checkin,#my_amupper,#pper_a,#sign_title,#setsign,.click-qiandao,.zzhuti_qd_1,.user-index-qd,.taskbtn';
-      const attrOf = (el) => ((el.getAttribute && el.getAttribute('href') || '') + ' ' + (el.id || '') + ' ' +
-        (el.className || '') + ' ' + (el.getAttribute && el.getAttribute('title') || '')).replace(/\s+/g, ' ');
-      const textOf = (el) => String(el.innerText || el.textContent || '').replace(/\s+/g, '');
-      const imgsOf = (el) => Array.from(el.querySelectorAll ? el.querySelectorAll('img') : [])
-        .concat(el.tagName === 'IMG' ? [el] : [])
-        .map((i) => (i.getAttribute('src') || '') + ' ' + (i.getAttribute('alt') || '')).join(' ');
-      const findSignLink = () => {
-        const applies = Array.from(document.querySelectorAll('a[href*="do=apply"], a[href*="do=draw"]'))
-          .filter((a) => /mod=task/i.test(a.getAttribute('href') || ''));
-        for (const a of applies) {
-          if (ALREADY.test(textOf(a))) continue;
-          const own = textOf(a) + ' ' + attrOf(a) + ' ' + imgsOf(a);
-          const row = a.closest('tr') || a.closest('li') || a.closest('table') || a.parentElement;
-          const rowTxt = ((row && row.innerText) || '').replace(/\s+/g, ' ').slice(0, 200);
-          const rowDone = /已完成|已申请|已领取|已打卡/.test(rowTxt) && !/立即申请|马上申请|申请任务/.test(rowTxt);
-          if (rowDone) return { href: a.getAttribute('href') || '', label: (textOf(a) || '签到'), done: true };
-          if (/qds\.png|打卡|每日|签到/i.test(own + ' ' + rowTxt) || applies.length === 1) {
-            return { href: a.getAttribute('href') || '', label: (textOf(a) || '打卡签到'), done: false };
-          }
-        }
-        const known = Array.from(document.querySelectorAll(SIGN_SEL));
-        for (const el of known) {
-          const own = textOf(el) + ' ' + attrOf(el) + ' ' + imgsOf(el);
-          if (ALREADY.test(own)) continue;
-          const href = (el.getAttribute && el.getAttribute('href')) || '';
-          const usable = href && !/^javascript:void/i.test(href) ? href : '';
-          el.setAttribute('data-panel-sign', '1');
-          return { href: usable, clickSel: '[data-panel-sign="1"]', label: (textOf(el) || '签到'), done: false };
-        }
-        for (const el of Array.from(document.querySelectorAll('a,button,[onclick],img'))) {
-          const t = textOf(el);
-          const im = imgsOf(el);
-          if (ALREADY.test(t + ' ' + im)) continue;
-          if (!(SIGN_TEXT.test(t) || SIGN_IMG.test(im))) continue;
-          const href = (el.getAttribute && el.getAttribute('href')) || '';
-          if (!href && !el.onclick && !el.getAttribute('onclick')) continue;
-          el.setAttribute('data-panel-sign', '1');
-          return { href: /^javascript:/i.test(href) ? '' : href, clickSel: '[data-panel-sign="1"]', label: (t || '签到'), done: false };
-        }
-        return null;
-      };
-      const SIGNED = /签到完毕|签到完成|您已完成过此任务|您已经完成此任务|您今日已经签到|您今天已经签到|今天已经签到|已经签到过|已经完成签到|今日任务已完成|今日已签到|今天已完成签到|已连续签到|下期再来|明天再来|无需重复|恭喜.{0,14}(完成|获得|领到|签到)/;
-      const SUCCESS = /任务已完成|签到成功|打卡成功|领取成功|成功领取|获得.{0,10}(鸡腿|积分|金币|铜币|银币|吾爱币|AK|币|空间|MB|GB)/;
-      let link = null;
-      try { link = findSignLink(); } catch (e) { link = null; }
-      if (!link) {
-        const am = all.match(/<a[^>]*href=["']([^"']*mod=task[^"']*do=(?:apply|draw)[^"']*)["'][^>]*>/i);
-        if (am && /qds\.png|打卡签到|每日签到|每日打卡|签到完毕/i.test(all) && !/已完成过此任务|您已经完成此任务/.test(all)) {
-          link = { href: am[1].replace(/&amp;/g, '&'), label: '打卡签到', done: false };
-        }
-      }
-      if (SUCCESS.test(all)) return { ok: true, message: '签到成功｜' + (compact.slice(0, 120) || title) };
-      if (SIGNED.test(all)) return { ok: true, message: '今日已签到，无需重复' };
-      if (link && link.done) return { ok: true, message: '今日已签到（任务页显示：已完成）' };
-      // 4) 未登录（Discuz 游客页会写「注册[Register]」）——比「未签到」更优先：
-      //    登录失效时页面导航里也有「每日签到」这类字样。
-      if (/需要先登录|请先登录|还未登录|请登录后|登录已失效|登录失效|请重新登录|未登录|注册\[Register\]|立即注册|登录后才能/.test(all)) return { ok: false, message: '登录已失效，请重新获取 Cookie' };
-      if (!link && /打卡签到|立即签到|点击打卡|每日签到|每日打卡|还没有签到|未打卡/.test(all)) {
-        return { ok: false, unsigned: true, href: '', clickSel: '', message: '网站显示还没签到，但页面上找不到可点的签到入口' };
-      }
-      if (link) return { ok: false, unsigned: true, href: link.href || '', clickSel: link.clickSel || '', message: '网站还挂着「' + (link.label || '签到') + '」入口 —— 今天还没签上' };
-      return { ok: false, message: '未识别到成功标识｜页面：' + title + '｜' + compact.slice(0, 140) };
-    },
-  });
-  return (results && results[0] && results[0].result) || null;
-}
-
-// 尝试执行面板下发的脚本字符串（MV3 下通常失效，失败时回退原生巡检）。
-async function runPanelScriptInPopup(tabId, job) {
-  const execPromise = chrome.scripting.executeScript({
-    target: { tabId },
-    func: (scriptStr, params) => {
-      const fn = new Function('params', `return (${scriptStr})(params)`);
-      return fn(params);
-    },
-    args: [job.script, job.params || {}],
-  });
-  const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('脚本执行超时（60秒）')), 60000));
-  const results = await Promise.race([execPromise, timeoutPromise]);
-  return (results && results[0] && results[0].result) || null;
-}
-
-// 在弹窗上下文中执行单个签到任务（复用目标域名标签页，携带用户 Cookie）
-// onStep: 步骤回调，用于显示详细进度
-async function executeJobInPopup(job, onStep) {
-  const startMs = Date.now();
-  const step = (msg) => { if (onStep) onStep(msg); };
-  let tab = null;
-  let created = false;
-  try {
-    if (!job.domain) throw new Error('任务缺少目标域名');
-    step('查找标签页…');
-    const tabs = await chrome.tabs.query({ url: `*://${job.domain}/*` });
-    if (tabs.length > 0) {
-      tab = tabs[0];
-      step('复用已有标签页…');
-    } else {
-      step('打开新标签页…');
-      tab = await chrome.tabs.create({ url: `https://${job.domain}/`, active: false });
-      created = true;
-      step('等待页面加载…');
-      await new Promise((resolve) => {
-        const listener = (tabId, info) => {
-          if (tabId === tab.id && info.status === 'complete') {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        setTimeout(resolve, 15000);
-      });
-    }
-    // 如果任务指定了导航 URL（如吾爱破解），先导航到该页面（模拟手动点击），再执行检查脚本
-    if (job.navigate_url) {
-      step('导航到签到页面…');
-      await chrome.tabs.update(tab.id, { url: job.navigate_url });
-      step('等待签到页面加载…');
-      await new Promise((resolve) => {
-        const listener = (tabId, info) => {
-          if (tabId === tab.id && info.status === 'complete') {
-            chrome.tabs.onUpdated.removeListener(listener);
-            resolve();
-          }
-        };
-        chrome.tabs.onUpdated.addListener(listener);
-        setTimeout(resolve, 20000);
-      });
-      // 多等 2 秒，让页面内跳转完成
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    // MV3 禁止 new Function / eval：有 navigate_url 直接原生巡检，否则先试面板脚本再回退。
-    step('读取页面结果…');
-    let result = null;
-    if (!job.navigate_url && job.script) {
-      try { result = await runPanelScriptInPopup(tab.id, job); } catch { result = null; }
-    }
-    if (!result) result = await inspectPageInPopup(tab.id);
-    if (!result) throw new Error('无法读取页面内容（标签页可能已关闭或被重定向）');
-
-    // 页面还挂着「打卡签到」入口 = 今天还没签：链接→导航过去，JS 按钮→在页面里点一下
-    if (!result.ok && result.unsigned && (result.href || result.clickSel)) {
-      try {
-        let navigated = false;
-        if (result.href) {
-          const base = tab.url ? new URL(tab.url) : null;
-          const u = new URL(result.href, tab.url || undefined);
-          if ((u.protocol === 'http:' || u.protocol === 'https:') && (!base || u.host === base.host)) {
-            step('网站显示还没签到，正在执行签到…');
-            await chrome.tabs.update(tab.id, { url: u.href });
-            await new Promise((resolve) => {
-              const listener = (tabId, info) => {
-                if (tabId === tab.id && info.status === 'complete') {
-                  chrome.tabs.onUpdated.removeListener(listener);
-                  resolve();
-                }
-              };
-              chrome.tabs.onUpdated.addListener(listener);
-              setTimeout(resolve, 20000);
-            });
-            await new Promise((r) => setTimeout(r, 2000));
-            navigated = true;
-          }
-        }
-        if (!navigated && result.clickSel) {
-          step('网站显示还没签到，正在点击签到按钮…');
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: (sel) => { const el = document.querySelector(sel); if (el) el.click(); },
-            args: [result.clickSel],
-          });
-          await new Promise((r) => setTimeout(r, 3000));
-        }
-        const after = await inspectPageInPopup(tab.id);
-        if (after) result = after;
-      } catch (e) {
-        console.log('[签到面板] 触发签到失败：', e.message || e);
-      }
-    }
-
-    step('解析结果…');
-    return {
-      status: result.ok ? 'ok' : 'fail',
-      message: String(result.message || (result.ok ? '签到成功' : '签到失败')),
-      durationMs: Date.now() - startMs,
-    };
-  } catch (e) {
-    return { status: 'fail', message: '浏览器执行失败：' + (e.message || e), durationMs: Date.now() - startMs };
-  } finally {
-    // 只关闭自己新建的标签页（复用的保留）
-    if (created && tab && tab.id) {
-      chrome.tabs.remove(tab.id).catch(() => {});
-    }
-  }
-}
-
 // 面板连接检查：验证面板地址和 API Key 是否可用
 $('btn-check-conn').onclick = async () => {
   status('正在检查面板连接…', '');
   try {
-    let panelUrl = $('panel-url').value.trim().replace(/\/$/, '');
-    if (!panelUrl) return status('请先填写签到面板地址', 'err');
-    if (!panelUrl.startsWith('http')) panelUrl = 'https://' + panelUrl;
+    const panelUrl = await panelUrlFromInput();
+    if (!panelUrl) return; // 提示已经在状态栏里
     const apiKey = $('api-key').value.trim();
     if (!apiKey) return status('请先填写 API Key（面板设置页获取）', 'err');
 

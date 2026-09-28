@@ -9,6 +9,64 @@ import { dayInTz } from './schedule.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// 中继队列超过这个数就先不添乱（扩展单飞执行，堆积 = 集体超时）
+const RELAY_BACKLOG_LIMIT = 3;
+
+// 执行路线的对外名字（面板「网站反馈」里会带上，排障时一眼能看出这次请求从哪个网络出去）
+export const ROUTE_NAME = { server: 'CF 直连', relay: '本地网络' };
+
+// 把一条路线的失败压成几个字，给面板上那一行用。
+//
+// 为什么要压：面板「网站反馈」列一行只有两百多像素宽，把 `HTTP 403 Forbidden
+// Client IP 172.70.215.118 reason:UrlACL` 这种原文搬进去，用户能看到的只有开头两个词。
+// 完整原因照旧留在日志与错误信息里（要排障看那个），面板上只需要「换了、为什么换」。
+export function shortReason(e) {
+  const m = String((e && e.message) || e || '');
+  if (/UrlACL|Forbidden|Client IP|\b40[13]\b/.test(m)) return '被机房 IP 拦';
+  if (/没等到回包|没有回包|没收到回包|结果未知/.test(m)) return '没等到回包';
+  if (/超时|timeout|timed out/i.test(m)) return '超时';
+  if (/fetch failed|network|ENOTFOUND|ECONN|EAI_AGAIN|socket|handshake|certificate|SSL|TLS/i.test(m)) return '连不上';
+  if (/扩展/.test(m)) return '扩展不在线';
+  return m.replace(/\s+/g, ' ').slice(0, 20);
+}
+
+// 「换一条网络路线重试可能有救」的失败长什么样？
+//
+// 线上 2026-09-28 的教训（糊涂鳄 dj.hutue.cn）：该站从 Cloudflare 直连**完全正常**
+// （首页 200、签到接口 0.4 秒回 {"status":"0","msg":"今日已签到，请明日再来"}），
+// 但旧策略是「扩展在线就一律走本地中继」；中继是单飞执行，前面吾爱破解的浏览器工单
+// 要占掉将近一分钟，糊涂鳄被挤成「中继执行超时（45秒）」→ 面板记「失败」，
+// 可网站那边其实早就签好了。用户看到的就是「面板跟网站对不上」。
+//
+// 所以失败必须分两类：
+//   · 网络层失败（中继没人接单 / 没等到回包 / 连不上 / 被机房 IP 拦）→ 换个出口真的可能不一样；
+//   · 站点明确回答（Cookie 已失效 / 要人机验证 / 业务失败）→ 换个出口结果一模一样，
+//     再打一遍只会白等，还可能在同一分钟里连打两次签到接口。
+export function isRouteFailure(e) {
+  const msg = String((e && e.message) || e || '');
+  const outcome = (e && e.outcome) || '';
+  if (outcome === 'relay' || outcome === 'relay-unknown' || outcome === 'waf') return true;
+  if (outcome === 'captcha' || outcome === 'need-login') return false;
+  return /中继|本地网络|没等到回包|没有回包|没收到回包|超时|timeout|timed out|fetch failed|network|ENOTFOUND|ECONN|EAI_AGAIN|socket|handshake|certificate|SSL|TLS|UrlACL|Forbidden|HTTP 5\d\d/i.test(msg);
+}
+
+// 把一个账号排进「浏览器导航签到」队列（去重：同一账号 10 分钟内已排过就不再排）。
+// 为什么必须去重：定时器每次失败都可能触发一次改道，原来不去重会排出一堆工单，
+// 扩展那边就会反复开标签页签到（线上吾爱破解曾每分钟被排一次）。
+async function queueBrowserJob(db, accountId) {
+  try {
+    const dup = await db
+      .prepare('SELECT id FROM browser_manual_jobs WHERE account_id = ? AND created_at > ? LIMIT 1')
+      .bind(accountId, Date.now() - 10 * 60000)
+      .first();
+    if (dup) return false;
+    await db.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)').bind(accountId, Date.now()).run();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // 「今天」以哪个时区为准：跟随面板设置里的 schedule_tz（默认 Asia/Shanghai）。
 // 状态列跨零点重置需要和签到时间用同一个时区，否则会差一天。
 async function scheduleTz(db) {
@@ -23,6 +81,9 @@ export async function runAccount(env, account) {
   let detail = ''; // 网站原始回馈（站点模块可返回 detail），日志页展示
   let meta = {};
   let handedOff = false; // 已交给扩展去执行（不需要定时器再重试）
+  // 换路记录：它是唯一能说清楚「面板为什么多打了一次」的线索，
+  // 所以声明在 try 外面 —— 失败路径（catch）也要能把它写进 meta。
+  const switchNotes = [];
   try {
     meta = JSON.parse(account.meta || '{}');
   } catch { /* 忽略 */ }
@@ -37,36 +98,57 @@ export async function runAccount(env, account) {
     const site = getSite(account.site, customSites);
     if (!site) throw new Error('未知站点：' + account.site);
 
-    // ---- 执行模式解析 ----
-    // 手动覆盖（面板切换）：relay=强制中继 / server=强制云端直连 / browser=同 relay（历史值） / ''=自动
-    // 自动：扩展在线则走本地网络中继，否则（站点默认 server）云端直连。
+    // ---- 执行路线解析（路线 = 这些 HTTP 请求从哪个网络出去）----
+    // server = Cloudflare 机房直连；relay = 借用户本机网络（浏览器扩展中继）。
     //
     // 说明：原「浏览器模式」已并入本地中继。MV3 禁止 new Function，扩展无法执行面板下发的脚本，
     // 所以站点逻辑仍保留在 Worker，只把 HTTP 请求交给扩展在用户本地网络中发出（带用户 Cookie）。
-    // 这样吾爱破解/NodeSeek/V2EX/看雪/Discuz 等依赖本地 IP + Cookie 的站点能真正自动签到。
+    //
+    // 规则：
+    //   ① 手动指定（面板切换，meta.execution）→ 只走那一条，绝不偷偷换（用户明确要求的行为要尊重）。
+    //   ② 自动：优先「上次真正走通的那条路线」（meta.exec_route），没有记录时按站点默认
+    //      （server 站先试直连，browser 站先试本地网络）；失败且属于网络层 → 换另一条再试一次。
+    //   ③ 站点已有明确结论（Cookie 失效 / 人机验证 / 业务失败）→ 不换路，见 isRouteFailure 的说明。
     const manual = meta.execution || '';
     const siteDefault = site.execution || 'server';
-    let useRelay = false;
-    let skipReason = '';
+    const lastRoute = meta.exec_route === 'relay' || meta.exec_route === 'server' ? meta.exec_route : '';
+    let routePlan;
+    if (manual === 'relay' || manual === 'browser') routePlan = ['relay'];
+    else if (manual === 'server') routePlan = ['server'];
+    else {
+      const firstRoute = lastRoute || (siteDefault === 'browser' ? 'relay' : 'server');
+      routePlan = firstRoute === 'relay' ? ['relay', 'server'] : ['server', 'relay'];
+    }
 
-    const wantsLocalNetwork = manual === 'relay' || manual === 'browser' || (manual === '' && siteDefault === 'browser');
-    if (wantsLocalNetwork) {
-      const { isRelayAvailable } = await import('./lib/relay.js');
-      useRelay = await isRelayAvailable(db);
-      if (!useRelay) {
-        skipReason = '需要浏览器扩展在线（本地网络中继）。请安装并打开扩展；或在面板把该账号切到「云端执行」。';
+    const { isRelayAvailable, relayBacklog } = await import('./lib/relay.js');
+    let skipReason = '';
+    // 每条路线「现在能不能用」：直连总能试；本地中继要扩展在线、且队列不忙。
+    const routeState = [];
+    for (const route of routePlan) {
+      if (route !== 'relay') { routeState.push({ route }); continue; }
+      if (!(await isRelayAvailable(db))) {
+        routeState.push({ route, skip: '需要浏览器扩展在线（本地网络中继）。请安装并打开扩展；或在面板把该账号切到「云端执行」。' });
+      } else if ((await relayBacklog(db)) >= RELAY_BACKLOG_LIMIT) {
+        // 扩展是单飞执行，队列已经堆了请求：现在再排只会一起超时（会记成失败）。
+        routeState.push({ route, skip: '本地中继正忙（队列里还有未完成的请求，扩展会按顺序一个个执行），本次先跳过，稍后会自动重试。' });
+      } else {
+        routeState.push({ route });
       }
-    } else if (manual === 'server') {
-      useRelay = false; // 强制云端直连
-    } else if (manual === '' && siteDefault === 'server') {
-      // 自动：扩展在线时走中继（用户本地网络），否则云端直连
-      const { isRelayAvailable } = await import('./lib/relay.js');
-      useRelay = await isRelayAvailable(db);
+    }
+    const runnable = routeState.filter((s) => !s.skip);
+    if (!runnable.length) {
+      skipReason = routeState.map((s) => s.skip).filter(Boolean).join(' ') || '没有可用的执行路线';
+    }
+    // 只能靠浏览器导航签到的站点（如吾爱破解）：扩展离线时「脚本化 + 中继」本身毫无意义，
+    // 直接记「跳过 + 稍后自动重试」，别去云端白打一次注定被 WAF 拦的请求。
+    if (typeof site.browserJob === 'function' && site.preferNavigationSign && !(await isRelayAvailable(db))) {
+      skipReason = `${site.name}：该站点只能由浏览器完成签到（脚本化请求会被 WAF 拦死），但浏览器扩展当前离线 —— 打开浏览器后会自动重试`;
     }
 
     if (skipReason) {
       // 执行模式需要扩展但扩展不在线：不记为失败，记为跳过；不覆盖上次网站真实回馈。
       // retryable：这类跳过是暂时的（用户一会儿打开浏览器就能签），定时器该自动补跑。
+      delete meta.route_note; // 本次没真正出去过请求，别让上一轮的路线记录冒充本次结果
       const duration = Date.now() - t0;
       const now = Date.now();
       await db
@@ -90,7 +172,8 @@ export async function runAccount(env, account) {
       const { isRelayAvailable } = await import('./lib/relay.js');
       if (await isRelayAvailable(db)) {
         const now = Date.now();
-        await db.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)').bind(account.id, now).run();
+        await queueBrowserJob(db, account.id);
+        delete meta.route_note; // 交给浏览器去做了，本次没有脚本化路线可言
         const msg = `${site.name}：已交给浏览器执行 —— 该站点的脚本化请求会被 WAF 拦死（本地中继读不到），改由扩展打开标签页完成签到，结果通常 1 分钟内自动写回这一行`;
         const duration = Date.now() - t0;
         await db
@@ -109,23 +192,53 @@ export async function runAccount(env, account) {
     const creds = await decryptJSON(env, db, account.creds);
     const ctx = { env, db, account, meta };
 
-    let res;
-    if (useRelay) {
-      // 中继模式：透明替换 global fetch，站点代码无需修改，HTTP 经扩展走用户本地网络
-      const { relayFetch } = await import('./lib/relay.js');
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = (url, init) => relayFetch(db, url, init);
-      // 告知站点模块「当前走本地网络」：重定向无法用 manual（opaqueredirect 读不到头），需改用 follow
-      ctx.relayDb = db;
+    // 逐条路线尝试：网络层失败才换下一条，站点给出的业务结论一律照实回报。
+    let res = null;
+    let lastErr = null;
+    let usedRoute = '';
+    const triedRoutes = [];
+    for (const st of runnable) {
+      triedRoutes.push(st.route);
       try {
-        res = await site.run(creds, ctx);
-      } finally {
-        globalThis.fetch = originalFetch;
-        delete ctx.relayDb;
+        if (st.route === 'relay') {
+          // 中继模式：透明替换 global fetch，站点代码无需修改，HTTP 经扩展走用户本地网络
+          const { relayFetch } = await import('./lib/relay.js');
+          const originalFetch = globalThis.fetch;
+          globalThis.fetch = (url, init) => relayFetch(db, url, init);
+          // 告知站点模块「当前走本地网络」：重定向无法用 manual（opaqueredirect 读不到头），需改用 follow
+          ctx.relayDb = db;
+          try {
+            res = await site.run(creds, ctx);
+          } finally {
+            globalThis.fetch = originalFetch;
+            delete ctx.relayDb;
+          }
+        } else {
+          res = await site.run(creds, ctx);
+        }
+        usedRoute = st.route;
+        lastErr = null;
+        break;
+      } catch (e) {
+        lastErr = e;
+        const alt = runnable.find((s) => !triedRoutes.includes(s.route));
+        if (alt && isRouteFailure(e)) {
+          // 这条网络出口不行，换另一条。记下来写进「网站反馈」，让用户能看出面板做了什么。
+          switchNotes.push(`${ROUTE_NAME[st.route]}失败（${shortReason(e)}）`);
+          continue;
+        }
+        throw e;
       }
-    } else {
-      res = await site.run(creds, ctx);
     }
+    if (lastErr) throw lastErr;
+    // 记住真正走通的路线：下次优先用它，省掉一次注定失败的尝试
+    if (usedRoute) meta.exec_route = usedRoute;
+    // 这次实际走的路线 + 换路记录。单独存在 meta 里（不塞进 detail）：
+    // detail 是「网站原话」，要被反馈分类器读，混进我们自己的话会污染判断
+    // （比如换路记录里的「超时」二字会让面板误报一条超时建议）。
+    meta.route_note = switchNotes.length
+      ? `自动改走 —— ${switchNotes.join('；')}`
+      : `路线：${ROUTE_NAME[usedRoute] || '未知'}`;
 
     status = res.ok ? 'ok' : 'fail';
     message = String(res.message || '').slice(0, 800);
@@ -133,11 +246,15 @@ export async function runAccount(env, account) {
   } catch (e) {
     const rawMsg = String((e && e.message) || e);
     detail = String((e && e.detail) || '').slice(0, 800);
-    // 中继超时 + 该站点支持浏览器导航签到 → 自动改道（省得用户每次都看 45 秒超时）
+    // 本次没有走通的路线：把「换过路但都没成」如实写下来
+    //（好过让上一轮的路线记录冒充本次结果 —— 那才是真正的假状态）
+    if (switchNotes.length) meta.route_note = `两条路线都没成功 —— ${switchNotes.join('；')}`;
+    else delete meta.route_note;
     const siteObj = getSite(account.site, customSites);
+    // 中继超时 + 该站点支持浏览器导航签到 → 自动改道（省得用户每次都看 45 秒超时）
     if (typeof siteObj?.browserJob === 'function' && /中继请求超时|中继执行超时|等待本地网络响应超时/.test(rawMsg)) {
       try {
-        await db.prepare('INSERT INTO browser_manual_jobs(account_id, created_at) VALUES(?,?)').bind(account.id, Date.now()).run();
+        await queueBrowserJob(db, account.id);
         status = 'skip';
         handedOff = true;
         message = `${siteObj.name}：本地中继读不到该站点（被 WAF 拦死），已自动改用浏览器导航签到（扩展会打开标签页完成），结果稍后自动写回`;
@@ -163,20 +280,45 @@ export async function runAccount(env, account) {
     .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
     .bind(account.id, account.site, account.name, status, message, detail, duration, now)
     .run();
+  // 站点可以用 dayTz 声明自己的「一天」从几点算起，默认跟面板设置一致。
+  // 踩过的坑：糊涂鳄（WordPress + RiPro）按 UTC 计日，也就是北京时间 08:00 才重置。
+  // 若一律按面板的北京时间记「今天」，08:00 之后面板会继续显示「已签到」，
+  // 而站点那边其实已是新的一天（用户手动点签到还能领到积分）——看起来就像「假签到」。
+  const siteDayTz = (getSite(account.site, customSites) || {}).dayTz || '';
+  const effDayTz = siteDayTz || (await scheduleTz(db));
+  const todayKey = dayInTz(new Date(now), effDayTz);
+
   // 签到成功时记录「今日」已签到日期（用于状态列显示 已签到/未签到）。
   // 只有 status === 'ok' 才写：fail / skip 一律不写，保证过了当地 00:00
   // 状态统一回到「未签到」，而只有当天真正签到成功才变回「已签到」。
-  if (status === 'ok') {
-    // 站点可以用 dayTz 声明自己的「一天」从几点算起，默认跟面板设置一致。
-    // 踩过的坑：糊涂鳄（WordPress + RiPro）按 UTC 计日，也就是北京时间 08:00 才重置。
-    // 若一律按面板的北京时间记「今天」，08:00 之后面板会继续显示「已签到」，
-    // 而站点那边其实已是新的一天（用户手动点签到还能领到积分）——看起来就像「假签到」。
-    const siteDayTz = (getSite(account.site, customSites) || {}).dayTz || '';
-    meta.last_signin_date = dayInTz(new Date(now), siteDayTz || (await scheduleTz(db)));
+  if (status === 'ok') meta.last_signin_date = todayKey;
+
+  // ---- 账号行上的「状态 + 反馈」必须自洽 ----
+  // 线上真实现象（糊涂鳄）：今天 10:54 已经签上了，12:07 的一次补跑撞上中继超时，
+  // 于是那一行变成「状态：✅ 已签到 + 反馈：签到失败：……超时」—— 自相矛盾，
+  // 用户只能理解为「面板坏了」。今天既然已经签上了，这一行就该继续显示**今天那次成功**的原话。
+  // 这次失败并不隐藏：它完整写在运行日志里（上面的 INSERT 已经落库），
+  // 只是不该让它冒充「今天的结果」。
+  let rowStatus = status;
+  let rowMsg = message;
+  let rowDetail = detail || '';
+  if (status !== 'ok' && meta.last_signin_date === todayKey) {
+    try {
+      const { dayStartInTz } = await import('./schedule.js');
+      const lastOk = await db
+        .prepare("SELECT message, detail FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? ORDER BY id DESC LIMIT 1")
+        .bind(account.id, dayStartInTz(new Date(now), effDayTz)).first();
+      if (lastOk) {
+        rowStatus = 'ok';
+        rowMsg = lastOk.message || rowMsg;
+        rowDetail = lastOk.detail || '';
+      }
+    } catch { /* 老库没有 runs 表时忽略，退化为原本行为 */ }
   }
+
   await db
     .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_detail=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
-    .bind(status, message, detail || '', now, JSON.stringify(meta), now, account.id)
+    .bind(rowStatus, rowMsg, rowDetail, now, JSON.stringify(meta), now, account.id)
     .run();
 
   return { status, message, duration_ms: duration, retryable: status !== 'ok' && !handedOff };

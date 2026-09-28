@@ -103,6 +103,20 @@ export async function runHttpSteps(steps, initialVars = {}) {
     const snippet = `响应前 200 字符：${text.slice(0, 200)}`;
     const blocked = needsHuman(sig.outcome) ? `${name}：${sig.label}。${snippet}` : '';
 
+    // 「被拦 / 要人工验证 / 要登录 / 被限流 / 网站暂停」是**明确结论**，不能用状态码盖过去。
+    //
+    // 实测（2026-09-28）：吾爱破解的 /home.php 从机房 IP 拿到的就是网宿 WZWS 的 JS 挑战页，
+    // 它的状态码是 **200**、页面里也没有任何中文提示（只有一句英文的
+    // "Please enable JavaScript and refresh the page."），而 expect_status 默认也是 200。
+    // 于是老代码走完状态码校验就一路 ok，最后报出一句「签到成功」——
+    // 这是最危险的一类假成功：面板说签好了，网站根本没动，用户还得自己发现。
+    if (needsHuman(sig.outcome) || sig.outcome === OUTCOME.RATE_LIMIT || sig.outcome === OUTCOME.PAUSED) {
+      const err = new Error(blocked || `${name}：${sig.label || '网站拒绝了这次请求'}`);
+      err.outcome = sig.outcome;
+      err.detail = `网站返回：${text.replace(/\s+/g, ' ').slice(0, 300)}`;
+      throw err;
+    }
+
     if (res.status !== expectStatus && !already) {
       if (blocked) throw new Error(blocked);
       throw new Error(`${name}：状态码 ${res.status}，期望 ${expectStatus}。${snippet}`);

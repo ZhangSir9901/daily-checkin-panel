@@ -30,6 +30,10 @@ const SIGNED_MARKS = [
   '无需重复签到', '无需重复', '请等待下次刷新',
   '下期再来', '明天再来',
   'ÄúÒÑ', 'ÏÂÆÚÔÙÀ´', // GBK 被误作 Latin1 解码时的特征
+  // 「签到完毕」图标：站点把当天状态画在图片里（qds.png=未签 / wbs.png=已签），
+  // 社区脚本（XIU2 的吾爱增强、lyc8503 的签到脚本）都拿 wbs.png 当「今天已签」的判据。
+  // 图标名很特殊，不会在正文里乱出现，可以按图片名判。
+  'wbs.png',
 ];
 // 成功特征：必须是任务完成场景的强信号。去掉「恭喜」「获得」「吾爱币」这类泛词，
 // 它们在论坛帖子/公告里随处可见，会造成误判。
@@ -65,6 +69,10 @@ export function buttonState(texts) {
     if (/href=["'][^"']*mod=task[^"']*do=apply/i.test(m[0])) return 'unsigned';
     if (BTN_UNSIGNED.test(btnText)) return 'unsigned';
   }
+  // 「签到完毕」图标：站点靠换图片表示状态（qds.png=未签 / wbs.png=已签），文字节点是空的。
+  // 社区脚本（XIU2 的吾爱增强、lyc8503 的签到脚本）都拿 wbs.png 当「今天已签」的判据，
+  // 图标名很特殊，不会出现在正文里，所以这里可以放心按图片名判。
+  if (/wbs\.png/i.test(raw)) return 'signed';
   // 按钮没找着（未登录 / 主题改版）：退一步只看「签到完毕」这种强信号，
   // 不要因为整页里出现「打卡签到」就断定未签到（那条多半来自 title / 导航）
   if (/签到完毕/.test(raw)) return 'signed';
@@ -190,6 +198,29 @@ function assertNoWaf(texts, status) {
 // 所以这里既有默认值，会在页面里查到链接时以页面为准（findSignTask）。
 const SIGN_APPLY_URL = 'https://www.52pojie.cn/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php';
 
+// 首页地址。**这是本站点最重要的一个常量**，2026-09-28 用真实登录态实测（本地宽带 IP +
+// 面板里那份 Cookie）得到的一张「WAF 面」表：
+//
+//   GET /                                        → 200，84KB 的登录态首页：
+//                                                  · `#um` 里挂着打卡入口（qds.png 图片版）
+//                                                  · `#res-sign` 里是文字版「领取今日签到奖励」
+//                                                  · 图片名就是当天状态：qds.png=未签 / wbs.png=已签
+//   GET /home.php?mod=task                       → 200，但 32KB 的**网宿 WZWS JS 挑战页**
+//   GET /home.php?mod=task&do=apply&id=2&…       → 同样是挑战页
+//   （带不带 Cookie、带不带 Referer 都一样；挑战页里写着 dynamicapi='/waf_zw_verify'
+//     + wzwsquestion/wzwsfactor + 自定义 base64 表，就是社区脚本卡死的那套）
+//
+// 结论（决定了本模块的三个选择）：
+//   ① **导航页选首页**：`/` 不会被挑战，浏览器打开就能直接读到当天状态；
+//      原来导航到 `/home.php?mod=task` 等于先让浏览器去闯一次挑战页，
+//      扩展的「等页面加载完」很可能就停在那张挑战页上，然后报「找不到签到入口」。
+//   ② **签到动作 = 点首页上那个真入口**（`#um` 里的 qds.png 图片链接 / `#res-sign` 的文字链接）：
+//      这是站点自己写在本页上的同源 GET，带 Referer、复用本页已过的 WAF 会话；
+//      直接 `chrome.tabs.update` 跳到 apply 地址等于发起一次全新的顶层请求，要重闯一次挑战。
+//   ③ **复查也读首页**：qds.png → wbs.png 就是签到成功的证据，而且这个读法同时适用于
+//      脚本（本地中继）和浏览器两条路。
+const HOME_URL = 'https://www.52pojie.cn/';
+
 export const wuaipojie = {
   id: 'wuaipojie',
   name: '吾爱破解',
@@ -202,16 +233,41 @@ export const wuaipojie = {
   // 只有「真实的页导航」才能过挑战 —— 所以这个站点默认改走**浏览器导航签到**：
   // 由扩展把用户浏览器的一个标签页打开到「打卡签到」地址（等同人手点一下），再读回结果页。
   preferNavigationSign: true,
+  // 这个站的签到**必须由浏览器亲自发**（WAF 只放行真实页面导航），而服务端认的是
+  // **浏览器 cookie jar 里的登录态**。所以：面板把存着的凭据一起交给扩展，
+  // 由扩展写回浏览器（chrome.cookies.set）——这样「面板点一下」就是完整闭环，
+  // 不需要人先去浏览器手工登录一遍。
+  needsBrowserSession: true,
   browserJob: () => ({
     domain: 'www.52pojie.cn',
-    // 先到任务列表页（普通页面，好加载）—— 签到链接就在这页上，
-    // 扩展端会自己找「去签到」链接并点击进入。
-    navigate_url: 'https://www.52pojie.cn/home.php?mod=task',
+    // 让扩展先把下面那份凭据写回浏览器；跳转之前写，第一次巡检才能看到登录态
+    inject_cookies: true,
+    // 报成功之前必须回首页核对一次（结果页文案说成功不算数，首页的入口/图标才是服务端状态）
+    confirm_before_report: true,
+    // 先到**首页**——它是这个站点上唯一不会被 WAF 挑战的页面（见上面 HOME_URL 的实测表），
+    // 而且打卡入口和当天状态都在这页上；扩展端会自己找那个入口并点它。
+    navigate_url: HOME_URL,
     sign_url: SIGN_APPLY_URL,
+    // 触发完签到后**回这些页复查服务端真实状态**（扩展会再看一遍那只「去签到」链接）：
+    // ① 任务列表页：链接还在 = 今天没签；链接没了 / 本行写着「已完成」= 今天已签；
+    // ② 首页：Discuz 顶部用户菜单 `#um` 里挂着同一个入口（社区脚本用的就是它），
+    //    并且签完之后站点会把图标换成 wbs.png（「签到完毕」）——两个地址互为补充。
+    // 没有这一步时，申请页往往既不报成功也不报未签（Discuz 点完只是刷新），
+    // 面板上就只剩一句含糊的「未识别到成功标识」，用户根本不知道到底签没签上。
+    // 首页排第一：它是状态的正本（qds/wbs），而且脚本侧/浏览器侧都不会被挑战。
+    // 任务列表页放第二个做补充（能看到「已完成」那一行），它在浏览器里能看（浏览器自己会过挑战），
+    // 但脚本侧读它只会拿到挑战页 —— 所以绝不能把它当唯一依据。
+    verify_urls: [
+      HOME_URL,
+      'https://www.52pojie.cn/home.php?mod=task',
+    ],
+    verify_url: HOME_URL,
   }),
   // 浏览器端签到脚本：在用户浏览器中运行，自动携带登录 Cookie，使用用户网络（无 WAF）
   // 入参 params：{}；返回 { ok, message }
   // 注意：扩展会先导航标签页到 navigate_url（模拟手动点击），脚本只需检查当前页面内容
+  // 旧的 n 版字段（老扩展/兜底链用）：这里放**签到动作**的地址，不是导航页。
+  // 新版走 browserJob()：navigate_url=首页，sign_url=这个 apply 地址。
   navigateUrl: SIGN_APPLY_URL,
   browserScript: `async (params) => {
     const html = document.documentElement.innerHTML || '';

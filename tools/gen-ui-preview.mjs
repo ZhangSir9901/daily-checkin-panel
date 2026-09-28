@@ -61,8 +61,9 @@ const accSecEnd = html.indexOf('<section id="tab-logs"');
 if (accSecStart < 0 || accSecEnd <= accSecStart) throw new Error('找不到「签到账号」区块');
 
 const topbar = balancedDivByTag('<div class="topbar">');
-// 「签到时间 + 添加账号 + 扩展下载」现在是同一张两栏卡（左：时间/扩展，右：粘贴添加）
-const schedCard = cardByTitle('签到时间', accSecStart, accSecEnd);
+// 「全局签到 + 添加账号 + 扩展下载」现在是同一张两栏卡（左：全局时间/扩展，右：粘贴添加）
+// 注意标题是「全局签到」（以前叫「签到时间」）——改标题时这里要一起改，否则预览直接报错。
+const schedCard = cardByTitle('全局签到', accSecStart, accSecEnd);
 const comCard = cardByTitle('🌍 社区站点', accSecStart, accSecEnd);
 const footStart = html.indexOf('<div class="foot">', accSecStart);
 const foot = footStart < 0 ? '' : balancedDivAt(footStart);
@@ -114,7 +115,7 @@ const page = `<!DOCTYPE html>
   <h2 style="margin-top:22px">签到账号（表格）</h2>
   ${accCard}
 
-  <h2 style="margin-top:22px">签到时间 + 添加账号 + 扩展下载（同一张两栏卡）</h2>
+  <h2 style="margin-top:22px">全局签到 + 添加账号 + 扩展下载（同一张两栏卡）</h2>
   ${schedCard}
 
   <h2 style="margin-top:22px">社区站点（开源共享：导入 / 导出同一张卡）</h2>

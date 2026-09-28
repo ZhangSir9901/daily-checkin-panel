@@ -1,5 +1,6 @@
 // 新站点模块测试：node test/sites-new.test.mjs（纯 mock）
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { v2ex } from '../src/sites/v2ex.js';
 import { misign } from '../src/sites/misign.js';
 import { kanxue } from '../src/sites/kanxue.js';
@@ -522,16 +523,69 @@ await t('52pojie：GBK 页面按 GBK 解码，网站回馈不乱码', async () =
   assert.ok(!/ï¿½|\uFFFD/.test(r.message), '不应出现替换字符');
 });
 
-// 52pojie 浏览器任务：扩展要先去「任务列表页」（普通页面），自己找那个「去签到」入口再触发。
-// 为什么要这样（来自社区脚本的校准，2026-09）：
-//   · 站点把当天状态画在 <a href="home.php?mod=task&do=apply&id=2"><img src="…/qds.png"></a> 里，
-//     文本节点是空的 —— 链接还在 = 今天还没签（脚本界通行判法）；
-//   · 任务 id / 地址由论坛后台配，硬编码 id=2 换站就不灵，所以以页面上的链接为准。
-await t('52pojie：browserJob 给扩展的是任务列表页 + 签到地址，不带过期硬编码', async () => {
+// 52pojie 浏览器任务：扩展要先去「首页」，自己找那个「去签到」入口再点它。
+// 为什么是首页而不是任务页（2026-09-28 用真实登录态 curl 逐条实测）：
+//   GET /                                → 200，登录态首页；`#um` 里挂着
+//                                          <a href="home.php?mod=task&do=apply&id=2"><img src="…/qds.png"></a>
+//                                          `#res-sign` 里是文字版「领取今日签到奖励」；
+//                                          图片名就是当天状态（qds.png 未签 / wbs.png 已签）；
+//   GET /home.php?mod=task               → 200，但 32KB 的**网宿 WZWS JS 挑战页**；
+//   GET /home.php?mod=task&do=apply&id=2 → 同样是挑战页（带不带 Cookie、带不带 Referer 都一样）。
+// 所以导航目标改成首页（不会被挑战，而且状态就在这页上）。
+await t('52pojie：browserJob 先落「首页」（唯一不会被 WAF 挑战的页面）', async () => {
   const job = wuaipojie.browserJob();
   assert.equal(job.domain, 'www.52pojie.cn');
-  assert.match(job.navigate_url, /home\.php\?mod=task$/, '先落到任务列表页，扩展自己找入口');
+  assert.equal(job.navigate_url, 'https://www.52pojie.cn/', '先落到首页：/home.php* 一律会先回 WZWS 挑战页');
   assert.match(job.sign_url, /do=apply&id=\d+/, '兜底的签到地址');
+  const wj = readFileSync(new URL('../src/sites/wuaipojie.js', import.meta.url), 'utf8');
+  assert.match(wj, /const HOME_URL = 'https:\/\/www\.52pojie\.cn\/'/, '首页地址要有一个有名字的常量');
+  assert.match(wj, /waf_zw_verify/, '实测依据（WZWS 挑战接口）要写进注释，否则下次又会被“顺手改回去”');
+});
+
+// 触发签到后要能「回任务页复查」：申请页常常既不报成功也不报未签（Discuz 点完只是刷新），
+// 而任务页上那条 do=apply 链接就是服务端状态——链接还在 = 今天没签，链接没了 = 已签。
+// 这一步今天缺了，面板上吾爱那一行就永远只有一句含糊的「未识别到成功标识」。
+await t('52pojie：browserJob 声明复查地址，且面板要把 verify_url 下发到扩展', async () => {
+  const job = wuaipojie.browserJob();
+  assert.equal(job.verify_url, 'https://www.52pojie.cn/', '复查地址是首页：状态正本（qds→wbs）就在它上面');
+  assert.equal(job.verify_urls[0], job.verify_url, '首页必须排第一；任务页只能算补充（脚本侧读它只会拿到挑战页）');
+  assert.equal(new URL(job.verify_url).host, new URL(job.navigate_url).host, '复查必须同域');
+  const idx = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  assert.match(idx, /verify_url: j\.verify_url \|\| ''/, 'index.js 的 browser-jobs 工单必须带上 verify_url');
+  const ext = readFileSync(new URL('../public/ext-src/background.js', import.meta.url), 'utf8');
+  assert.match(ext, /job\.verify_urls/, '扩展必须真的用 verify_urls 复查（任务页 + 首页）');
+  // 2.4 起「同域校验」收敛成一个共用函数 sameSiteHttpUrl（navigate_url / sign_url / verify_urls 都走它）
+  assert.match(ext, /sameSiteHttpUrl/, '复查/导航地址只允许同域（页面内容不可信）');
+  assert.match(ext, /isPrivateHost/, '中继不允许访问内网地址');
+  assert.match(idx, /verify_urls: Array\.isArray\(j\.verify_urls\)/, '面板要把 verify_urls 下发下去');
+});
+
+// 吾爱这条路的完整闭环（2026-09-28 实测后定下）：
+//   签到只能由浏览器亲自发（WAF 只放行真实页面导航），而服务端认的是**浏览器 cookie jar** 里的登录态。
+//   所以：① 面板把凭据一并交给扩展，由它写回浏览器（不需要人先去浏览器手工登录）；
+//        ② 报成功之前必须回首页核对（结果页文案不算数，首页的入口/图标才是服务端状态）。
+await t('52pojie：声明「需要浏览器登录态」并把凭据交给扩展写回浏览器', async () => {
+  const wj = readFileSync(new URL('../src/sites/wuaipojie.js', import.meta.url), 'utf8');
+  const job = wuaipojie.browserJob();
+  assert.equal(wuaipojie.needsBrowserSession, true, '站点要声明这一点，面板才知道该不该下发凭据');
+  assert.equal(job.inject_cookies, true, 'browserJob 要告诉扩展把凭据写回浏览器');
+  assert.equal(job.confirm_before_report, true, '报成功前必须先跟站点核对');
+  const idx = readFileSync(new URL('../src/index.js', import.meta.url), 'utf8');
+  // 只有站点主动声明的才下发（其他站点一律不带 cookie 字段）
+  assert.match(idx, /inject_cookies: !!j\.inject_cookies/, '面板要按声明透传 inject_cookies');
+  assert.match(idx, /cookie: j\.inject_cookies \? String\(creds\.cookie \|\| ''\) : ''/, '只有声明了的站点才带上凭据');
+  assert.match(idx, /confirm_before_report: !!j\.confirm_before_report/, '面板要透传 confirm_before_report');
+  // 凭据不能进地址栏/历史：只能走 cookie API，不能拼进 URL
+  assert.doesNotMatch(idx, /navigate_url:[^\n]*creds\.cookie/, '凭据绝不能出现在导航地址里');
+});
+
+// 社区脚本（XIU2「吾爱破解论坛增强」、lyc8503「签到脚本 lite」）都用 wbs.png 判「今天已签」：
+// 站点把状态画在图片里（qds.png 未签 / wbs.png 已签），文字节点是空的。
+// 我们的按钮状态判定必须认这个图标，不能只认文字。
+await t('52pojie：buttonState 认「签到完毕」图标 wbs.png', async () => {
+  const html = '<div id="um"><span><img src="https://static.52pojie.cn/static/image/common/wbs.png" alt="状态图标"></span></div>';
+  assert.equal(buttonState(html), 'signed', '只有 wbs.png、没有任何文字时也必须判为已签到');
+  assert.equal(buttonState('<div id="um"><a href="home.php?mod=task&do=apply&id=2"><img src="static/image/common/qds.png"></a></div>'), 'unsigned');
 });
 
 // 站点改版把任务 id 换掉时，面板不能只会打 id=2：要能从任务页上读出真实链接

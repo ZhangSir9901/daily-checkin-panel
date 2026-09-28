@@ -244,6 +244,20 @@ async function handleApi(req, env, url) {
         navigate_url: navigate,
         // 扩展端拿到页面后，如果还没签到，可以再去这个地址（页面上那个「去签到」链接的原样地址）
         sign_url: j.sign_url || site.navigateUrl || navigate,
+        // 触发签到后回哪几页复查「服务端到底认成没认」：
+        // 任务页上那条「去签到」链接还在 = 今天没签，链接没了/本行写着已完成 = 已签；
+        // 站点也可以多给一个地址（如首页）——Discuz 顶部用户菜单里挂着同一个入口。
+        // 站点自己声明（browserJob 里的 verify_urls / verify_url）；没声明就不复查，扩展那边不乱跳。
+        verify_urls: Array.isArray(j.verify_urls) ? j.verify_urls.slice(0, 4) : [],
+        verify_url: j.verify_url || '',
+        // 站点声明「需要浏览器处于登录态」（吾爱破解这类：签到只能由浏览器亲自发，脚本路被 WAF 挡死）：
+        // 把凭据一并交下去，由扩展写回浏览器 cookie jar —— 面板点一下就能签到，
+        // 不需要人先去浏览器手工登录。**只有站点主动声明的才下发**，其他站点一律不带。
+        // 老扩展没有这个能力时会忽略这两个字段（不影响原有流程）。
+        inject_cookies: !!j.inject_cookies,
+        cookie: j.inject_cookies ? String(creds.cookie || '') : '',
+        // 报成功之前先回站点核对（首页状态才是服务端状态，结果页文案可能只是文案）
+        confirm_before_report: !!j.confirm_before_report,
         script: null, // MV3 禁止 new Function，页内判定由扩展原生巡检验完成
         params: {},
       };
@@ -454,13 +468,30 @@ async function handleApi(req, env, url) {
     const deny = await extGuard();
     if (deny) return deny;
     const startPollAt = Date.now();
+    // 一次最多交给扩展几个任务（见 readPending 的说明）：2 个足够让新任务不被旧任务堵死
+    const RELAY_HANDOUT_MAX = 2;
     const wait = Math.min(Math.max(parseInt(url.searchParams.get('wait') || '0', 10) || 0, 0), 20000);
     const deadline = Date.now() + wait;
     const readPending = async () => {
+      // ① 先把「租出去很久没人回」的任务判失败：扩展中途被关/Service Worker 被回收时，
+      //    任务会永远停在 running，Worker 那边要白等到 90 秒超时。
+      await env.DB.prepare(
+        "UPDATE relay_jobs SET status='failed', error='扩展没有在 2 分钟内回传（可能被关闭或休眠），已放弃该请求', updated_at=? WHERE status='running' AND updated_at < ?"
+      ).bind(Date.now(), Date.now() - 120000).run().catch(() => {});
+      // ② 一次只发少量任务：扩展是**单飞**执行（每个请求最长 ~58 秒），一次塞 10 个会让
+      //    排在后面的任务在 Worker 那边等到 90 秒超时 —— 线上 2026-09-28 的「扩展没有在 90 秒内回传」就是这么来的。
       const { results } = await env.DB.prepare(
-        "SELECT id, url, method, headers, body, options FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT 10"
+        `SELECT id, url, method, headers, body, options FROM relay_jobs WHERE status = 'pending' ORDER BY created_at LIMIT ${RELAY_HANDOUT_MAX}`
       ).all();
-      return (results || []).map((j) => ({
+      const rows = results || [];
+      // ③ 发出去的同时标记为 running（租约）：避免另一位轮询/另一个突发把同一批任务重复执行两遍
+      if (rows.length) {
+        const now = Date.now();
+        await env.DB.batch(rows.map((r) => env.DB.prepare(
+          "UPDATE relay_jobs SET status='running', updated_at=? WHERE id=? AND status='pending'"
+        ).bind(now, r.id))).catch(() => {});
+      }
+      return rows.map((j) => ({
         id: j.id,
         url: j.url,
         method: j.method,
@@ -615,33 +646,44 @@ async function handleApi(req, env, url) {
       'SELECT id, name, site, enabled, meta, last_status, last_msg, last_detail, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
     ).all();
     const accounts = results || [];
-    // 回填：今日有成功记录但 meta 缺 last_signin_date 的，补上（兼容旧数据）
-    const today = dayInTz(new Date(), await scheduleTz(env.DB));
-    const dayStart = dayStartInTz(new Date(), await scheduleTz(env.DB));
+    // ---- 账号行的「状态 + 反馈」自洽性修复（读列表顺手做，不需要用户点任何按钮）----
+    //
+    // 两种历史脏数据都在这修：
+    //   ① 今日有成功记录但 meta 缺 last_signin_date（老版本留下的数据）→ 补上日期；
+    //   ② 今日已经签上了、但最近一条记录不是 ok（例如后来的一次补跑撞上中继超时）
+    //      → 反馈回填成「今天那次成功」的网站原话。
+    //      否则那一行会变成「状态：✅ 已签到 + 反馈：签到失败：…超时」——自相矛盾，
+    //      用户只能理解为「面板坏了」。
+    //
+    // 「今天」必须按**站点自己的日界**算（糊涂鳄按 UTC 计日，北京时间 08:00 才算新的一天）：
+    // 拿面板时区去比，00:00–08:00 之间会把昨天的签到当成今天的，显示成「已签到」而实际还没签。
+    const customSites = await loadCustomSites(env);
+    const panelTz = await scheduleTz(env.DB);
     for (const acc of accounts) {
       let m = {};
       try { m = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
-      if (m.last_signin_date !== today) {
-        // 查今日是否有成功记录
-        const okRun = await env.DB.prepare(
-          "SELECT id FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? LIMIT 1"
-        ).bind(acc.id, dayStart).first();
-        if (okRun) {
-          m.last_signin_date = today;
-          // 同时把网站反馈补上（取今日最后一条成功的 message + 网站原文）
-          const lastOk = await env.DB.prepare(
-            "SELECT message, detail FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? ORDER BY id DESC LIMIT 1"
-          ).bind(acc.id, dayStart).first();
-          if (lastOk?.message) {
-            acc.last_msg = lastOk.message;
-            acc.last_status = 'ok';
-            acc.last_detail = lastOk.detail || '';
-          }
-          acc.meta = JSON.stringify(m);
-          await env.DB.prepare('UPDATE accounts SET meta=?, last_msg=?, last_status=?, last_detail=?, updated_at=? WHERE id=?')
-            .bind(acc.meta, acc.last_msg, acc.last_status, acc.last_detail || '', Date.now(), acc.id).run();
-        }
+      const tz = ((getSite(acc.site, customSites) || {}).dayTz) || panelTz;
+      const today = dayInTz(new Date(), tz);
+      const dayStart = dayStartInTz(new Date(), tz);
+      // 已经签上、而且最近一条也是成功 → 没什么可补的
+      if (m.last_signin_date === today && acc.last_status === 'ok') continue;
+      const okRun = await env.DB.prepare(
+        "SELECT id FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? LIMIT 1"
+      ).bind(acc.id, dayStart).first();
+      if (!okRun) continue;
+      m.last_signin_date = today;
+      acc.meta = JSON.stringify(m);
+      // 同时把网站反馈补上（取今日最后一条成功的 message + 网站原文）
+      const lastOk = await env.DB.prepare(
+        "SELECT message, detail FROM runs WHERE account_id = ? AND status = 'ok' AND created_at >= ? ORDER BY id DESC LIMIT 1"
+      ).bind(acc.id, dayStart).first();
+      if (lastOk?.message) {
+        acc.last_msg = lastOk.message;
+        acc.last_status = 'ok';
+        acc.last_detail = lastOk.detail || '';
       }
+      await env.DB.prepare('UPDATE accounts SET meta=?, last_msg=?, last_status=?, last_detail=?, updated_at=? WHERE id=?')
+        .bind(acc.meta, acc.last_msg, acc.last_status, acc.last_detail || '', Date.now(), acc.id).run();
     }
     return json({ accounts });
   }
@@ -897,12 +939,16 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
-  // 中继状态（扩展是否在线）：前端展示用
+  // 中继状态（扩展是否在线 + 队列里堆了多少）：前端展示用
+  // 单独把 backlog 透出来很重要：线上曾出现「扩展显示在线、但每个请求都超时」，
+  // 根因是队列堆了太多请求（扩展单飞执行，一个个慢慢做），面板上却看不出来。
   if (path === '/api/relay-status' && method === 'GET') {
     const last = parseInt((await getSetting(env.DB, 'relay_last_poll')) || '0', 10) || 0;
     const online = Date.now() - last < 90000;
     const version = (await getSetting(env.DB, 'relay_version')) || '';
-    return json({ online, last_poll: last, version });
+    const { relayBacklog } = await import('./lib/relay.js');
+    const backlog = await relayBacklog(env.DB);
+    return json({ online, last_poll: last, version, backlog });
   }
 
   // 修改管理密码
@@ -1036,8 +1082,14 @@ export default {
           try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
           const { results } = await env.DB.prepare('SELECT id, site, meta FROM accounts WHERE enabled = 1').all();
           const now = new Date();
-          let changed = false;
+          // 单次 Cron 的时间预算：宁可少跑几个账号，也不要让本次执行拖过一分钟 ——
+          // 上一次还没跑完、下一分钟又来一轮，会同时往中继队列里塞任务，扩展（单飞执行）根本跟不上，
+          // 结果就是所有账号一起超时（线上 2026-09-28 的连续刷屏就是这么来的）。
+          // 没跑到的账号下一分钟自然会轮到（它们的 key 还没写）。
+          const startedAt = Date.now();
+          const BUDGET_MS = 45000;
           for (const acc of results || []) {
+            if (Date.now() - startedAt > BUDGET_MS) break;
             // 执行模式：browser 由扩展执行，Worker 跳过；relay/server/auto 由 runner.js 统一处理
             // （auto 时扩展在线则自动中继，否则云端直连）
             const site = getSite(acc.site, await loadCustomSites(env));
@@ -1052,6 +1104,12 @@ export default {
             const { run, key, nowKey } = shouldRun(now, hour, tz, lastKey);
             if (!run) continue;
             changed = true;
+            // 【关键】先持久化「已尝试」再真正执行。
+            // 一次签到可能要等中继 90 秒，若 Worker 在这中间被回收，
+            // 原来「跑完再一起写」的写法会丢掉这个 key → 下一分钟又跑一遍 → 永远重复。
+            // 写失败形态（key@尝试时刻）后：若中途被打断，也只是过 15 分钟再补一次。
+            lastMap[String(acc.id)] = nextLastKey(key, nowKey, 'fail');
+            await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
             let runRes = null;
             try {
               const full = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(acc.id).first();
@@ -1059,11 +1117,11 @@ export default {
             } catch (e) {
               console.error('[cron] account', acc.id, e);
             }
-            // 成功 → 记「今天这个时刻已完成」；失败/结果未知 → 记尝试时刻，
-            // 让 shouldRun 过 RETRY_GAP_MIN 分钟后再自动补一次（漏一分钟不再等于整天不签）。
-            // 已经交给扩展去做的（如吾爱破解转浏览器导航）不需要重试，避免排一堆重复任务。
-            const keep = runRes && runRes.retryable === false;
-            lastMap[String(acc.id)] = keep ? key : nextLastKey(key, nowKey, (runRes && runRes.status) || 'fail');
+            // 成功（或已交给扩展去做）才改成「今天不用再跑」；否则保留失败形态等自动补跑。
+            if ((runRes && runRes.status === 'ok') || (runRes && runRes.retryable === false)) {
+              lastMap[String(acc.id)] = key;
+              await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
+            }
             // 账号之间稍作间隔，降低被目标站点限流的概率
             await new Promise((r) => setTimeout(r, 1200));
           }

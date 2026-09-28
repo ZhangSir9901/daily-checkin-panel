@@ -162,4 +162,51 @@ t('explainCookieText：每一段都给出类型 + 中文说明 + 值形态', () 
   assert.match(info.summary, /纯统计 1 段/);
 });
 
+// ---------------------------------------------------------------------------
+// 粘贴内容的体检（checkPastedCreds）：保存前把能查的都查一遍
+// ---------------------------------------------------------------------------
+t('体检：一份正常的扩展 JSON → 通过，并说清每一段是什么', () => {
+  const info = parsePasteText(JSON.stringify({
+    domain: 'dj.hutue.cn',
+    cookies: 'wordpress_logged_in_a=laoguo%7C1; _ga=GA1.2.3',
+    userAgent: 'UA',
+  }));
+  const r = globalThis.checkPastedCreds(info);
+  assert.equal(r.level, 'ok');
+  assert.ok(r.items.some((i) => /认出了格式/.test(i.title)));
+  assert.ok(r.items.some((i) => /会话|登录必需/.test(i.detail || '')));
+  assert.ok(r.items.some((i) => /来自网站：dj\.hutue\.cn/.test(i.title)));
+});
+
+t('体检：只有统计类 Cookie → 提醒可能没登录态', () => {
+  const r = globalThis.checkPastedCreds(parsePasteText('_ga=GA1.2.3; theme=dark'));
+  assert.equal(r.level, 'warn');
+  assert.ok(r.items.some((i) => i.level === 'warn' && /没看出「登录必需」/.test(i.title)));
+  // 裸 Cookie 串里没有域名 —— 必须提醒得手动选站点
+  assert.ok(r.items.some((i) => i.level === 'warn' && /没带域名/.test(i.title)));
+  assert.ok(!r.items.some((i) => i.level === 'bad'));
+});
+
+t('体检：空 Cookie → 硬错误，不许保存', () => {
+  const r = globalThis.checkPastedCreds({ cookie: '', format: '扩展「一键复制全部信息」' });
+  assert.equal(r.level, 'bad');
+  assert.match(r.items[0].title, /没有读到 Cookie/);
+  assert.match(r.items[0].detail, /一键复制全部信息/);
+});
+
+t('体检：空值 Cookie 会被点名（最容易“看着成功其实没抓到”）', () => {
+  const r = globalThis.checkPastedCreds(parsePasteText('PHPSESSID=; cdb_sid='));
+  assert.equal(r.level, 'warn');
+  const empty = r.items.find((i) => /空值/.test(i.title));
+  assert.ok(empty);
+  assert.match(empty.detail, /PHPSESSID/);
+});
+
+t('粘贴没复制全的 JSON：要说“像没复制全”，而不是只报 JSON 错了', () => {
+  assert.throws(
+    () => parsePasteText('{"domain":"dj.hutue.cn","cookies":"a=1"'),
+    /没复制全/);
+  assert.throws(() => parsePasteText('{"a":1}'), /没有 Cookie/);
+});
+
 console.log(`\n${n} 组通过`);

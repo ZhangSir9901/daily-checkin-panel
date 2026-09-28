@@ -82,7 +82,13 @@ function parsePasteText(rawInput) {
   // ①/④ JSON：扩展格式带 cookies 字段；数组则是 Cookie-Editor 导出
   if (v.startsWith('{') || v.startsWith('[')) {
     let d = null;
-    try { d = JSON.parse(v); } catch { throw new Error('JSON 格式不对，请在扩展里点「📋 一键复制全部信息」重新复制一次'); }
+    try { d = JSON.parse(v); } catch {
+      // 人最容易犯的错是「没复制全」（结尾少了 } 或 "）—— 把这句话直接说出来
+      const looksCut = !/[}\]]\s*$/.test(v);
+      throw new Error(looksCut
+        ? 'JSON 没解析成功，看着像没复制全（结尾少了 } 或引号）。请回扩展里重新点一次「📋 一键复制全部信息」再粘。'
+        : 'JSON 格式不对，请在扩展里点「📋 一键复制全部信息」重新复制一次');
+    }
     if (Array.isArray(d)) {
       return { cookie: parseCookieEditorJson(v), domain: '', userAgent: '', format: 'Cookie-Editor JSON' };
     }
@@ -179,6 +185,54 @@ function explainCookieText(raw) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// 粘贴内容的「体检」：保存前把能查的都查一遍，把低级错误挡在保存之前。
+// 纯函数（不碰 DOM、不碰站点表）—— 站点相关的匹配由页面补（见 index.html 的 pasteCheck）。
+// 返回 { level:'ok'|'warn'|'bad', items:[{ level, title, detail }] }
+//   ok   通过
+//   warn 提醒（可以继续，但用户要知道）
+//   bad  硬错误（不要保存）
+// ---------------------------------------------------------------------------
+function checkPastedCreds(info) {
+  const d = info || {};
+  const items = [];
+  const cookie = String(d.cookie || '').trim();
+  const parts = splitCookieParts(cookie, d.cookieList).filter((p) => p.name);
+  if (!cookie || !parts.length) {
+    return { level: 'bad', items: [{ level: 'bad', title: '没有读到 Cookie', detail: '这段内容里没有 name=value 形式的 Cookie。请回到目标网站，用扩展的「📋 一键复制全部信息」重新复制一次。' }] };
+  }
+  items.push({ level: 'ok', title: '认出了格式：' + (d.format || '未知格式'), detail: '面板自己判断，你不用手动选格式。' });
+
+  const counts = { login: 0, waf: 0, csrf: 0, pref: 0, stat: 0, other: 0 };
+  for (const p of parts) counts[describeCookieName(p.name).kind] += 1;
+  items.push({
+    level: 'ok',
+    title: 'Cookie 一共 ' + parts.length + ' 段',
+    detail: '登录必需 ' + counts.login + ' 段、网站安全校验 ' + counts.waf + ' 段'
+      + (counts.csrf ? '、表单防护 ' + counts.csrf + ' 段' : '')
+      + (counts.stat ? '、纯统计 ' + counts.stat + ' 段（可忽略）' : '') + '。',
+  });
+  // 一句一个的提醒（都能继续，但得让人知道）
+  if (counts.login === 0) {
+    items.push({ level: 'warn', title: '没看出「登录必需」的 Cookie', detail: '这段几乎都是统计 / 偏好类的话，签到很可能被判成未登录。确认自己确实登录着再存。' });
+  }
+  const empty = parts.filter((p) => !String(p.value == null ? '' : p.value).trim());
+  if (empty.length) {
+    items.push({ level: 'warn', title: '有 ' + empty.length + ' 段是空值', detail: '空 Cookie 通常代表没抓到或被站点清掉了：' + empty.slice(0, 5).map((p) => p.name).join('、') + (empty.length > 5 ? ' 等' : '') + '。' });
+  }
+  if (!String(d.domain || '').trim()) {
+    items.push({ level: 'warn', title: '这段内容里没带域名', detail: '面板要靠域名自动认站点；没带就只能手动选一次。用扩展「一键复制全部信息」通常会带。' });
+  } else {
+    items.push({ level: 'ok', title: '来自网站：' + String(d.domain), detail: '' });
+  }
+  const ls = d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {};
+  if (Object.keys(ls).length) {
+    items.push({ level: 'ok', title: '附带 ' + Object.keys(ls).length + ' 项 localStorage', detail: '有些站（如 akile）把登录 token 放这里，一起存下来才不会掉登录。' });
+  }
+  const level = items.some((i) => i.level === 'bad') ? 'bad' : (items.some((i) => i.level === 'warn') ? 'warn' : 'ok');
+  return { level, items };
+}
+
 function extractCookieFromCurl(cmd) {
   // parseCurl 由 curl-import.js 提供（浏览器端先引入该文件，测试时先 eval 它）
   const pc = typeof parseCurl === 'function' ? parseCurl : (typeof globalThis !== 'undefined' && typeof globalThis.parseCurl === 'function' ? globalThis.parseCurl : null);
@@ -245,6 +299,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.describeCookieValue = describeCookieValue;
   globalThis.parsePasteText = parsePasteText;
   globalThis.splitCookieParts = splitCookieParts;
+  globalThis.checkPastedCreds = checkPastedCreds;
   globalThis.explainCookieText = explainCookieText;
   globalThis.parseCookieHeader = parseCookieHeader;
   globalThis.extractCookieFromHeaders = extractCookieFromHeaders;

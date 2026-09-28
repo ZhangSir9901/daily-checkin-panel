@@ -98,4 +98,32 @@ await t('状态码不符且无明确结论时，保留原始报错文案', async
   );
 });
 
+// ---- 假成功防线：状态码 200 也不能把「被拦 / 要验证」当成签到成功 ----
+// 实测（2026-09-28）：吾爱破解 /home.php 从机房 IP 拿到的是网宿 WZWS 的 JS 挑战页，
+// 状态码正是 200，页面里连中文提示都没有（只有一句英文 Please enable JavaScript）。
+// 老代码只看状态码，于是报出一句「签到成功」—— 最危险的那类假成功。
+await t('WZWS/JS 挑战页（状态码 200）必须判为被拦，不能报「签到成功」', async () => {
+  const page = '<!DOCTYPE HTML><html><head><meta charset="utf-8"></head><body>'
+    + '<noscript><h1><strong>Please enable JavaScript and refresh the page.</strong></h1></noscript>'
+    + '<script>var dynamicapi=\'/waf_zw_verify\';</script></body></html>';
+  mockFetch(() => ({ status: 200, body: page }));
+  const err = await runHttpSteps([{ name: '签到', url: 'https://www.52pojie.cn/home.php' }]).catch((e) => e);
+  assert.ok(err instanceof Error, '不该当成成功，实际返回：' + JSON.stringify(err));
+  assert.match(err.message, /安全|WAF|验证/);
+  assert.equal(err.outcome, 'waf');
+});
+
+await t('限流/暂停也是明确结论，不因状态码 200 而报成功', async () => {
+  mockFetch(() => ({ status: 200, body: '<html>请求过于频繁，请稍后再试</html>' }));
+  const err = await runHttpSteps([{ name: '签到', url: 'https://a.com/x' }]).catch((e) => e);
+  assert.ok(err instanceof Error);
+  assert.match(err.message, /频繁|稍后/);
+});
+
+await t('普通的 200 页面仍按原来的规则算完成（不误伤）', async () => {
+  mockFetch(() => ({ status: 200, body: '{"ok":true}' }));
+  const r = await runHttpSteps([{ name: '签到', url: 'https://a.com/x' }]);
+  assert.equal(r.ok, true);
+});
+
 console.log(`\n${n} 组通过`);

@@ -32,6 +32,10 @@ export async function queueRelayJob(db, { url, method = 'GET', headers = {}, bod
   // 只透传安全的 fetch 选项（redirect 等），过滤掉 body/headers（已单独处理）
   const safeOptions = {};
   if (options.redirect) safeOptions.redirect = String(options.redirect);
+  // foreground：允许扩展「在超时时把标签页拿到前台重试」。
+  // 默认关 —— 抢焦点会打断用户正在看的页面（用户看到的就是“浏览器乱跳”）。
+  // 只有确实过不去的反爬站点才在自己的 fetch 里写 { foreground: true } 显式开启。
+  if (options.foreground) safeOptions.foreground = true;
   await db.prepare(
     'INSERT INTO relay_jobs(id, url, method, headers, body, options, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)'
   ).bind(id, String(url), String(method).toUpperCase(), JSON.stringify(headers || {}), bodyB64, JSON.stringify(safeOptions), 'pending', now, now).run();
@@ -109,6 +113,22 @@ export async function relayFetch(db, url, init = {}) {
     async arrayBuffer() { return body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength); },
     async text() { return new TextDecoder().decode(body); },
   };
+}
+
+// 中继队列里还有多少没做完的请求（pending + running）。
+// 用途：扩展是**单飞**执行（一个请求最长 ~58 秒），队列里已经堆着请求时再塞进去，
+// 只会让每个请求都在 90 秒后超时 —— 线上 2026-09-28 的「扩展没有在 90 秒内回传」刷屏就是这么来的。
+// 所以调用方先看一眼队列，忙就先不添乱（记「稍后重试」而不是失败）。
+export async function relayBacklog(db) {
+  try {
+    const row = await db
+      .prepare("SELECT COUNT(*) AS n FROM relay_jobs WHERE status IN ('pending','running') AND created_at > ?")
+      .bind(Date.now() - 300000)
+      .first();
+    return Number((row && row.n) || 0);
+  } catch {
+    return 0;
+  }
 }
 
 // 检查扩展是否在线（90 秒内有轮询 relay-pending）
