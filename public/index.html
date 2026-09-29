@@ -2839,6 +2839,12 @@ async function loadAccounts() {
       : unknown
         ? '<span class="badge skip" data-tip="这次请求已经发出去了，但没等到网站回包 —— 签到可能已经生效。面板会自动复核（约 15 分钟后）；想立刻知道就点「执行」再跑一次：若已签到，网站会直接回「今日已签到」。">待确认</span>'
         : '<span class="badge fail">未签到</span>';
+    // 站点按特殊时区计日（如糊涂鳄按 UTC，北京时间 08:00 才换天）：
+    // 在状态旁挂一颗小标签，鼠标移上去解释，避免「都过 0 点了怎么还显示已签到」的困惑。
+    const siteDayTz = ((SITES.find((x) => x.id === a.site) || {}).dayTz) || '';
+    const dayTzChip = siteDayTz
+      ? ` <span class="hint-chip" data-tip="该站点按 ${esc(siteDayTz)} 时间划分「一天」${siteDayTz === 'UTC' ? '（北京时间 08:00 换天）' : ''}：过了北京时间 0 点还显示「已签到」是正常的，等站点那边过了 0 点会自动刷新为「未签到」。">🕘 ${esc(siteDayTz)} 日界</span>`
+      : '';
     const { html: execCell, isLocalExec, siteHint } = execCellHTML(a, execOverride);
     const rawMsg = String(a.last_msg || '');
     // 旧版本遗留的提示文案（已无意义），不展示
@@ -2877,7 +2883,7 @@ async function loadAccounts() {
     <tr>
       <td class="site-cell" data-label="站点" data-exec-cell="${a.id}">${execCell}</td>
       <td class="c" data-label="全局签到"><div class="sched-cell"><div data-tp-acc="${a.id}" title="点一下给这个账号单独设时间；不点就一直跟全局（当前全局签到 ${GLOBAL_HOUR}）"></div></div></td>
-      <td class="c" data-label="状态">${statusBadge}</td>
+      <td class="c" data-label="状态">${statusBadge}${dayTzChip}</td>
       <td class="msg" data-label="网站反馈"><div class="msg-main"${rawTip}>${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${routeShow ? `<div class="msg-route" data-tip="${esc(routeShow)}">${esc(routeShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-chip" data-tip="${esc(hintText)}">💡 建议</span></div>` : ''}</td>
       <td class="muted c mono" data-label="上次运行">${fmtTime(a.last_run_at)}</td>
 
