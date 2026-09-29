@@ -49,3 +49,19 @@ t('面板里的扩展副本与源码同步（src/ext-files.js 是生成的）', 
 });
 
 console.log(`\n${n} 组通过`);
+
+// 「签到窗口最小化」契约：扩展签到时不再往用户标签栏里塞标签页。
+// 实现钉两件事：
+//   ① openOwnTab 必须优先把标签页开进「最小化的专用窗口」（ensureSignWindow / windows.create focused:false）；
+//   ② 专用窗口被关掉后 id 要作废（windows.onRemoved），否则会在一个已关闭的 windowId 上创建标签页直接报错。
+await t('扩展开签到页面用最小化独立窗口，不再挤占用户标签栏', () => {
+  assert.match(ext, /ensureSignWindow/, '要有 ensureSignWindow');
+  assert.match(ext, /chrome\.windows\.create\(\{ url: 'about:blank', focused: false/, '专用窗口不能抢焦点');
+  assert.match(ext, /state: 'minimized'/, '窗口要最小化到任务栏');
+  assert.match(ext, /chrome\.tabs\.create\(\{ windowId: winId/, '标签页要开进专用窗口');
+  assert.match(ext, /chrome\.windows\.onRemoved\.addListener/, '窗口被关要把 id 作废（下次重建）');
+  // 兜底路径还在：建不出窗口时退回普通后台标签页
+  assert.match(ext, /active: false \}\)/, '兜底的后台标签页路径必须保留');
+  // 打包产物同步
+  assert.ok(bundled.includes('ensureSignWindow'), 'src/ext-files.js 里的 background.js 也要同步（跑 node tools/gen-ext-files.mjs）');
+});

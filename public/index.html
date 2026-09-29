@@ -3960,18 +3960,6 @@ $('btn-tg-clear').onclick = async () => {
 // 只有在线时，账号才能切到「本地网络」——否则请求没人接单，点了也只是白等。
 let RELAY_ONLINE = false;
 let RELAY_VERSION = '';
-let RELAY_LATEST = '';
-// 版本号比对：按点分割逐段比数字（"2.9" < "2.10" < "2.11"）
-function cmpVer(a, b) {
-  const pa = String(a || '').split('.').map((x) => parseInt(x, 10) || 0);
-  const pb = String(b || '').split('.').map((x) => parseInt(x, 10) || 0);
-  const n = Math.max(pa.length, pb.length);
-  for (let i = 0; i < n; i++) {
-    const d = (pa[i] || 0) - (pb[i] || 0);
-    if (d) return d;
-  }
-  return 0;
-}
 let RELAY_BACKLOG = 0; // 中继队列里还没做完的请求数（扩展单飞执行，堆积时签到会排队超时）
 async function refreshExtState() {
   const home = $('ext-state');
@@ -3979,7 +3967,6 @@ async function refreshExtState() {
     const s = await api('/api/relay-status', 'GET');
     RELAY_ONLINE = !!s.online;
     RELAY_VERSION = s.version || '';
-    RELAY_LATEST = s.latest_version || '';
     RELAY_BACKLOG = Number(s.backlog || 0);
   } catch {
     RELAY_ONLINE = false;
@@ -3996,8 +3983,7 @@ async function refreshExtState() {
     el.textContent = RELAY_ONLINE
       ? (busy
         ? `🟠 扩展在线 · 中继排队中（${RELAY_BACKLOG} 个请求待执行）`
-        : `🟢 扩展在线（自动中继已启用）${RELAY_VERSION ? ' · v' + RELAY_VERSION : ''}`
-          + (RELAY_LATEST && RELAY_VERSION && cmpVer(RELAY_LATEST, RELAY_VERSION) > 0 ? `（有新版 v${RELAY_LATEST}，去扩展弹窗点更新）` : ''))
+        : `🟢 扩展在线（自动中继已启用）${RELAY_VERSION ? ' · v' + RELAY_VERSION : ''}`)
       : '⚪ 扩展离线（走 CF 网络）';
   }
   return RELAY_ONLINE;
