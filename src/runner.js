@@ -6,6 +6,7 @@ import { getSite } from './sites/index.js';
 import { listCommunitySites, makeCommunitySite } from './community.js';
 import { sendNotify } from './notify.js';
 import { dayInTz } from './schedule.js';
+import { OUTCOME } from './lib/signals.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -48,8 +49,14 @@ export function shortReason(e) {
 export function isRouteFailure(e) {
   const msg = String((e && e.message) || e || '');
   const outcome = (e && e.outcome) || '';
-  if (outcome === 'relay' || outcome === 'relay-unknown' || outcome === 'waf') return true;
-  if (outcome === 'captcha' || outcome === 'need-login') return false;
+  if (outcome === 'relay' || outcome === 'relay-unknown' || outcome === OUTCOME.WAF) return true;
+  // 【踩坑 2026-09-29】这里原本写的是字面量 `'need-login'`，而 signals.js 里
+  // OUTCOME.NEED_LOGIN 的值是 `'need_login'`（下划线）—— 两边对不上，于是
+  // 「站点已给出业务结论（未登录）→ 不换路线」这条规则**从来没生效过**：
+  // 只要错误文案里恰好出现「超时 / 本地网络 / fetch failed」之类的词，
+  // 面板就会换另一条网络出口把同一个签到接口再打一遍。
+  // 改用真常量，并新增 route.test.mjs 的用例钉住这一条。
+  if (outcome === OUTCOME.CAPTCHA || outcome === OUTCOME.NEED_LOGIN) return false;
   return /中继|本地网络|没等到回包|没有回包|没收到回包|超时|timeout|timed out|fetch failed|network|ENOTFOUND|ECONN|EAI_AGAIN|socket|handshake|certificate|SSL|TLS|UrlACL|Forbidden|HTTP 5\d\d/i.test(msg);
 }
 

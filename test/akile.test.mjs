@@ -106,6 +106,33 @@ await t('刷新也失败：提示重新获取 token', async () => {
   await assert.rejects(akile.run({ token: LONG_TOKEN }), /重新.*akile-token/);
 });
 
+// ---------- 线上踩坑 2026-09-29：用户一直在更新 **Cookie**，面板却总说「登录已过期」----------
+// Akile 要的是 localStorage 里的 akile-token（JWT），两者存放在完全不同的地方，
+// 粘错了必须当场说清，而不是白打一次请求再回一句含糊的话。
+await t('把 Cookie 粘进 token 框：直接说清「Akile 不吃 Cookie」', async () => {
+  mockFetch([['any', checkinOk]]);
+  globalThis.__calls = []; // 该用例期待「一次请求都不发」，先清掉上一个用例的计数
+  await assert.rejects(
+    akile.run({ token: 'PHPSESSID=abc123; cdn_sec_tc=xyz; foo=1' }),
+    // 提示里要指出该去哪儿拿，而不是只骂一句
+    /不吃 Cookie[\s\S]*localStorage[\s\S]*akile-token/,
+  );
+  assert.equal((globalThis.__calls || []).length, 0, '形态明显不对时不该发请求');
+});
+
+await t('token 已过期：报错里带上它自己的到期时间', async () => {
+  const dead = fakeJwt(-3600); // 1 小时前就过期了
+  mockFetch([
+    ['/v1/user/refreshToken', { status_code: 401, status_msg: '无效token' }],
+    ['/v1/user/Checkin', authErr],
+  ]);
+  const err = await akile.run({ token: dead }).catch((e) => e);
+  assert.match(err.message, /已经过期了/);
+  assert.match(err.message, /akile-token/);
+  // 报错里要有具体的到期时刻（用户拿它跟自己登录的时间对一下就知道差在哪）
+  assert.match(err.message, /\d{4}\/\d{1,2}\/\d{1,2}/, '要写出具体时间，实际：' + err.message);
+});
+
 await t('jwtExp 解析', async () => {
   assert.ok(jwtExp(fakeJwt(86400)) > Date.now() / 1000);
   assert.equal(jwtExp('not-a-jwt'), 0);

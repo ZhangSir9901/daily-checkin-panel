@@ -90,21 +90,46 @@ export const akile = {
   fields: [
     {
       key: 'token',
-      label: 'akile-token',
+      label: 'akile-token（注意：不是 Cookie）',
       type: 'textarea',
       required: true,
-      placeholder: '浏览器登录 akile.ai 后，从 localStorage 复制 akile-token 粘贴到这里',
+      placeholder: '浏览器登录 akile.ai 后，从 localStorage 复制 akile-token（一段 eyJ... 开头的 JWT）粘贴到这里',
     },
   ],
-  tips: 'Akile 登录接口会拦截程序化登录，面板改用 token 签到：在浏览器登录 akile.ai → 点下方「复制取 token 小书签」→ 在 akile.ai 页面点该书签复制 token → 粘贴保存。token 临近过期面板会自动续期。',
+  tips: '一句话记住：这个框要的是 akile-token，**不是 Cookie**。它们在两个完全不同的地方：Cookie 在 F12 → Application → Cookies，token 在 F12 → Application → Local Storage → akile-token（值以 eyJ 开头，是一段 JWT）。粘贴 Cookie 会被服务器拒绝，面板也只能回「登录已过期」，看着就像「我明明更新了」。最省事的取法：在浏览器登录 akile.ai → 点下方「复制取 token 小书签」→ 在 akile.ai 页面点该书签，token 会自动复制 → 回到面板粘贴保存。另外一个细节：Akile 的 token 大约只活一天（实测 exp 与签发时间相差 12～24 小时），到期后必须重新登录获取，面板会在即将过期时尝试自动续期。',
 
   async run(creds, ctx = {}) {
     let token = String(creds.token || '').trim();
     if (!token) throw new Error('请先填写 akile-token（在浏览器登录 akile.ai 后复制）');
 
+    // 【先看清楚填进来的到底是什么】
+    //
+    // 线上案例（2026-09-29）：用户说「我更新了 Cookie」，可面板里这一行永远只会说
+    // 「登录已过期，请重新从浏览器复制 akile-token」——因为他更新的是 **Cookie**，
+    // 而 Akile 要的是 localStorage 里的 `akile-token`（一段 JWT），两者不是一个东西。
+    // 所以先分辨值形态，把话说清楚，别拿一个 Cookie 去当 Authorization 白打一次请求。
+    const looksJwt = /^[\w-]+\.[\w-]+\.[\w-]+$/.test(token);
+    if (!looksJwt) {
+      const looksCookie = token.includes('=') || token.includes(';');
+      throw new Error(looksCookie
+        ? '这个值看起来是一段 Cookie —— Akile 不吃 Cookie，它要的是浏览器 localStorage 里的 akile-token（一段形如 eyJ... 的 JWT）。'
+          + '获取方式：在浏览器登录 akile.ai → F12 → Application → Local Storage → 复制 akile-token → 粘到面板；'
+          + '或者用账号弹窗里的「复制取 token 小书签」一键复制。'
+        : '这个值不像是 akile-token（它应该是一段形如 eyJ... 的 JWT）。'
+          + '请到浏览器 localStorage 里复制 akile-token 再粘一次。');
+    }
+
+    // 过期了照样先试一次续期：偶尔站点会把 token 的有效期放宽（服务端可能不校验 exp）。
+    // 但**结论文案**必须说清到底是「过期」还是「被拒」——这正是用户反复卡住的地方：
+    // 线上（2026-09-29）面板里那个 token 的 exp 是 07:00:55，而用户一直在更新 **Cookie**，
+    // 两边说的根本不是同一个东西。
+    const nowSec = Date.now() / 1000;
+    const exp0 = jwtExp(token);
+    const expiredAt = exp0 && exp0 < nowSec ? exp0 : 0;
+
     // 临近过期先续期（与网页逻辑一致）
-    const exp = jwtExp(token);
-    if (exp && exp - REFRESH_AHEAD_SEC < Date.now() / 1000) {
+    const exp = exp0;
+    if (exp && exp - REFRESH_AHEAD_SEC < nowSec) {
       const nt = await refreshToken(token);
       if (nt) {
         token = nt;
@@ -116,7 +141,16 @@ export const akile = {
     // token 失效：续期一次再试
     if (authFailed(chk.httpStatus, chk.body)) {
       const nt = await refreshToken(token);
-      if (!nt) throw new Error('登录已过期，请重新从浏览器复制 akile-token');
+      if (!nt) {
+        const expT = exp0 ? new Date(exp0 * 1000).toLocaleString('zh-CN') : '';
+        throw new Error(expiredAt
+          ? '面板里这个 akile-token 已经过期了（它 ' + expT + ' 就到期了；Akile 的 token 只活一天左右，'
+            + '过期后连续期接口也会拒绝）。请在浏览器重新登录 akile.ai 后复制一个新的 akile-token。'
+          : 'Akile 拒了面板里这个 akile-token'
+            + (expT ? '（它自身写着 ' + expT + ' 到期，还没到期却被拒）' : '（它没有携带有效期，也无法续期）')
+            + '。常见原因：① 这个 token 是别的账号/另一个浏览器的；② 已在别处退出登录把它作废了；'
+            + '③ 浏览器还在用同一个账号（token 被刷新过）。请重新登录 akile.ai 复制一个新的 akile-token。');
+      }
       token = nt;
       await saveToken(ctx, token);
       chk = await apiGet('/v1/user/Checkin', token);
@@ -156,7 +190,10 @@ export const akile = {
         return { ok: true, message: amount ? `签到成功，获得 ${amount} AK币` : (msg || '签到成功') };
       }
       if (/过期|无效|未登录|unauthorized|token/i.test(msg) || res.status === 401) {
-        return { ok: false, message: '登录已过期，请重新从浏览器复制 akile-token' };
+        // 这是浏览器端脚本（用的是页面自己 localStorage 里的 token），
+        // 走到这里说明 token 真的被服务器拒了 —— 直接把站点原话给出来，别只说「过期」。
+        return { ok: false, message: 'Akile 拒绝了当前 token' + (msg ? '（网站原话：' + msg + '）' : '（HTTP ' + res.status + '）')
+          + '，请在 akile.ai 重新登录后复制新的 akile-token' };
       }
       if (msg.includes('已签到')) return { ok: true, message: msg || '今日已签到，无需重复' };
       return { ok: false, message: '签到失败：' + (msg || `status_code=${body.status_code}`) };

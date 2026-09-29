@@ -1821,29 +1821,81 @@ function b64urlDecode(s) {
   return decodeURIComponent(escape(atob(s)));
 }
 
+// 站点要的不是 Cookie，而是 localStorage 里的某个值（典型：akile 的 akile-token）：
+// 扩展的「一键复制全部信息」本来就把 localStorage 一起带过来了，没道理让用户再去 F12 里翻。
+// 先按字段名精确找（token / c_token / …），再按常见别名找。
+function valueFromStorage(key, ls) {
+  const k = String(key || '').toLowerCase();
+  const obj = (ls && typeof ls === 'object') ? ls : {};
+  const names = Object.keys(obj);
+  const pick = (n) => (n ? String(obj[n] == null ? '' : obj[n]).trim() : '');
+  if (!k || !names.length) return '';
+  const exact = names.find((n) => n.toLowerCase() === k);
+  if (pick(exact)) return pick(exact);
+  if (k === 'token' || k.endsWith('_token') || k === 'jwt' || k === 'auth') {
+    const liked = names.find((n) => /^[a-z0-9_-]*token$/i.test(n) || /^(jwt|access[_-]?token|auth[_-]?token|c[_-]?token|x[_-]?token)$/i.test(n));
+    return pick(liked);
+  }
+  return '';
+}
+
 function renderCkNewFields(bg, s, extra) {
   const box = bg.querySelector('#ckm-fields');
+  const ls = (extra && extra.localStorage && typeof extra.localStorage === 'object') ? extra.localStorage : {};
   box.innerHTML = (s.fields || []).filter((f) => f.key !== 'cookie').map((f) => {
     const req = f.required ? ' *' : '';
     let pre = '';
     // UA 不用用户自己去找：优先用抓 Cookie 那个浏览器的，其次用当前浏览器
     if (f.key === 'user_agent') pre = (extra && extra.userAgent) || navigator.userAgent;
     if (extra && f.key === 'site_url' && extra.domain) pre = 'https://' + extra.domain.replace(/^https?:\/\//i, '');
+    // token 类字段：从 localStorage 自动取（有就覆盖掉空值）
+    const fromLs = valueFromStorage(f.key, ls);
+    if (fromLs) pre = fromLs;
     if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${f.key}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
     if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${esc(pre)}</textarea>`;
     return `<label>${esc(f.label)}${req}</label><input data-k="${f.key}" placeholder="${esc(f.placeholder || '')}" value="${esc(pre)}">`;
   }).join('');
 }
 
+// 从一个地址里取主机名（用于判断「这份 Cookie 属于哪个账号」）
+function hostOf(url) {
+  try {
+    return String(new URL(String(url || '')).hostname || '').toLowerCase().replace(/^www\./, '');
+  } catch { return ''; }
+}
+
 // 填入 Cookie 确认框：已有账号就选一个填入，没有就直接新建。extra 可带 userAgent（cURL 提取到时新建账号自动填入）
 async function openCookieApplyDialog(siteId, cookie, domain, extra) {
   const s = SITES.find((x) => x.id === siteId);
   if (!s) return toast('未知的站点，请重新生成小书签');
-  const canCookie = s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie');
-  if (!canCookie) return toast('该站点不支持填入 Cookie');
-  const list = cookieCapableAccounts(s.id);
+  const hasCookieField = (s.fields || []).some((f) => f.key === 'cookie');
+  const canCookie = s.id === 'http' || hasCookieField;
+  // 不要 Cookie 的站点（akile 这类要的是 localStorage 里的 token）也能走这个对话框：
+  // 能自动填的字段（token / 站点地址 / UA）都会自动填好，用户只需确认一次。
+  // 以前这里直接把它们挡在门外（「该站点不支持填入 Cookie」），用户只能手动新建，
+  // 而手动填时又容易把 Cookie 当 token 粘进去 —— 这正是 akile 那条线上问题的开端。
+  const list = canCookie ? cookieCapableAccounts(s.id) : ACCTS.filter((a) => a.site === s.id);
   const canCreate = s.id !== 'http'; // 自定义 HTTP 建账号要填 URL 等，不支持一键新建
   if (!list.length && !canCreate) return toast('面板里还没有可填 Cookie 的账号');
+
+  // 【默认选中哪个账号，必须看粘过来的域名】
+  // 同一个站点模块可能管着两个独立站（糊涂鳄 = hutue.cn 与 dj.hutue.cn，同一个账号密码、
+  // 不同的数据库，需要两个账号分开添加）。这种情况下账号的「站点地址」在 creds 里，
+  // 而账号列表不带凭据 —— 所以要按需再读一次，才能把选项标成
+  // 「已有账号：单机（dj.hutue.cn）」，并按域名预选中对的那个。
+  // 以前永远默认第一个：粘 hutue.cn 的 Cookie 会写进 dj.hutue.cn 那个账号，
+  // 用户以为「我已经更新了」，目标账号却一个字没变（于是永远是「登录已失效」）。
+  const domHost = hostOf(domain);
+  const hosts = {};
+  if (domHost && list.length > 1) {
+    await Promise.all(list.map(async (a) => {
+      try {
+        const { account } = await api('/api/accounts/' + a.id);
+        hosts[a.id] = hostOf(account && account.creds && account.creds.site_url);
+      } catch { hosts[a.id] = ''; }
+    }));
+  }
+  const autoPick = list.find((a) => hosts[a.id] && hosts[a.id] === domHost) || null;
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   const needsUA = (s.fields || []).some((f) => f.key === 'user_agent');
@@ -1855,7 +1907,8 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
     ${extra && extra.userAgent ? `<p class="muted">已提取到 User-Agent（${esc(extra.userAgent.slice(0, 50))}…），会自动填入。</p>` : ''}
     ${uaMissing ? `<p style="color:#ffb020;font-size:13px">⚠️ 该站点要求 Cookie 与 User-Agent 配对。已自动填入<b>当前浏览器</b>的 UA；如果这串 Cookie 是从别的浏览器/手机上抓的，请把下面 UA 换成那台设备的 UA（否则会被 WAF 拦）。</p>` : ''}
     <label>填入方式</label>
-    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}">已有账号：${esc(a.name)}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 添加到面板（新建记录）</option>' : ''}</select>
+    ${autoPick ? `<p class="muted" style="font-size:12px">按域名 ${esc(domHost)} 自动选中了下面这个账号；如果不对，在上面的下拉里改。</p>` : ''}
+    <select id="ckm-mode">${list.map((a) => `<option value="${a.id}"${autoPick && autoPick.id === a.id ? ' selected' : ''}>已有账号：${esc(a.name)}${hosts[a.id] ? '（' + esc(hosts[a.id]) + '）' : ''}</option>`).join('')}${canCreate ? '<option value="__new"' + (list.length ? '' : ' selected') + '>＋ 添加到面板（新建记录）</option>' : ''}</select>
     <div id="ckm-new" class="${list.length ? 'hidden' : ''}">
       <label>备注名</label><input id="ckm-name" value="${esc(s.name)}">
       <p class="muted" style="font-size:12px">下面的项已尽量自动填好，确认无误直接保存即可。</p>
@@ -1874,10 +1927,10 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
     try {
       if (modeSel.value === '__new') {
         const name = (bg.querySelector('#ckm-name').value || '').trim() || s.name;
-        const creds = { cookie };
+        const creds = hasCookieField ? { cookie } : {};
         bg.querySelectorAll('#ckm-fields [data-k]').forEach((el) => { creds[el.dataset.k] = el.value; });
         await api('/api/accounts', 'POST', { name, site: s.id, creds });
-        bg.remove(); toast('账号已创建并填入 Cookie'); loadAccounts();
+        bg.remove(); toast(hasCookieField ? '账号已创建并填入 Cookie' : '账号已创建'); loadAccounts();
       } else {
         const { account } = await api('/api/accounts/' + modeSel.value);
         const accCreds = account.creds || {};
@@ -1892,7 +1945,24 @@ async function openCookieApplyDialog(siteId, cookie, domain, extra) {
           try { h = JSON.parse(accCreds.headers || '{}'); } catch { /* 忽略 */ }
           h.Cookie = cookie;
           accCreds.headers = JSON.stringify(h, null, 2);
-        } else { toast('该账号类型不支持填入 Cookie'); return; }
+        } else {
+          // 站点要的不是 Cookie（akile 的 token 在 localStorage 里）：把能自动取的补上
+          const ls = (extra && extra.localStorage && typeof extra.localStorage === 'object') ? extra.localStorage : {};
+          let filled = [];
+          for (const f of (s.fields || [])) {
+            if (f.key === 'cookie' || f.key === 'user_agent') continue;
+            const v = valueFromStorage(f.key, ls);
+            if (v) { accCreds[f.key] = v; filled.push(f.label || f.key); }
+          }
+          if (extra && extra.userAgent && (s.fields || []).some((f) => f.key === 'user_agent')) {
+            accCreds.user_agent = extra.userAgent; filled.push('UA');
+          }
+          if (!filled.length) {
+            toast('这个站点的凭据不是 Cookie（要填：' + (s.fields || []).map((f) => f.label || f.key).join('/') + '），请用「编辑」手动填');
+            return;
+          }
+          toast('已自动填入：' + filled.join('、'));
+        }
         await api('/api/accounts/' + modeSel.value, 'PUT', { creds: accCreds });
         bg.remove(); toast('Cookie 已更新到账号'); loadAccounts();
       }
@@ -1935,33 +2005,58 @@ async function autoApplyCookies(siteId, d) {
   const list = Array.isArray(d.cookieList) ? d.cookieList : [];
   const ls = d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {};
   const names = (list.length ? list.map((c) => c.name) : cookie.split(';').map((x) => x.trim().split('=')[0])).filter(Boolean);
-  // 除 Cookie/UA 外还有别的必填项（如 Discuz 的论坛地址）时，交给原对话框补充
-  const missing = (s.fields || []).filter((f) => f.required && f.key !== 'cookie' && !(f.key === 'user_agent' && ua));
-  if (missing.length) { openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua }); return false; }
 
-  const existing = cookieCapableAccounts(siteId);
+  // 【按站点自己的字段来填，而不是默认「一切站点都吃 Cookie」】
+  // 踩过的坑（2026-09-29）：akile 要的是 localStorage 里的 akile-token，它的字段表里
+  // 根本没有 cookie 这个键。旧逻辑只会把 cookie 塞进去 —— 于是这个账号永远存不进去，
+  // 用户只能手动新建，而手动填的时候又把 Cookie 当 token 粘进去（面板随后只能回
+  // 「登录已过期，请重新从浏览器复制 akile-token」）。
+  const auto = {};
+  for (const f of (s.fields || [])) {
+    if (f.key === 'cookie' || f.key === 'user_agent') continue;
+    const fromLs = valueFromStorage(f.key, ls);
+    if (fromLs) { auto[f.key] = fromLs; continue; }
+    // 站点地址类字段：从粘过来的域名推（hutue.cn / dj.hutue.cn 这类一模块两站的关键）
+    if (f.key === 'site_url' && d.domain) auto[f.key] = 'https://' + String(d.domain).replace(/^https?:\/\//i, '');
+  }
+  const hasCookieField = (s.fields || []).some((f) => f.key === 'cookie');
+  // 除 Cookie/UA 外还有别的必填项（如 Discuz 的论坛地址）时，交给原对话框补充
+  const missing = (s.fields || []).filter((f) => f.required && f.key !== 'cookie'
+    && !(f.key === 'user_agent' && ua) && !auto[f.key]);
+  if (missing.length) {
+    openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua, localStorage: ls });
+    return false;
+  }
+
+  // 找「这个站点的账号」：不能只找有 cookie 字段的（那会把 akile 这类纯 token 站点排除掉，
+  // 结果每粘一次就新建一个重复账号）。只有自定义 http 站点例外：它的账号可能用多步流程。
+  const existing = (s.id === 'http' ? cookieCapableAccounts(siteId) : ACCTS.filter((a) => a.site === siteId));
   let accountId = null;
   let actionText = '';
   try {
+    const filledTip = Object.keys(auto).length ? '，并自动填好 ' + Object.keys(auto).join('、') : '';
     if (existing.length === 1) {
       const { account } = await api('/api/accounts/' + existing[0].id);
       const creds = account.creds || {};
-      creds.cookie = cookie;
+      if (hasCookieField || creds.cookie !== undefined) creds.cookie = cookie;
       if (ua && needUA) creds.user_agent = ua;
+      Object.assign(creds, auto);
       await api('/api/accounts/' + existing[0].id, 'PUT', { creds });
       accountId = existing[0].id;
-      actionText = '已更新账号「' + existing[0].name + '」的 Cookie' + (needUA ? ' 与 UA' : '')
+      actionText = '已更新账号「' + existing[0].name + '」的' + (hasCookieField ? ' Cookie' : '登录凭据')
+        + (needUA ? ' 与 UA' : '') + filledTip
         + (uaAutoFilled ? '（UA 自动取本浏览器）' : '');
     } else if (existing.length > 1) {
       // 同站点有多个账号，交给用户选（保留原有对话框）
-      openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua });
+      openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua, localStorage: ls });
       return false;
     } else {
-      const creds = { cookie };
+      const creds = { ...auto };
+      if (hasCookieField) creds.cookie = cookie;
       if (ua && needUA) creds.user_agent = ua;
       const r = await api('/api/accounts', 'POST', { name: s.name, site: siteId, creds });
       accountId = r.id;
-      actionText = '已新建账号「' + s.name + '」' + (uaAutoFilled ? '（UA 自动取本浏览器）' : '');
+      actionText = '已新建账号「' + s.name + '」' + filledTip + (uaAutoFilled ? '（UA 自动取本浏览器）' : '');
     }
   } catch (e) {
     toast('保存失败：' + e.message);

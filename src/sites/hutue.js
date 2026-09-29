@@ -17,6 +17,10 @@
 // 这样悬浮窗换了 action 名也能自动跟上，不需要改代码。
 
 import { classifySignal, OUTCOME } from '../lib/signals.js';
+import { splitCookieBySite, wpLoginDiagnosis } from '../lib/cookie-info.js';
+import { wpLogin } from '../lib/wp-login.js';
+import { mergeCookies } from '../lib/web.js';
+import { encryptJSON } from '../crypto.js';
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
@@ -278,7 +282,9 @@ function detailOf(action, raw, trace) {
   const text = String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
   const head = text ? `网站返回：${text.slice(0, 300)}` : '网站返回：（无响应）';
   const meta = action ? ` · 接口 ${action}` : '';
-  const extra = (trace || []).filter((x) => /超时|不认/.test(x)).slice(-2).join('；');
+  // 「已忽略…」= 这份 Cookie 里剔掉了别的站的会话（同品牌两个独立站最常见的坑），
+  // 属于要让人看见的一条事实，和超时/不认接口一个待遇。
+  const extra = (trace || []).filter((x) => /超时|不认|已忽略/.test(x)).slice(-2).join('；');
   return head + meta + (extra ? ` · ${extra.slice(0, 160)}` : '');
 }
 
@@ -325,11 +331,27 @@ export const hutue = {
       placeholder: 'https://dj.hutue.cn 或 https://hutue.cn',
     },
     {
+      key: 'username',
+      label: '账号（邮箱）',
+      type: 'text',
+      required: false,
+      placeholder: '填上它，站点登录态过期时面板会自己重新登录',
+    },
+    {
+      key: 'password',
+      label: '密码',
+      type: 'password',
+      required: false,
+      placeholder: '只存在你自己的 D1 里（加密保存），用途只有「自动重新登录」',
+    },
+    {
       key: 'cookie',
       label: 'Cookie',
       type: 'textarea',
-      required: true,
-      placeholder: '浏览器登录站点后，用扩展「一键复制全部信息」获取',
+      // 不再是必填：本站的 wp-login 会话只活一两天，靠一份 Cookie 长期运行本来就不可能。
+      // 填了账号密码时面板会自动登录拿新会话（见 run 的说明）。
+      required: false,
+      placeholder: '浏览器登录站点后，用扩展「一键复制全部信息」获取（也可以留空，填账号密码让面板自己登录）',
     },
     {
       key: 'user_agent',
@@ -339,13 +361,117 @@ export const hutue = {
       placeholder: '留空用默认；扩展会自动抓取',
     },
   ],
-  tips: '先在浏览器中登录站点（首页右侧会出现「打卡签到」悬浮窗，每天 5 晶石）→ 用扩展「一键发送到签到面板」→ 面板会自动识别并保存。面板认的是悬浮窗按钮真正绑定的接口（RiPro 的 user_qiandao）；站点还有另一个长得很像的「会员中心首页签到」（只给 1 积分），不会被误用。hutue.cn 和 dj.hutue.cn 是两个独立站点，需要分别添加账号。注意：本站按 UTC 计日，北京时间 08:00 才算它新的一天——签到时间建议设在 08:05 之后。执行路线按域名自动给：dj.hutue.cn 默认走「CF 网络」（实测 0.4 秒返回，比借本机网络更快更稳）；hutue.cn 默认走「本地网络」。hutue.cn 在 CF 出口是**整站**被拦的（2026-09-29 复核：从 CF 机房 IP 不仅首页 200 不到，连 /robots.txt、/wp-admin/admin-ajax.php 都回 `error code: 1002`），所以它只能借你的本机网络 —— 签到期间扩展会在后台开一个 hutue.cn 的页面代发请求（不会抢焦点，同一个域名只开一个、用完 45 秒后自动关）。两条路线走不通时都会自动换另一条，「执行方式」保持「自动」即可。',
+  tips: '先在浏览器中登录站点（首页右侧会出现「打卡签到」悬浮窗，每天 5 晶石）→ 用扩展「一键发送到签到面板」→ 面板会自动识别并保存。面板认的是悬浮窗按钮真正绑定的接口（RiPro 的 user_qiandao）；站点还有另一个长得很像的「会员中心首页签到」（只给 1 积分），不会被误用。hutue.cn 和 dj.hutue.cn 是两个独立站点，需要分别添加账号。注意：本站按 UTC 计日，北京时间 08:00 才算它新的一天——签到时间建议设在 08:05 之后。执行路线按域名自动给：dj.hutue.cn 默认走「CF 网络」（实测 0.4 秒返回，比借本机网络更快更稳）；hutue.cn 默认走「本地网络」。hutue.cn 在 CF 出口是**整站**被拦的（2026-09-29 复核：从 CF 机房 IP 不仅首页 200 不到，连 /robots.txt、/wp-admin/admin-ajax.php 都回 `error code: 1002`），所以它只能借你的本机网络 —— 签到期间扩展会在后台开一个 hutue.cn 的页面代发请求（不会抢焦点，同一个域名只开一个、用完 45 秒后自动关）。两条路线走不通时都会自动换另一条，「执行方式」保持「自动」即可。强烈建议把「账号」和「密码」也填上：本站的 WordPress 登录会话只活一两天（实测 2026-09-29：hutue.cn 的会话到点后站点一直回「请登录后签到」），填了账号密码后会话过期时面板会自己重新登录，不再需要你手动复制 Cookie。另外，两个站的登录态各有一套，用扩展复制时容易把两套会话混在一串里（面板会自动只留本站那几段，并在反馈里说清楚），遇到「登录已失效」时先看反馈里的「Cookie 体检」那一句。',
 
+  // 站点的 wp-login 登录会话只活一两天（实测 2026-09-29：hutue.cn 的会话 11:05 到期、
+  // 之后站点一直回「请登录后签到」），所以「会话过期」在这两个站是常态，不是异常。
+  // 只要账号里存了用户名 + 密码，面板就自己重新登录一次再签。
+  //
+  // 登录用哪条网络由 runner 决定（本模块只用 globalThis.fetch，换成中继就是借本地网络）。
   async run(creds, ctx = {}) {
     const base = normBase(creds.site_url);
     if (!base) throw new Error('站点地址未配置');
-    const cookie = String(creds.cookie || '').trim();
-    if (!cookie) throw new Error('Cookie 未配置');
+    let c = { ...creds };
+    const username = String(c.username || '').trim();
+    const password = String(c.password || '');
+    const canLogin = !!username && !!password;
+    const throttleMs = 10 * 60 * 1000;
+    const lastLogin = Number((ctx.meta && ctx.meta.wp_login_at) || 0) || 0;
+    const throttled = lastLogin > 0 && Date.now() - lastLogin < throttleMs;
+
+    // 自己登录一次，成功就把新会话并进 creds（直连路线能读到 Set-Cookie，回写 D1；
+    // 本地网络路线读不到，但浏览器自己已经种下了，后续请求天然带着它）。
+    let droppedByLogin = [];
+    const doLogin = async () => {
+      const r = await wpLogin({ base, username, password, ua: c.user_agent });
+      if (ctx.meta) ctx.meta.wp_login_at = Date.now();
+      if (r.ok) {
+        if (r.cookie) {
+          c.cookie = mergeCookies(String(c.cookie || ''), r.cookie);
+          // 顺手把不属于本站的旧会话剔掉（同品牌两个站混在一串里的情况）
+          const sp = splitCookieBySite(c.cookie, base);
+          if (sp.dropped.length) { c.cookie = sp.cookie; droppedByLogin = sp.dropped; }
+          await saveCreds(ctx, c);
+        }
+      }
+      return r;
+    };
+
+    // ① 面板里那份 Cookie 已经明确过期（或根本不属于本站）→ 先登录，省掉一次注定被拒的签到请求。
+    //    只在「串里确实有 WordPress 会话、但没有本站可用的」时才走这条，认不出来就照常先试签到。
+    //    另外：连 Cookie 都没填（只填了账号密码）时也直接登录 —— 这种账号就是靠密码吃饭的。
+    const split0 = splitCookieBySite(String(c.cookie || ''), base);
+    const noCookieAtAll = !String(c.cookie || '').trim();
+    let loginNote = '';
+    if (canLogin && (split0.needsLogin || noCookieAtAll) && !throttled) {
+      const r = await doLogin();
+      if (!r.ok) {
+        const e = new Error('登录已失效，且面板用账号密码自动重新登录也没成功：' + r.message);
+        e.outcome = OUTCOME.NEED_LOGIN;
+        throw enrichWithCookieDiag(e, c, base);
+      }
+      loginNote = '面板已用账号密码重新登录并续上会话'
+        + (droppedByLogin.length ? '（已剔除属于其它域名的旧会话：' + droppedByLogin.join('、') + '）' : '');
+    }
+
+    try {
+      const res = await signinOnce(c, ctx);
+      return loginNote ? { ...res, detail: [res.detail, loginNote].filter(Boolean).join(' · ') } : res;
+    } catch (e) {
+      if (!e || e.outcome !== OUTCOME.NEED_LOGIN) throw e;
+      // ② 站点自己回了「请登录后签到」→ 再给自己一次机会（例如会话是在本次运行前刚好过期的）
+      if (!canLogin || throttled) throw enrichWithCookieDiag(e, c, base, canLogin ? '' : '这个账号没有存账号密码，面板没法自己重新登录 —— 在「编辑」里补上账号和密码，以后会话过期面板会自己处理。');
+      const r = await doLogin();
+      if (!r.ok) throw enrichWithCookieDiag(e, c, base, '面板尝试用账号密码自动重新登录，但没成功：' + r.message);
+      try {
+        const res = await signinOnce(c, ctx);
+        return { ...res, detail: [res.detail, '面板已用账号密码重新登录并续上会话'].filter(Boolean).join(' · ') };
+      } catch (e2) {
+        throw enrichWithCookieDiag(e2, c, base, '面板已用账号密码自动登录成功（会话已续），但签到仍回未登录 —— 请确认这组用户名/密码就是这个站点的账号。');
+      }
+    }
+  },
+};
+
+// 把「这份 Cookie 到底能不能被本站认成登录态」写进错误文案。
+function enrichWithCookieDiag(e, creds, base, extra) {
+  const parts = [String((e && e.message) || e)];
+  if (extra) parts.push(extra);
+  parts.push('Cookie 体检：' + wpLoginDiagnosis(creds.cookie, base));
+  parts.push('说明：hutue.cn 走「本地网络」时，签到用的是浏览器里的登录态（面板这份 Cookie 只是备份），两边任何一个过期都会回「请登录后签到」。');
+  const err = new Error(parts.join('｜'));
+  err.detail = (e && e.detail) || '';
+  err.outcome = (e && e.outcome) || '';
+  return err;
+}
+
+// 把新拿到的会话回写 D1（拿不到 Set-Cookie 时不用调）
+async function saveCreds(ctx, creds) {
+  try {
+    const { env, db, account } = ctx || {};
+    if (!env || !db || !account) return;
+    const enc = await encryptJSON(env, db, creds);
+    await db.prepare('UPDATE accounts SET creds=?, updated_at=? WHERE id=?')
+      .bind(enc, Date.now(), account.id).run();
+  } catch {
+    /* 回写失败不影响本次签到 */
+  }
+}
+
+// 真正的一次签到尝试：发现接口 → 打签到接口。
+// 登录态相关的判断留给外层 run（它知道有没有账号密码、能不能重新登录）。
+async function signinOnce(creds, ctx = {}) {
+    const base = normBase(creds.site_url);
+    if (!base) throw new Error('站点地址未配置');
+    // Cookie 串里可能混着同品牌另一个站的登录会话（hutue.cn / dj.hutue.cn 就会这样）：
+    // 只保留本站自己那几段，认不出来就原样保留（见 splitCookieBySite 的安全阀）。
+    const split = splitCookieBySite(String(creds.cookie || ''), base);
+    const cookie = String(split.cookie || '').trim();
+    if (!cookie && !String(creds.username || '').trim()) {
+      throw new Error('Cookie 未配置（也可以在「编辑」里填账号和密码，面板会自己登录）');
+    }
+    // Cookie 可能一份都没有（只填了账号密码）：这时靠本次登录拿到的新会话走完整流程。
+    const droppedNote = split.dropped.length ? `已忽略不属于本站的会话 Cookie：${split.dropped.join('、')}` : '';
     const ua = String(creds.user_agent || '').trim() || DEFAULT_UA;
 
     const headers = {
@@ -475,6 +601,7 @@ export const hutue = {
     // ---- ③ 依次尝试：记录每一步「打的是谁、站点回了什么」，成功即返回 ----
     const trace = [];
     const note = (s) => { if (s) trace.push(String(s).slice(0, 200)); };
+    if (droppedNote) note(droppedNote);
     let lastReason = '';
     let definitiveFail = null;
     let timeoutFail = ''; // 最后一次「发出去了但没等到回包」
@@ -590,5 +717,4 @@ export const hutue = {
     const err = new Error('签到失败：' + (lastReason || '未识别到成功标识') + triedHint + routeHint);
     err.detail = detailOf(usedAction, usedRaw, trace);
     throw err;
-  },
-};
+}

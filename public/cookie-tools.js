@@ -229,8 +229,105 @@ function checkPastedCreds(info) {
   if (Object.keys(ls).length) {
     items.push({ level: 'ok', title: '附带 ' + Object.keys(ls).length + ' 项 localStorage', detail: '有些站（如 akile）把登录 token 放这里，一起存下来才不会掉登录。' });
   }
+
+  // WordPress 登录会话自带到期时间：过期的会话粘进去必然还是「未登录」。
+  // 在这里说清楚，用户就不用在「更新 Cookie → 还是登录已失效」之间反复转了。
+  //
+  // 为什么过期不再直接判「不许保存」：糊涂鳄这类站现在可以用账号密码**自动重新登录**
+  // （见它的站点模块），所以「一份过期的 Cookie + 正确的账号密码」是完全可用的组合；
+  // 把保存按钮直接封死反而让用户没法这么配。这里降为提醒，并把两条出路都写出来。
+  const wp = wpLoginSessions(cookie);
+  if (wp.length) {
+    const fmt = (ts) => (ts ? new Date(ts).toLocaleString('zh-CN') : '未知时间');
+    const valid = wp.filter((s) => !s.expired);
+    const expired = wp.filter((s) => s.expired);
+    // 每段会话是哪个域名来的（扩展的「一键复制全部信息」会带上）：
+    // 同品牌两个独立站（hutue.cn / dj.hutue.cn）混在一串里时就靠它说清楚。
+    const domOf = {};
+    for (const c of (Array.isArray(d.cookieList) ? d.cookieList : [])) {
+      if (c && c.name) domOf[String(c.name)] = String(c.domain || '');
+    }
+    const where = (s) => (domOf[s.name] ? '（来自 ' + domOf[s.name] + '）' : '');
+    const desc = (s) => (s.user ? s.user + ' ' : '') + fmt(s.exp) + ' 到期' + where(s);
+    const domains = [...new Set(wp.map((s) => domOf[s.name]).filter(Boolean))];
+    if (!valid.length) {
+      items.push({
+        level: 'warn',
+        title: '这份 Cookie 里的登录会话已经过期了',
+        detail: 'WordPress 把到期时间写在 wordpress_logged_in_ 里，它写着 '
+          + expired.map(desc).join('、') + ' 到期（现在 ' + fmt(Date.now()) + '）。\n'
+          + '两条出路任选：① 这个账号如果填了账号密码，面板会在会话过期时自己重新登录（糊涂鳄这类站已支持），这份 Cookie 可以照常保存；'
+          + '② 否则请在浏览器重新登录该网站 —— 确认页面上能看到自己的用户名（或「退出登录」）—— 再用扩展复制一次。',
+      });
+    } else if (expired.length) {
+      items.push({
+        level: 'warn',
+        title: '有 ' + expired.length + ' 段登录会话已过期',
+        detail: '仍有效的还有 ' + valid.length + ' 段（' + valid.map(desc).join('、') + '）。'
+          + '同一品牌的两个独立站（如 hutue.cn 与 dj.hutue.cn）各有一套会话，'
+          + '如果目标站用的不是有效的那一段，签到照样会被判成未登录。',
+      });
+    } else {
+      items.push({
+        level: 'ok',
+        title: '登录会话有效',
+        detail: wp.map(desc).join('、'),
+      });
+    }
+    // 一串里混着两个域名的会话 —— 复制时把两个站混在一起了，这正是「我明明更新了 Cookie，
+    // 面板还说登录已失效」最常见的原因：有效的那段是给另一个站的。
+    if (domains.length > 1) {
+      items.push({
+        level: 'warn',
+        title: '这份 Cookie 混了两个域名的登录会话：' + domains.join('、'),
+        detail: '同一品牌的两个独立站各有一套登录态，混在一起复制时，看上去「还有效」的那段往往属于另一个站。'
+          + '建议回到目标站点重新复制一次（只保留该站的登录态）；面板在签到时会自动只保留属于本站的那几段，并在反馈里说明。',
+      });
+    }
+  }
   const level = items.some((i) => i.level === 'bad') ? 'bad' : (items.some((i) => i.level === 'warn') ? 'warn' : 'ok');
   return { level, items };
+}
+
+// ---------------------------------------------------------------------------
+// WordPress 登录会话**自带到期时间**，这是「这份 Cookie 到底还能不能用」最硬的判据。
+//
+// 值形如 `laoguo|1791635708|token|hmac`（URL 编码），中间那段就是站点自己判
+// 「认不认这个会话」用的时间（wp_parse_auth_cookie：过期即当作未登录）。
+// 于是不用发任何请求就能知道结果 —— 用户最常卡住的地方正是这里：
+// 「我明明更新了 Cookie」而复制到的其实是**已经过期的那一份**，
+// 面板于是永远回「登录已失效」，两边来回改却谁也没错。
+//
+// 同一品牌的两个独立站（hutue.cn / dj.hutue.cn）各有一套 cookie hash，而两套 Cookie
+// 往往都挂在同一个上级域（.hutue.cn）下，于是复制出来的一串里混着两边的会话 ——
+// 这里把每一段都带上「用户 + 到期时间」，界面才能说清「有效的那段是给另一个站的」。
+//
+// 注意：Worker 端有一份等价实现（src/lib/cookie-info.js），两份必须一致，
+// test/cookie-info.test.mjs 会拿同一批样本比对它们的结果。
+function wpLoginSessions(cookie, now) {
+  const t = Number(now) || Date.now();
+  const out = [];
+  for (const seg of String(cookie || '').split(';')) {
+    const s = seg.trim();
+    if (!s) continue;
+    const i = s.indexOf('=');
+    if (i < 0) continue;
+    const name = s.slice(0, i).trim();
+    if (!/^wordpress_logged_in_/i.test(name)) continue;
+    let val = s.slice(i + 1);
+    try { val = decodeURIComponent(val); } catch { /* 解不开就按原样 */ }
+    const parts = val.split('|');
+    const expSec = Number(parts[1]);
+    const exp = Number.isFinite(expSec) && expSec > 1e9 ? expSec * 1000 : 0;
+    out.push({
+      name,
+      hash: name.replace(/^wordpress_logged_in_/i, ''),
+      user: String(parts[0] || '').trim(),
+      exp,
+      expired: exp > 0 ? exp < t : false,
+    });
+  }
+  return out;
 }
 
 function extractCookieFromCurl(cmd) {
@@ -300,6 +397,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.parsePasteText = parsePasteText;
   globalThis.splitCookieParts = splitCookieParts;
   globalThis.checkPastedCreds = checkPastedCreds;
+  globalThis.wpLoginSessions = wpLoginSessions;
   globalThis.explainCookieText = explainCookieText;
   globalThis.parseCookieHeader = parseCookieHeader;
   globalThis.extractCookieFromHeaders = extractCookieFromHeaders;

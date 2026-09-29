@@ -209,4 +209,40 @@ t('粘贴没复制全的 JSON：要说“像没复制全”，而不是只报 JS
   assert.throws(() => parsePasteText('{"a":1}'), /没有 Cookie/);
 });
 
+// 线上真实案例（2026-09-29）：hutue.cn 的账号里混着 dj.hutue.cn 的登录会话，
+// 用户一直以为「我更新了 Cookie」，而属于 hutue.cn 的那段早就过期了。
+t('体检：登录会话已过期 → 提醒（不再硬拦），并给出两条出路', () => {
+  const past = Math.floor(Date.now() / 1000) - 3600;
+  const r = globalThis.checkPastedCreds({
+    cookie: `wordpress_logged_in_ec35f1949aa62d7b02e78d74b17cb6b5=guo527029137%7C${past}%7Ct%7Ch`,
+    format: '扩展「一键复制全部信息」', domain: 'hutue.cn',
+  });
+  assert.equal(r.level, 'warn', '不再判 bad：填了账号密码的站点能自动重新登录，不该把保存按钮封死');
+  const it = r.items.find((i) => /登录会话已经过期/.test(i.title));
+  assert.ok(it, JSON.stringify(r.items.map((i) => i.title)));
+  assert.match(it.detail, /账号密码/);
+  assert.match(it.detail, /重新登录/);
+});
+
+t('体检：一份 Cookie 里混了两个域名的登录会话 → 点名说出来', () => {
+  const future = Math.floor(Date.now() / 1000) + 86400;
+  const r = globalThis.checkPastedCreds({
+    cookie: `wordpress_logged_in_ec35f1949aa62d7b02e78d74b17cb6b5=u1%7C${future}%7Ct%7Ch; `
+      + `wordpress_logged_in_ca7674586a167c665930997282100f84=u2%7C${future}%7Ct%7Ch`,
+    cookieList: [
+      { name: 'wordpress_logged_in_ec35f1949aa62d7b02e78d74b17cb6b5', value: 'x', domain: '.hutue.cn' },
+      { name: 'wordpress_logged_in_ca7674586a167c665930997282100f84', value: 'x', domain: 'dj.hutue.cn' },
+    ],
+    format: '扩展「一键复制全部信息」', domain: 'hutue.cn',
+  });
+  assert.equal(r.level, 'warn');
+  const mixed = r.items.find((i) => /混了两个域名/.test(i.title));
+  assert.ok(mixed, JSON.stringify(r.items.map((i) => i.title)));
+  assert.match(mixed.detail, /另一个站/);
+  // 会话那段要说清是哪个域名来的，用户才能自己去对
+  const sess = r.items.find((i) => /登录会话有效/.test(i.title));
+  assert.match(sess.detail, /来自 \.hutue\.cn/);
+  assert.match(sess.detail, /来自 dj\.hutue\.cn/);
+});
+
 console.log(`\n${n} 组通过`);

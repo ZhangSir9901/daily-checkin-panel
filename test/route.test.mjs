@@ -14,6 +14,7 @@
 import assert from 'node:assert/strict';
 import { encryptJSON } from '../src/crypto.js';
 import { runAccount, isRouteFailure } from '../src/runner.js';
+import { OUTCOME } from '../src/lib/signals.js';
 import { getSite } from '../src/sites/index.js';
 
 let n = 0;
@@ -324,10 +325,19 @@ await t('isRouteFailure：网络层失败算「值得换路」，业务/验证�
   assert.equal(isRouteFailure(relayUnknown), true, '结果未知时更该换条路问出真相');
 
   assert.equal(isRouteFailure(new Error('Cookie 已失效，请重新登录后复制新的 Cookie')), false);
-  const login = new Error('登录已失效'); login.outcome = 'need-login';
+  const login = new Error('登录已失效'); login.outcome = OUTCOME.NEED_LOGIN; // 真常量是 need_login（下划线）
   assert.equal(isRouteFailure(login), false);
-  const cap = new Error('遇到人机验证'); cap.outcome = 'captcha';
+  const cap = new Error('遇到人机验证'); cap.outcome = OUTCOME.CAPTCHA;
   assert.equal(isRouteFailure(cap), false);
+
+  // 【回归 2026-09-29】站点已给出「未登录」这个业务结论时，即使文案里带着
+  // 「本地网络 / 超时」这些词，也不该换条网络出去重打一遍签到接口。
+  // 旧代码把常量写成了 'need-login'，于是这条规则从来没生效过 ——
+  // 线上表现就是「面板换条路又打了一次签到接口」（同一个账号白挨两次）。
+  const enriched = new Error('登录已失效，请重新获取 Cookie｜Cookie 体检：属于 hutue.cn 的会话 guo527029137 已过期'
+    + '｜说明：hutue.cn 走「本地网络」时，签到用的是浏览器里的登录态');
+  enriched.outcome = OUTCOME.NEED_LOGIN;
+  assert.equal(isRouteFailure(enriched), false, 'need_login 必须优先于文案里的关键词');
   assert.equal(isRouteFailure(new Error('签到失败：还没绑定手机号')), false);
 });
 
