@@ -9,6 +9,14 @@
 ## [未发布]
 
 ### 新增
+- 
+
+### 修复
+- 
+
+## [2.12.0] - 2026-09-29
+
+### 新增
 - WordPress 登录模块（`src/lib/wp-login.js`）：账号密码直登拿 Cookie，糊涂鳄这类 WP 站点 Cookie 失效后可一键重登。
 - Cookie 信息模块（`src/lib/cookie-info.js`）：解析凭据自带的有效期（WP 会话 / JWT 的 exp），站点名悬浮提示。
 
