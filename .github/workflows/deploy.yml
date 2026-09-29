@@ -1,0 +1,57 @@
+name: Deploy to Cloudflare
+
+# 可选：把面板从 GitHub 直接部署到 Cloudflare Workers。
+# 默认只做「部署前检查」（dry-run），确认没问题后再手动切到 deploy。
+#
+# 用之前要在仓库 Settings → Secrets and variables → Actions 里配好：
+#   CLOUDFLARE_API_TOKEN   （Cloudflare 后台 → My Profile → API Tokens → 模板选 "Edit Cloudflare Workers"）
+#   CLOUDFLARE_ACCOUNT_ID  （Cloudflare 后台右侧栏那一串 Account ID）
+# ENCRYPT_KEY 不用在这里配 —— 它必须以 Worker Secret 的形式存在（node deploy.mjs 会帮你设），
+# 放在 Actions 里只会变成普通变量，而且会出现在构建日志里。
+#
+# 只想正常用的话，**不需要**这个工作流：本地跑 node deploy.mjs 更简单。
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check = 只做部署前检查（dry-run）；deploy = 真的发布到线上'
+        type: choice
+        options: [check, deploy]
+        default: check
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 自检
+        run: node tools/verify.mjs
+
+      - name: 检查 wrangler 配置与登录状态
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::还没配 CLOUDFLARE_API_TOKEN，看本文件顶部的说明"
+            exit 1
+          fi
+          node deploy.mjs --check
+
+      - name: 部署（dry-run，只在本地打包不发布）
+        if: inputs.mode == 'check'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@latest deploy --dry-run --outdir=dist
+
+      - name: 部署（真发布）
+        if: inputs.mode == 'deploy'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --yes wrangler@latest deploy

@@ -1,0 +1,50 @@
+name: Release
+
+# 推一个形如 v2.11.0 的 tag，就会自动：复跑自检 → 校验 tag 和代码里的版本号一致 →
+# 打发布包 → 传成 GitHub Release（Release 说明自动按提交生成，再手动补两句即可）。
+#
+# 本地发版请用 node tools/release.mjs，它会把这些都串起来并提示打 tag。
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 自检（node tools/verify.mjs）
+        run: node tools/verify.mjs
+
+      - name: 校验 tag 与 src/version.js 里的版本号一致
+        run: |
+          v=$(node -e "import('./src/version.js').then(m => console.log(m.PANEL_VERSION))")
+          if [ "v$v" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} 与代码里的版本号 v$v 不一致（先跑 node tools/release.mjs 再打 tag）"
+            exit 1
+          fi
+          echo "版本号一致：v$v"
+
+      - name: 打发布包
+        run: node tools/pack-zip.mjs
+
+      - name: 上传到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          generate_release_notes: true
+          body: |
+            ## 怎么用
+
+            1. 下载下面的 `daily-checkin-panel-v*.zip`，解压；
+            2. 看 [docs/Cloudflare部署清单.md](../blob/main/docs/Cloudflare部署清单.md)（D1 名字、要配哪些变量）；
+            3. 解压后的目录里跑 `node deploy.mjs`，全程有中文提示。
+
+            更早的改动见 [CHANGELOG.md](../blob/main/CHANGELOG.md)。

@@ -1,0 +1,22 @@
+name: CI
+
+# 每次推送 / 提 PR 都跑一遍完整自检（语法、HTML 配对、DOM 引用、全部单测）。
+# 零第三方依赖，所以 CI 里只需要 Node，不用 npm install。
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: 自检（node tools/verify.mjs）
+        run: node tools/verify.mjs
+      - name: 试打一次发布包（确认打包脚本没坏）
+        run: node tools/pack-zip.mjs --out /tmp/release-check.zip
