@@ -36,14 +36,17 @@
 **第 3 步：接 GitHub 自动部署**
 
 1. 回到 **Workers & Pages**，点 **Create**
-2. 点 **Connect to Git**（不是 `Upload files`）
-3. 按提示授权 Cloudflare 访问你的 GitHub，选中你刚 Fork 的 `daily-checkin-panel` 仓库，点 **Begin setup**
-4. 配置页面：
-   - **Production branch**：填 `master`
-   - **Build command**：填 `npx wrangler deploy`
-   - **Deploy command**：留空（构建命令里已经包含了部署）
-   - 其他保持默认
-5. 点 **Save and Deploy**，等它跑完（第一次会失败，没关系，继续往下做）
+2. 点 **Continue with GitHub**（左上角那个）
+3. 按提示授权 Cloudflare 访问你的 GitHub，选中你刚 Fork 的 `daily-checkin-panel` 仓库，点下一步
+4. 「设置您的应用程序」页面这样填：
+   - **项目名称**：`daily-checkin-panel`（默认即可）
+   - **构建命令**：让它自动识别，留空也可以（这个项目不需要构建）
+   - **部署命令**：`npx wrangler deploy`
+   - **预览命令**：默认 `npx wrangler preview` 不用动
+   - **启用预览构建**：保持开启；**Protect with Cloudflare Access**：保持关闭
+5. 点右下角 **部署**，等它跑完
+
+> ⚠️ 第一次部署**可能会失败**，这是正常的——因为 D1 数据库还没绑定、`ENCRYPT_KEY` 还没设。没关系，继续往下做第 4、5 步，做完回来点一次 **Deploy**（或 **Retry deployment**）就行。
 
 ---
 
