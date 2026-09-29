@@ -4,6 +4,7 @@
 import { ensureSchema, getSetting, setSetting } from './db.js';
 import { hashPassword, verifyPassword, encryptJSON, decryptJSON, decryptJSONWith, accountKey, randomHex } from './crypto.js';
 import { handleExtZip } from './ext-zip.js';
+import { EXT_FILES } from './ext-files.js';
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { listCommunitySites, importSiteConfig, deleteCommunitySite, validateSiteConfig, makeCommunitySite, exportAccountConfig } from './community.js';
@@ -426,6 +427,17 @@ async function handleApi(req, env, url) {
     const deny = await extGuard();
     if (deny) return deny;
     return json({ ok: true, version: PANEL_VERSION, time: Date.now() });
+  }
+
+  // ---- 扩展最新版本号（弹窗里的更新按钮用：比对本地版本，有新版就提示下载）----
+  // 不需要 API Key：版本号不是敏感信息
+  if (path === '/api/external/ext-version' && method === 'GET') {
+    let ver = '';
+    try {
+      const m = JSON.parse(EXT_FILES['manifest.json'] || '{}');
+      ver = String(m.version || '');
+    } catch { /* 忽略 */ }
+    return json({ ok: true, version: ver });
   }
 
   // ---- 浏览器扩展：任务已并入「本地网络中继」，这里不再下发脚本 ----

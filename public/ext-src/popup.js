@@ -286,6 +286,74 @@ $('api-key').onchange = saveCfgNow;
 
 fillVersion();
 
+// ---------- 扩展更新检查 ----------
+// Chrome 不允许未上架的扩展自己静默更新，所以这里做「检查 + 一键下载」：
+// 有新版时显示下载按钮，用户解压覆盖后去 chrome://extensions 点「重新加载」即可。
+// 版本号比对：按点分割逐段比数字（"2.9" < "2.10" < "2.11"）。
+function cmpVer(a, b) {
+  const pa = String(a || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const pb = String(b || '').split('.').map((x) => parseInt(x, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return d;
+  }
+  return 0;
+}
+
+async function checkExtUpdate() {
+  let localVer = '';
+  try { localVer = String((chrome.runtime.getManifest() || {}).version || ''); } catch { /* 忽略 */ }
+  const btn = $('btn-update');
+  const tip = $('update-tip');
+  if (!localVer) return;
+  // 面板地址：优先用输入框里已填的，没有就用注入的默认值
+  let panelUrl = '';
+  try {
+    panelUrl = normalizePanelUrl($('panel-url').value);
+    if (!panelUrl && typeof DEFAULT_PANEL_URL !== 'undefined' && DEFAULT_PANEL_URL.startsWith('http')) {
+      panelUrl = normalizePanelUrl(DEFAULT_PANEL_URL);
+    }
+  } catch { /* 忽略 */ }
+  if (!panelUrl) return; // 没填面板地址就不检查
+  let remoteVer = '';
+  try {
+    const resp = await fetch(panelUrl + '/api/external/ext-version');
+    if (resp.ok) {
+      const data = await resp.json().catch(() => null);
+      remoteVer = String((data && data.version) || '');
+    }
+  } catch { /* 面板不可达就静默跳过 */ }
+  if (!remoteVer || cmpVer(remoteVer, localVer) <= 0) return; // 没有新版
+  // 有新版：显示更新按钮和提示
+  btn.style.display = 'inline-block';
+  tip.style.display = 'block';
+  tip.innerHTML = '';
+  const t1 = document.createElement('div');
+  t1.textContent = `发现新版本 v${remoteVer}（当前 v${localVer}）`;
+  tip.appendChild(t1);
+  const dl = document.createElement('button');
+  dl.className = 'dl-btn';
+  dl.textContent = '⬇️ 下载新版扩展';
+  dl.onclick = () => {
+    chrome.tabs.create({ url: panelUrl + '/cookie-helper-extension.zip' });
+    const t2 = document.createElement('div');
+    t2.style.marginTop = '6px';
+    t2.textContent = '下载后解压覆盖原文件夹，再去 chrome://extensions 点「重新加载」即可。';
+    // 只追加一次
+    if (!tip.querySelector('.done-tip')) {
+      t2.className = 'done-tip';
+      tip.appendChild(t2);
+    }
+  };
+  tip.appendChild(dl);
+  btn.onclick = () => {
+    tip.style.display = tip.style.display === 'none' ? 'block' : 'none';
+  };
+}
+
+checkExtUpdate();
+
 // 打开弹窗时顺手叫醒一次中继（后台常驻长轮询，本来就会自己跑）。
 // 以前这里还有个「立即执行待办签到」按钮——它会挂住弹窗、也让用户以为要手动点才干活，已删掉：
 // 面板点「执行」时后台会在 1 秒内接到单，不需要在弹窗上再点一次。
