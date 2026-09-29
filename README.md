@@ -12,90 +12,63 @@
 
 ---
 
-## 部署（Cloudflare）
+## 部署到 Cloudflare（纯网页，不用装任何东西）
 
-**准备**：一个 Cloudflare 账号（免费注册）、一个 GitHub 账号，大约 15 分钟。不用在电脑上装任何东西。
+**准备**：一个 Cloudflare 免费账号、一个 GitHub 账号、大约 20 分钟。**不用装 Node.js、不用命令行、不用买域名。**
 
----
+1. **把项目放进你的 GitHub**：打开本项目仓库 → 右上角 **Fork** → 得到你自己的仓库（后面 Cloudflare 从这里拉代码）。
+2. **建数据库**：Cloudflare 控制台 → **存储和数据库 → D1 SQL 数据库 → 创建** → 名字填 `daily-checkin-panel`
+   （**必须一模一样**，代码按这个名字找库）→ 建完进详情页，复制那串 **数据库 ID**（形如 `8f1a-…-e7f8` 的 UUID）。
+3. **把 ID 填回仓库**：回到你的 GitHub 仓库 → 打开 `wrangler.toml` → 点铅笔编辑 →
+   把 `database_id = "REPLACE_ME_WITH_YOUR_OWN_D1_ID"` 里的占位符换成刚才那串 → **Commit changes**。
+4. **建 Worker 并连接仓库**：Cloudflare 控制台 → **Workers 和 Pages → 创建应用程序 → 导入存储库（Import a repository）**
+   → 选你的 fork → 部署命令保持默认（`npx wrangler deploy`）→ **保存并部署**。
+   部署完会给你面板地址：`https://daily-checkin-panel.<你的子域>.workers.dev`，复制存好。
+5. **设加密密钥（Secret）**：Worker 详情 → **设置 → 变量和密钥 → 添加** → 类型选 **Secret** →
+   名称 `ENCRYPT_KEY` → 值填一段 32 字节的 base64 随机串 → 保存。
+   随机串哪来：任意浏览器按 F12 → Console 粘贴
+   `btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))` 回车，输出那串就是
+   （**丢了就解不开已存的 Cookie**，记到密码管理器里）。设完在 Worker 页点一次 **重新部署** 生效。
 
-**第 1 步：把代码弄到你自己的 GitHub**
+> 以后项目更新了：在你 fork 的仓库点 **Sync fork** → Cloudflare 自动重新部署，数据库里的数据不受影响。
+> 每一项「叫什么名字、填什么值」的完整对照表 → [Cloudflare 部署清单](docs/Cloudflare部署清单.md)。
 
-打开本仓库页面，点右上角 **Fork** → 直接点 **Create fork**。之后你就有了一份完全属于你的代码副本。
+<details>
+<summary><b>备用：命令行一键部署</b>（电脑上装了 Node.js 的话更快）</summary>
 
----
+```bash
+node deploy.mjs
+```
 
-**第 2 步：建 D1 数据库**
+它会按顺序帮你：检查环境 → 登录 Cloudflare → 建免费数据库并自动写进 `wrangler.toml` →
+生成加密密钥 → 部署前把关 → 部署 → **当场验收**（首页能不能开、数据库通不通，哪项没过会直接告诉你敲哪几条命令）。
+只想先体检、不发布：`node deploy.mjs --check`。
 
-1. 打开 [Cloudflare 控制台](https://dash.cloudflare.com/)，左侧菜单点 **Workers & Pages**
-2. 点 **D1**（如果没看到，先点一下左侧的 `Storage & Databases`）
-3. 点 **Create**，在 `Database name` 里填 `daily-checkin-panel`，点 **Create**
-4. 建好后点进这个数据库，复制 **Database ID**（形如 `8f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8` 的一串字符），先粘到记事本备用
+</details>
 
----
-
-**第 3 步：接 GitHub 自动部署**
-
-1. 回到 **Workers & Pages**，点 **Create**
-2. 点 **Continue with GitHub**（左上角那个）
-3. 按提示授权 Cloudflare 访问你的 GitHub，选中你刚 Fork 的 `daily-checkin-panel` 仓库，点下一步
-4. 「设置您的应用程序」页面这样填：
-   - **项目名称**：`daily-checkin-panel`（默认即可）
-   - **构建命令**：让它自动识别，留空也可以（这个项目不需要构建）
-   - **部署命令**：`npx wrangler deploy`
-   - **预览命令**：默认 `npx wrangler preview` 不用动
-   - **启用预览构建**：保持开启；**Protect with Cloudflare Access**：保持关闭
-5. 点右下角 **部署**，等它跑完
-
-> ⚠️ 第一次部署**可能会失败**，这是正常的——因为 D1 数据库还没绑定、`ENCRYPT_KEY` 还没设。没关系，继续往下做第 4、5 步，做完回来点一次 **Deploy**（或 **Retry deployment**）就行。
-
----
-
-**第 4 步：绑定数据库**
-
-1. 点进刚建好的 Worker，顶部点 **Settings**
-2. 左侧找到 **Bindings**，点 **Add binding**
-3. 类型选 **D1 database**，填：
-   - **Variable name**：`DB`（⚠️ 必须一字不差叫这个，代码里写的是 `env.DB`，改了就连不上库）
-   - **D1 database**：下拉选中第 2 步建的 `daily-checkin-panel`
-4. 点 **Add binding**
-
-> 备选做法：把第 2 步复制的 Database ID 填进仓库 `wrangler.toml` 的 `database_id` 那一行再推送，效果一样。仓库里默认是占位符 `REPLACE_ME_WITH_YOUR_OWN_D1_ID`，不填的话就用上面的绑定方式。
+想一步步手动做、或部署报错要弄清原因 → [详细手册](docs/详细手册.md)。
 
 ---
 
-**第 5 步：设置加密密钥 ENCRYPT_KEY**
+## 部署完还要做 4 件事
 
-1. 还在 Worker 的 **Settings** 里，左侧点 **Variables and Secrets**
-2. 点 **Add**，在弹窗里：
-   - **Type**：选 **Secret**（⚠️ 一定要选 Secret，不要选 Text。Secret 是加密存储的，Text 会以明文显示在页面上）
-   - **Variable name**：填 `ENCRYPT_KEY`（⚠️ 大小写一字不差）
-   - **Value**：填一串 32 字节的 base64 字符串，形如 `zB2sJ9kQ7xVmP3nR8tY5wE2uI6oL4aS1dF0gH=`（44 个字符，末尾通常有个 `=`）
-     - 怎么生成：在任意 Linux/macOS 终端跑 `openssl rand -base64 32`，复制输出
-     - 没终端？打开 [https://generate-secret.vercel.app/32](https://generate-secret.vercel.app/32) 点生成，复制结果
-3. 点 **Save**
+**1. 打开面板设置管理密码**（至少 8 位）。⚠️ 记到密码管理器里，忘了没法找回。
 
-⚠️ 这把钥匙丢了或换了，已存的账号 Cookie 就解不开了，只能重新录入。**记到密码管理器里，不要删除它。**
+**2. 生成扩展的 API Key**：设置 →「🔌 浏览器扩展」→ **🎲 重新生成 API Key**。
+⚠️ 这串 Key **只在生成那一刻显示一次**，页面上没有「查看」。生成后马上点 **📋 复制**，粘进扩展弹窗；
+忘了就再生成一把（旧的立刻失效）。
 
----
+**3. 装浏览器扩展**：同一张卡点 **⬇️ 下载 签到面板助手** → 解压到固定文件夹（**别删别移动**）
+→ `chrome://extensions` 打开**开发者模式** → **加载已解压的扩展程序** 选那个**文件夹本身**
+→ 点 🍪 图标填 API Key → **🔌 面板连接检查**显示「连接正常」即成功。
+（下载包**已自动写好你现在的面板地址**，不用手抄；面板里的「安装步骤」折叠块有同样的 4 步。）
 
-**第 6 步：重新部署并打开面板**
+**4. 加第一个账号**：打开目标网站**手动登录** → 停在网站上，点扩展 **📋 一键复制全部信息（含 UA）**
+→ 面板「添加 / 更新账号」→「📋 粘贴即保存」里 **Ctrl+V** → 面板自动认站点、填信息、立刻试跑。
+要加第二个网站就再来一遍这 4 步。
 
-1. 回到 Worker 页面，点右上角 **Deployments** → **Deploy**（或 **Retry deployment**），等状态变绿
-2. 点 **Visit**（或复制 `https://daily-checkin-panel.你的名字.workers.dev`），看到「设置管理密码」页面就是成功了
-3. 设一个至少 8 位的管理密码（⚠️ 记到密码管理器，忘了没法找回）
-
-**之后每次往 GitHub 推代码，Cloudflare 会自动重新部署**，什么都不用管。
-
----
-
-**部署完还要做 3 件事**（在面板网页里操作）：
-
-1. **生成扩展的 API Key**：设置 →「🔌 浏览器扩展」→ **🎲 重新生成 API Key** → 马上点 **📋 复制**（⚠️ 只显示一次，忘了就再生成一把，旧的立刻失效）
-2. **装浏览器扩展**：同一张卡点 **⬇️ 下载 签到面板助手** → 解压到固定文件夹 → `chrome://extensions` 开**开发者模式** → **加载已解压的扩展程序** → 点 🍪 图标填 API Key → **🔌 面板连接检查**显示「连接正常」
-3. **加第一个账号**：目标网站手动登录 → 点扩展 **📋 一键复制全部信息（含 UA）** → 面板「添加 / 更新账号」→「📋 粘贴即保存」→ Ctrl+V，面板自动认站点并试跑
-
-**对不上号时的速查** → [Cloudflare 部署清单](docs/Cloudflare部署清单.md)（D1 名、绑定名、变量名一张表）；
-**部署报错要弄清原因** → [详细手册](docs/详细手册.md)。
+> 同一张卡另一个标签 **🔍 Cookie 解析器**（默认就在那儿）：粘一串 Cookie 点「拆分看看」，
+> 逐段告诉你每段是什么、哪些是登录必需，**只看不存**；没问题再点「↗️ 填到粘贴区并保存」。
 
 ---
 

@@ -1,8 +1,8 @@
 # Cloudflare 部署清单：名字、绑定、变量各填什么
 
 这份文档只回答一件事：**在 Cloudflare 上到底要建什么、叫什么名字、哪些变量要填、填什么值。**
-照着 [README.md](../README.md) 的「部署（Cloudflare）」一步步点就行；
-想核对一遍，就照这张清单逐项对。
+推荐路线（[README.md](../README.md) 的「部署到 Cloudflare」纯网页版）里，1、2、3 项全部在网页上点出来；
+用 `node deploy.mjs` 的话脚本会自动做完 1、2、3；想手动部署、或者部署完想核对一遍，就照这张清单逐项对。
 
 > 一句话版本：**一个 Worker + 一个 D1 数据库 + 一把加密密钥（Secret）。**
 > 数据库名和绑定名不能改（要和 `wrangler.toml` 一致），`database_id` 和密钥值必须是你自己的。
@@ -31,11 +31,13 @@
 
 | 项目 | 填什么 | 说明 |
 |---|---|---|
-| 数据库名称 | `daily-checkin-panel` | `wrangler.toml` 的 `database_name`。**必须和这里一致**，`deploy.mjs` 就是按这个名字去建/去找的 |
+| 数据库名称 | `daily-checkin-panel` | `wrangler.toml` 的 `database_name`。**必须和这里一致**（网页部署也按这个名字对上），`deploy.mjs` 就是按这个名字去建/去找的 |
 | 绑定名（Binding） | `DB` | `wrangler.toml` 的 `binding = "DB"`。代码里写的是 `env.DB`，**不要改**，改了代码就找不到数据库 |
 | 数据库 ID | **你自己的那一串**，形如 `8f1a2b3c-4d5e-6f70-8192-a3b4c5d6e7f8` | `wrangler.toml` 的 `database_id`。仓库里是占位符 `REPLACE_ME_WITH_YOUR_OWN_D1_ID` |
 
-拿 `database_id` 的两种办法：
+网页部署拿 `database_id`：D1 数据库详情页里直接能看到/复制，不需要任何命令。
+
+拿 `database_id` 的两种命令行办法（用命令行部署时才需要）：
 
 ```bash
 # 新库（会直接打印 id，把那串 UUID 复制进 wrangler.toml）
@@ -141,7 +143,7 @@ npx wrangler@latest tail                    # 实时看 Worker 日志（排错�
 
 | 文件 | 内容 |
 |---|---|
-| [README.md](../README.md) | Cloudflare 部署步骤（给第一次用的人） |
+| [README.md](../README.md) | 纯网页部署逐步说明（给第一次用的人）；命令行一键部署收在折叠块里 |
 | [docs/详细手册.md](详细手册.md) | 每一步在干什么、每个字段什么意思、常见问题 |
 | [SECURITY.md](../SECURITY.md) | 密码 / Cookie 是怎么保护的，密钥为什么不能丢 |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 想加一个站点适配（社区共享） |

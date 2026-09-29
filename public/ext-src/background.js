@@ -478,6 +478,77 @@ async function existingAuthState(host, cookieStr) {
   return same ? 'same' : 'none';
 }
 
+// ============ 会话续命（alist 式）：把站点轮换后的新 Cookie 回写面板 ============
+//
+// alist 对网盘 token 的做法：请求过程中令牌被服务端轮换（refresh token rotation），
+// 就把新令牌当场写回存储，而不是等它过期后人工重新填。我们这里同理：
+// 签到过程本身会让站点下发新会话（Set-Cookie 换发登录名、WAF 换票），
+// 签完还把旧值留在面板里，等于让凭据「计划性报废」——过几天必然「登录已失效」。
+//
+// 规矩（和服务端 /api/external/creds-rotation 配套）：
+//   ① 只在「任务确实注入过凭据」的站点上做（浏览器里那份就是面板给的同一会话，才谈得上轮换）；
+//   ② 只把「登录名类」Cookie 的**值有变化**的条目报上去，整包不变就不发请求（省 D1 配额）；
+//   ③ 面板还会再做同域 + 内容两道校验，这里被拒就打日志，绝不重试（不是网络问题）。
+const ROTATION_SENSITIVE = /(_auth$|_auth|saltkey|^session|sessionid|passport|pwd|token)/i;
+
+// 采集某域名下浏览器 cookie jar 里的「登录名类」条目（名 -> 值）
+async function collectAuthCookies(host) {
+  const out = new Map();
+  if (!chrome.cookies || typeof chrome.cookies.getAll !== 'function' || !host) return out;
+  let list = [];
+  try { list = await chrome.cookies.getAll({ domain: host }) || []; } catch { list = []; }
+  // 与 collectCookies（popup）同一套兜底：url 查询能带上父域 Cookie
+  try {
+    const more = await chrome.cookies.getAll({ url: 'https://' + host + '/' }) || [];
+    for (const c of more) if (c && c.name && !out.has(c.name)) out.set(c.name, c);
+  } catch { /* 忽略 */ }
+  for (const c of list) if (c && c.name) out.set(c.name, c);
+  for (const [name, c] of Array.from(out)) {
+    if (!ROTATION_SENSITIVE.test(name)) out.delete(name);
+    else out.set(name, String(c.value || ''));
+  }
+  return out;
+}
+
+// 与面板库里的旧值比对：只有「同名不同值」才算轮换。返回 null 或 { changed: 'a=..; b=..' }
+function diffRotated(newMap, oldCookieStr) {
+  const oldMap = new Map();
+  for (const part of String(oldCookieStr || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) oldMap.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+  }
+  const changed = [];
+  for (const [name, val] of newMap) {
+    const old = oldMap.get(name);
+    if (old !== undefined && old !== val && val) changed.push(name + '=' + val);
+  }
+  return changed.length ? { changed: changed.join('; ') } : null;
+}
+
+// 签到结束后调用：发现轮换就回写面板（失败只打日志，不影响签到结果本身）
+async function reportCookieRotation(panelUrl, apiKey, job, host) {
+  try {
+    if (!panelUrl || !apiKey || !job || !job.inject_cookies || !job.cookie) return;
+    const fresh = await collectAuthCookies(host);
+    if (!fresh.size) return;
+    const d = diffRotated(fresh, job.cookie);
+    if (!d) return; // 没变化，一个请求都不发
+    const resp = await fetch(panelUrl + '/api/external/creds-rotation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+      body: JSON.stringify({ account_id: job.account_id, domain: 'https://' + host + '/', cookies: d.changed }),
+    });
+    if (resp.ok) {
+      const n = d.changed.split(';').length;
+      console.log('[签到面板] 检测到站点轮换了登录 Cookie，已把 ' + n + ' 条新值回写面板（' + host + '）');
+    } else {
+      console.log('[签到面板] Cookie 回写被面板拒绝（HTTP ' + resp.status + '），不影响签到结果');
+    }
+  } catch (e) {
+    console.log('[签到面板] Cookie 回写失败（不影响签到结果）：', String((e && e.message) || e).slice(0, 120));
+  }
+}
+
 async function injectCookies(domain, cookieStr) {
   const host = String(domain || '').replace(/^\./, '').trim().toLowerCase();
   if (!host || !cookieStr) return 0;
@@ -949,6 +1020,14 @@ async function runJobsOnce() {
     const r = await executeJob(job);
     console.log(`[签到面板] 结果：${r.status} - ${r.message}`);
     await reportResult(panelUrl, apiKey, job.account_id, r.status, r.message, r.durationMs);
+    // 会话续命：签到过程里站点可能已经换了新会话（Set-Cookie），把新值回写面板，
+    // 免得过几天「登录已失效」又要人工重抓（见 reportCookieRotation 顶部说明）。
+    // 只对「这次确实注入过凭据」的任务做 —— 浏览器里那份才确定是面板的同一会话。
+    if (job.inject_cookies && job.cookie) {
+      let rotHost = '';
+      try { rotHost = new URL(job.navigate_url || 'https://' + job.domain + '/').hostname.toLowerCase(); } catch { rotHost = ''; }
+      if (rotHost) await reportCookieRotation(panelUrl, apiKey, job, rotHost);
+    }
     // 任务之间稍作间隔
     await new Promise((r) => setTimeout(r, 2000));
   }

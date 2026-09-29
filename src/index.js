@@ -324,6 +324,65 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
+  // ---- 会话续命（alist 式）：扩展签到完，把浏览器里被站点轮换过的新 Cookie 回写面板 ----
+  // alist 对网盘 token 的做法：请求过程中令牌被轮换（refresh token rotation），
+  // 就把新令牌**当场写回存储**，而不是等它过期后人工重新填。
+  // 我们这里同理：签到过程本身会让站点下发新会话（Set-Cookie / WAF 票 / 重发的登录名），
+  // 签完还带着旧值存库里，等于让凭据「计划性报废」。这里给扩展一条**最小权限的回写通道**：
+  //   ① 只改 cookie 字段（user_agent / localStorage 等其余凭据一律不碰）；
+  //   ② 回写的域必须与账号站点同域（防一把被偷的 Key 拿别的站的 Cookie 污染账号）；
+  //   ③ 内容与库里现有的一致或没有登录名时拒绝（噪音与降级都不要）。
+  if (path === '/api/external/creds-rotation' && method === 'POST') {
+    const deny = await extGuard();
+    if (deny) return deny;
+    const { account_id, domain, cookies } = await readBody(req);
+    const acc = await env.DB.prepare('SELECT id, site, creds FROM accounts WHERE id = ?').bind(Number(account_id)).first();
+    if (!acc) return json({ error: '账号不存在' }, 404);
+    const newCookie = String(cookies || '').trim();
+    if (!newCookie) return json({ error: '没有可回写的 Cookie' }, 400);
+    if (newCookie.length > 32 * 1024) return json({ error: 'Cookie 内容过大（超过 32KB）' }, 413);
+    // 同域校验：账号站点登记的域（含社区站点）。拿不到登记域的自定义站点不限制（与任务下发同一套规则）。
+    const site = getSite(acc.site, await loadCustomSites(env));
+    const declared = String((site && site.domain) || '').replace(/^www\./, '').toLowerCase();
+    if (declared) {
+      let host = '';
+      try { host = new URL(String(domain || '')).hostname.toLowerCase(); } catch { host = ''; }
+      const hostOk = host && (host === declared || host.endsWith('.' + declared) || declared.endsWith('.' + host));
+      if (!hostOk) return json({ error: '回写的 Cookie 域与账号站点不一致，已拒绝' }, 400);
+    }
+    // 只认「真的带登录名的 Cookie」；与现有值一致就拒，免得每次签到都白写一遍库（D1 写有配额）。
+    const pickNames = (str) => {
+      const map = new Map();
+      for (const part of String(str || '').split(';')) {
+        const i = part.indexOf('=');
+        if (i > 0) map.set(part.slice(0, i).trim(), part.slice(i + 1).trim());
+      }
+      return map;
+    };
+    const SENSITIVE = /(_auth$|_auth|saltkey|^session|sessionid|passport|pwd|token)/i;
+    const oldCreds = await decryptJSON(env, env.DB, acc.creds).catch(() => ({}));
+    const oldCookie = String((oldCreds && oldCreds.cookie) || '').trim();
+    const incoming = pickNames(newCookie);
+    // 先算合并后的结果：一模一样就是纯重复上报，直接 409（不管有没有登录名）。
+    // 只替换本次提交里出现的那几条，其余原样保留 —— 扩展抓的是整个 jar，
+    // 里头可能有站点临时票；那些不重要，但**别的凭据字段（UA 等）绝不能动**。
+    const merged = pickNames(oldCookie);
+    for (const [k, v] of incoming) merged.set(k, v);
+    const mergedStr = [...merged].map(([k, v]) => k + '=' + v).join('; ');
+    if (mergedStr === oldCookie) return json({ error: 'Cookie 没有变化，不需要回写' }, 409);
+    // 真有变化时，内容里必须认得登录名 —— 否则只是噪音（临时票/样式类），不值得写库。
+    const newName = [...incoming.keys()].find((n) => SENSITIVE.test(n)) || '';
+    if (!newName) return json({ error: '回写的内容里没有识别到登录名（auth/session/token 类 Cookie），已拒绝' }, 400);
+    const enc = await encryptJSON(env, env.DB, { ...(oldCreds || {}), cookie: mergedStr });
+    await env.DB.prepare('UPDATE accounts SET creds=?, updated_at=? WHERE id=?').bind(enc, Date.now(), acc.id).run();
+    // 记一条轻量痕迹：哪天凭据出问题，能看出「它被自动续过命」
+    let m = {};
+    try { m = JSON.parse((await env.DB.prepare('SELECT meta FROM accounts WHERE id = ?').bind(acc.id).first())?.meta || '{}'); } catch { m = {}; }
+    m.cred_rotated_at = Date.now();
+    await env.DB.prepare('UPDATE accounts SET meta=? WHERE id=?').bind(JSON.stringify(m), acc.id).run().catch(() => {});
+    return json({ ok: true, rotated: incoming.size, account_id: acc.id });
+  }
+
   // ---- 外部查询账号状态（VM 跑之前检查是否启用） ----
   const mExtAcc = path.match(/^\/api\/external\/account\/(\d+)$/);
   if (mExtAcc && method === 'GET') {

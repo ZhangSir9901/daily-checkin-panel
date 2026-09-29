@@ -103,6 +103,19 @@ function makeDb() {
           if (row) { row.last_status = st; row.last_msg = msg; row.last_detail = detail; row.last_run_at = at; row.meta = meta; row.updated_at = upd; }
           return { meta: { changes: 1 } };
         }
+        // 会话续命（/api/external/creds-rotation）写回的凭据 / meta 也要真的落库
+        if (/^UPDATE accounts SET creds/i.test(sql)) {
+          const [enc, upd, id] = a;
+          const row = accounts.find((x) => Number(x.id) === Number(id));
+          if (row) { row.creds = enc; row.updated_at = upd; }
+          return { meta: { changes: 1 } };
+        }
+        if (/^UPDATE accounts SET meta/i.test(sql)) {
+          const [meta, id] = a;
+          const row = accounts.find((x) => Number(x.id) === Number(id));
+          if (row) { row.meta = meta; }
+          return { meta: { changes: 1 } };
+        }
         if (/^(CREATE TABLE|CREATE INDEX|ALTER TABLE|DELETE FROM|UPDATE|PRAGMA)/i.test(sql)) return { meta: { changes: 0 } };
         if (/community_sites/i.test(sql)) {
           const [id, name, author, version, source, def, createdAt, updatedAt] = a;
@@ -132,6 +145,7 @@ function makeDb() {
 
 const worker = (await import('../src/index.js')).default;
 const { encryptJSON } = await import('../src/crypto.js');
+const { decryptJSON } = await import('../src/crypto.js');
 
 // 账号 1 的凭据要用真的加密格式填进去：假字符串会让 /api/accounts/1 这类接口
 // 在解密时抛「凭据数据格式异常」—— 那是数据损坏时的预期行为，不是接口 bug。
@@ -236,6 +250,7 @@ await t('外部接口（扩展用）没有 API Key 时一律 401 —— 一条�
     ['GET', '/api/external/account/1', undefined],
     ['GET', '/api/external/account/1/creds', undefined],
     ['GET', '/api/external/nodeseek-mode', undefined],
+    ['POST', '/api/external/creds-rotation', { account_id: 1, cookies: 'x=y' }],
     ['GET', '/api/external/ping', undefined],
     ['POST', '/api/external/commands/c_1/result', { ok: true }],
   ];
@@ -573,3 +588,60 @@ await t('定时任务：没有任何账号时也不许崩（心跳照写）', as
 });
 
 console.log(`\n${n} 组通过`);
+
+await t('会话续命（alist 式）：扩展回写轮换后的 Cookie，只换提交的那几条、其他凭据字段不动', async () => {
+  const db = makeDb();
+  await fillCreds(db);
+  const r = await call(db, 'POST', '/api/external/creds-rotation', {
+    key: KEY,
+    body: { account_id: 1, domain: 'https://www.52pojie.cn/', cookies: 'a=NEW; saltkey=ab12cd34' },
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.ok, true);
+  const row = db.accounts[0];
+  // fillCreds 里存的旧值是 a=b；回写后 a 应变成 NEW，saltkey 追加，site_url 必须原样保留
+  const saved = await decryptJSON(envFor(db), db, row.creds);
+  assert.match(String(saved.cookie), /(?:^|; )a=NEW(?:;|$)/, '轮换的那条要更新');
+  assert.match(String(saved.cookie), /(?:^|; )saltkey=ab12cd34(?:;|$)/, '新增的登录名要写入');
+  assert.equal(saved.site_url, 'https://www.52pojie.cn', '其他凭据字段绝不能动');
+  // 留痕
+  const meta = JSON.parse(row.meta || '{}');
+  assert.ok(meta.cred_rotated_at > 0, '要记 cred_rotated_at 痕迹');
+});
+
+await t('会话续命：域不同（拿别的站的 Cookie 污染账号）→ 400；内容没变化 → 409 不白写库', async () => {
+  const db = makeDb();
+  await fillCreds(db);
+  const before = db.accounts[0].creds;
+  const cross = await call(db, 'POST', '/api/external/creds-rotation', {
+    key: KEY,
+    body: { account_id: 1, domain: 'https://evil.example/', cookies: 'a=HACKED' },
+  });
+  assert.equal(cross.status, 400, '跨域回写要拒绝');
+  assert.equal(db.accounts[0].creds, before, '被拒后库里的凭据不能变');
+
+  const same = await call(db, 'POST', '/api/external/creds-rotation', {
+    key: KEY,
+    body: { account_id: 1, domain: 'https://www.52pojie.cn/', cookies: 'a=b; color_scheme=dark' },
+  });
+  assert.equal(same.status, 400, '没有登录名的回写要拒绝（纯噪音）');
+
+  const dup = await call(db, 'POST', '/api/external/creds-rotation', {
+    key: KEY,
+    body: { account_id: 1, domain: 'https://www.52pojie.cn/', cookies: 'a=b' },
+  });
+  assert.equal(dup.status, 409, '内容一致要 409，免得每次签到都白写一遍库');
+  assert.equal(db.accounts[0].creds, before, '409 时库里凭据不能变');
+});
+
+await t('会话续命：不存在账号 → 404；空 Cookie → 400', async () => {
+  const db = makeDb();
+  const r404 = await call(db, 'POST', '/api/external/creds-rotation', {
+    key: KEY, body: { account_id: 999, cookies: 'a=1' },
+  });
+  assert.equal(r404.status, 404);
+  const r400 = await call(db, 'POST', '/api/external/creds-rotation', {
+    key: KEY, body: { account_id: 1, cookies: '' },
+  });
+  assert.equal(r400.status, 400);
+});
