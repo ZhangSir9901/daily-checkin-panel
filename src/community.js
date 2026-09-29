@@ -254,7 +254,7 @@ export function makeCommunitySite(def) {
       if (vars.cookie && !vars.cookies) vars.cookies = vars.cookie;
       if (vars.user_agent && !vars.ua) vars.ua = vars.user_agent;
       const r = await runHttpSteps(steps, vars);
-      return { ok: true, message: r.message, detail: r.detail || '' };
+      return { ok: true, message: r.message, detail: r.detail || '', ...(r.cookieRefresh ? { cookieRefresh: r.cookieRefresh } : {}) };
     },
   };
 }

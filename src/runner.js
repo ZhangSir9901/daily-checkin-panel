@@ -1,7 +1,8 @@
 // 定时/手动执行引擎：遍历启用的账号 → 调用站点模块签到 → 写运行日志 → 推送汇总。
 
 import { ensureSchema, getSetting } from './db.js';
-import { decryptJSON } from './crypto.js';
+import { decryptJSON, encryptJSON } from './crypto.js';
+import { mergeCookies } from './lib/web.js';
 import { getSite } from './sites/index.js';
 import { listCommunitySites, makeCommunitySite } from './community.js';
 import { sendNotify } from './notify.js';
@@ -42,6 +43,8 @@ function withAccountLock(fn) {
 export function accountLockIdle() {
   return ACCOUNT_LOCK;
 }
+// 仅供测试：Set-Cookie 静默回写（生产代码走 runAccount 内部调用）
+export { applyCookieRefresh };
 
 // 执行路线的对外名字（面板「网站反馈」里会带上，排障时一眼能看出这次请求从哪个网络出去）
 export const ROUTE_NAME = { server: 'CF 直连', relay: '本地网络' };
@@ -111,6 +114,59 @@ async function queueBrowserJob(db, accountId) {
 // 状态列跨零点重置需要和签到时间用同一个时区，否则会差一天。
 async function scheduleTz(db) {
   try { return (await getSetting(db, 'schedule_tz')) || 'Asia/Shanghai'; } catch { return 'Asia/Shanghai'; }
+}
+
+// ---- Set-Cookie 静默回写（OpenList 式凭据续期）----
+// 站点模块签到成功后，可通过 res.cookieRefresh 带回网站轮换下来的新 Cookie
+//（"name=value; name2=value2"）。这里就地合并进账号凭据并加密存回 D1，
+// 下一次执行直接用新 Cookie —— 参考 OpenList quark 驱动静默回写 __puus 的做法。
+// 覆盖三种存法：① 标准 cookie 字段；② 自定义 HTTP 单步的 headers JSON 里的 Cookie 头；
+// ③ 多步/社区站点的每个步骤 headers 里带 Cookie 头的。
+// 只在调用方确认签到成功（res.ok）后调用：失败时的 Set-Cookie 可能是登出态，
+// 合并进去会把还能用的旧 Cookie 覆盖掉。
+// 返回 true = 凭据确实变了并已存库。
+async function applyCookieRefresh(env, db, account, creds, refresh) {
+  const fresh = String(refresh || '').trim();
+  if (!fresh) return false;
+  let changed = false;
+  // ① 标准 cookie 字段（v2ex / kanxue / misign 等）
+  if ('cookie' in creds || String(creds.cookie || '')) {
+    const oldC = String(creds.cookie || '');
+    const merged = mergeCookies(oldC, fresh);
+    if (merged !== oldC) { creds.cookie = merged; changed = true; }
+  }
+  // ②/③ headers JSON（自定义 HTTP 单步 / 多步 / 社区站点）
+  const mergeHeaderJson = (jsonStr) => {
+    let h;
+    try { h = JSON.parse(String(jsonStr || '')); } catch { return null; }
+    if (!h || typeof h !== 'object') return null;
+    const key = Object.keys(h).find((k) => String(k).toLowerCase() === 'cookie');
+    if (!key) return null;
+    const oldC = String(h[key] || '');
+    // 模板写法（{"Cookie": "{{cookie}}"）：真值在 creds.cookie 里，① 已处理，这里不动
+    if (oldC.includes('{{')) return null;
+    const merged = mergeCookies(oldC, fresh);
+    if (merged === oldC) return null;
+    h[key] = merged;
+    return JSON.stringify(h);
+  };
+  if (creds.headers) {
+    const nh = mergeHeaderJson(creds.headers);
+    if (nh) { creds.headers = nh; changed = true; }
+  }
+  if (Array.isArray(creds.steps)) {
+    for (const st of creds.steps) {
+      if (!st || !st.headers) continue;
+      const nh = mergeHeaderJson(st.headers);
+      if (nh) { st.headers = nh; changed = true; }
+    }
+  }
+  if (!changed) return false;
+  // 加密写回：失败就抛，调用方把失败记进 detail，但不影响本次签到结论
+  const enc = await encryptJSON(env, db, creds);
+  await db.prepare('UPDATE accounts SET creds = ?, updated_at = ? WHERE id = ?')
+    .bind(enc, Date.now(), account.id).run();
+  return true;
 }
 
 export async function runAccount(env, account) {
@@ -318,6 +374,17 @@ export async function runAccount(env, account) {
     if (lastErr) throw lastErr;
     // 记住真正走通的路线：下次优先用它，省掉一次注定失败的尝试
     if (usedRoute) meta.exec_route = usedRoute;
+    // Set-Cookie 静默回写：站点签到成功且网站轮换了 Cookie 时，就地合并存回 D1。
+    // 回写失败只记进 detail（下次还会再试），不影响本次签到结论。
+    if (res && res.ok && typeof res.cookieRefresh === 'string' && res.cookieRefresh.trim()) {
+      try {
+        if (await applyCookieRefresh(env, db, account, creds, res.cookieRefresh)) {
+          meta.cookie_refreshed_at = Date.now();
+        }
+      } catch (e) {
+        detail = (detail ? detail + '｜' : '') + 'Cookie 回写失败：' + String((e && e.message) || e).slice(0, 120);
+      }
+    }
     // 这次实际走的路线 + 换路记录。单独存在 meta 里（不塞进 detail）：
     // detail 是「网站原话」，要被反馈分类器读，混进我们自己的话会污染判断
     // （比如换路记录里的「超时」二字会让面板误报一条超时建议）。

@@ -2122,7 +2122,7 @@ async function applyPaste() {
     return;
   }
   renderPasteBreakdown(info, '⏳ 正在保存到面板并试跑一次…', chk);
-  const saved = await autoApplyCookies(chk.siteId, { cookies: info.cookie, domain: info.domain, userAgent: info.userAgent, cookieList: info.cookieList, localStorage: info.localStorage }, { inline: (text) => renderPasteBreakdown(info, text, chk) });
+  const saved = await autoApplyCookies(chk.siteId, { cookies: info.cookie, domain: info.domain, pageUrl: info.pageUrl, userAgent: info.userAgent, cookieList: info.cookieList, localStorage: info.localStorage }, { inline: (text) => renderPasteBreakdown(info, text, chk) });
   // 保存成功就把粘贴框清掉：内容已经进面板，留着只会让下一次误点又存一遍
   if (saved) clearPasteBox();
 }
@@ -2367,6 +2367,8 @@ async function autoApplyCookies(siteId, d) {
     if (fromLs) { auto[f.key] = fromLs; continue; }
     // 站点地址类字段：从粘过来的域名推（hutue.cn / dj.hutue.cn 这类一模块两站的关键）
     if (f.key === 'site_url' && d.domain) auto[f.key] = 'https://' + String(d.domain).replace(/^https?:\/\//i, '');
+    // 页面地址类字段：扩展采集时带上的完整页面地址，后续需要 Referer/Origin 校验的站点用它拼
+    if (f.key === 'page_url' && d.pageUrl) auto[f.key] = d.pageUrl;
   }
   const hasCookieField = (s.fields || []).some((f) => f.key === 'cookie');
   // 除 Cookie/UA 外还有别的必填项（如 Discuz 的论坛地址）时，交给原对话框补充

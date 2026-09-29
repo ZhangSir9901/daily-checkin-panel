@@ -8,6 +8,7 @@ const status = (msg, cls = '') => { const s = $('status'); s.textContent = msg; 
 
 let cookies = [];
 let domain = '';
+let pageUrl = '';
 
 // 标题里的版本号从 manifest 读：以前 popup 里写死「2.2」而 manifest 已经是 2.3，
 // 面板上显示「扩展在线 · v2.3」、扩展里写 2.2，看着像两个东西。
@@ -142,6 +143,10 @@ async function init() {
   }
   const url = new URL(tab.url);
   domain = url.hostname;
+  // pageUrl：当前页面的完整地址。OpenList 式凭据包需要它 —— 某些站点校验
+  // Cookie + UA + Referer 三件套，采集时把页面地址一起带上，后续站点需要
+  // Referer/Origin 时直接用它拼，不用再猜。
+  pageUrl = tab.url;
   $('domain').textContent = '当前网站：' + domain;
 
   // 获取页面真实的 User-Agent（吾爱等站点要求 UA 与 Cookie 配对）
@@ -197,6 +202,7 @@ function cookieString() {
 function payloadObj() {
   return {
     domain,
+    pageUrl, // 采集时的完整页面地址（供后续站点拼 Referer/Origin 用）
     userAgent: window._pageUA || '',
     cookies: cookieString(),
     // 附带可读的分解信息，面板据此清晰展示：每个 Cookie 的名称/域/是否 HttpOnly

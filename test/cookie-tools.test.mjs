@@ -136,6 +136,18 @@ t('识别：扩展「一键复制全部信息」的 JSON', () => {
   assert.equal(r.cookieList.length, 2);
 });
 
+t('识别：扩展 JSON 里的 pageUrl（采集时的完整页面地址）被带出来', () => {
+  const payload = JSON.stringify({
+    domain: 'www.v2ex.com', pageUrl: 'https://www.v2ex.com/mission/daily',
+    cookies: 'A2=abc', userAgent: 'UA/1',
+  });
+  const r = parsePasteText(payload);
+  assert.equal(r.pageUrl, 'https://www.v2ex.com/mission/daily');
+  // 旧版扩展没这个字段：解析不能炸，缺省为空
+  const r2 = parsePasteText(JSON.stringify({ domain: 'a.com', cookies: 'x=1' }));
+  assert.equal(r2.pageUrl, '');
+});
+
 t('识别：不认识的内容要报错，不能默默当成 Cookie', () => {
   assert.throws(() => parsePasteText('这是一段普通文字，没有任何等号'), /没看出这是 Cookie/);
   assert.throws(() => parsePasteText(''), /请先在目标网站/);

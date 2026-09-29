@@ -96,6 +96,7 @@ function parsePasteText(rawInput) {
     return {
       cookie: String(d.cookies),
       domain: String(d.domain || ''),
+      pageUrl: String(d.pageUrl || ''), // 扩展采集时的完整页面地址（后续站点拼 Referer/Origin 用）
       userAgent: String(d.userAgent || d.ua || ''),
       cookieList: Array.isArray(d.cookieList) ? d.cookieList : [],
       localStorage: d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {},

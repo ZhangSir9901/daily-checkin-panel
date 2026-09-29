@@ -11,6 +11,7 @@
 // extract 的点路径：如 data.token；也支持 data.list.0.id。
 
 import { classifySignal, needsHuman, OUTCOME, siteMessageFrom } from '../lib/signals.js';
+import { cookiesFrom, mergeCookies } from '../lib/web.js';
 
 function subst(str, vars) {
   return String(str == null ? '' : str).replace(/\{\{\s*([\w$]+)\s*\}\}/g, (_, k) =>
@@ -61,6 +62,9 @@ export async function runHttpSteps(steps, initialVars = {}) {
   if (!Array.isArray(steps) || steps.length === 0) throw new Error('至少需要一个步骤');
   const vars = { ...(initialVars || {}) };
   let lastText = ''; // 最后一步的原始响应：作为「网站反馈」原话展示
+  // 各步骤响应里网站轮换下来的 Cookie（Set-Cookie）：收集起来随结果带回，
+  // runner 会在签到成功时静默合并进账号凭据（OpenList 式凭据续期）。
+  let refreshed = '';
   for (let i = 0; i < steps.length; i++) {
     const st = steps[i] || {};
     const name = st.name || `步骤${i + 1}`;
@@ -81,6 +85,9 @@ export async function runHttpSteps(steps, initialVars = {}) {
     } catch (e) {
       throw new Error(`${name}：请求异常（${String((e && e.message) || e).slice(0, 120)}）`);
     }
+    // 收集网站轮换的 Cookie（直连模式下 getSetCookie 能拿到完整数组；读不到返回 ''）
+    const sc = cookiesFrom(res);
+    if (sc) refreshed = refreshed ? mergeCookies(refreshed, sc) : sc;
 
     // 提取变量供后续步骤使用
     if (st.extract && typeof st.extract === 'object') {
@@ -137,6 +144,8 @@ export async function runHttpSteps(steps, initialVars = {}) {
       : `${steps.length} 步全部成功${siteMsg ? `：${siteMsg}` : varDesc}`,
     vars,
     detail: lastText ? '网站返回：' + lastText.replace(/\s+/g, ' ').slice(0, 300) : '',
+    // 网站轮换下来的新 Cookie（"a=1; b=2"）：runner 在签到成功时静默合并存回 D1
+    ...(refreshed ? { cookieRefresh: refreshed } : {}),
   };
 }
 
@@ -171,6 +180,6 @@ export const httpTask = {
       headers: creds.headers, body: creds.body,
       expect_status: creds.expect_status, expect_contains: creds.expect_contains,
     }]);
-    return { ok: true, message: r.message.replace(/^1 步全部成功/, '请求成功') };
+    return { ok: true, message: r.message.replace(/^1 步全部成功/, '请求成功'), ...(r.cookieRefresh ? { cookieRefresh: r.cookieRefresh } : {}) };
   },
 };

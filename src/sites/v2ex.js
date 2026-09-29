@@ -6,6 +6,8 @@
 // ③ GET redeem 链接完成领取
 // 凭据：浏览器登录 v2ex.com 后复制的 Cookie（A2 / PB3_SESSION 等）。
 
+import { cookiesFrom, mergeCookies } from '../lib/web.js';
+
 const UA_DEFAULT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
 export const v2ex = {
@@ -62,10 +64,12 @@ export const v2ex = {
 
     const r1 = await fetch('https://www.v2ex.com/mission/daily', { headers });
     const t1 = await r1.text();
+    // 收集网站轮换的 Cookie：签到成功时由 runner 静默合并存回 D1（OpenList 式凭据续期）
+    let refreshed = cookiesFrom(r1);
 
     // 已领取
     if (t1.includes('每日登录奖励已领取')) {
-      return { ok: true, message: '今日已签到，无需重复' };
+      return { ok: true, message: '今日已签到，无需重复', ...(refreshed ? { cookieRefresh: refreshed } : {}) };
     }
     // 登录失效：被踢到登录页或提示重新登录
     if (r1.status === 403 || t1.includes('/signin') && t1.includes('请重新登录') || t1.includes('登录</a>') && !t1.includes('mission/daily/redeem')) {
@@ -80,8 +84,10 @@ export const v2ex = {
 
     const r2 = await fetch(`https://www.v2ex.com/mission/daily/redeem?once=${m[1]}`, { headers });
     const t2 = await r2.text();
+    const sc2 = cookiesFrom(r2);
+    if (sc2) refreshed = refreshed ? mergeCookies(refreshed, sc2) : sc2;
     if (t2.includes('每日登录奖励已领取') || t2.includes('已成功领取每日登录奖励')) {
-      return { ok: true, message: '签到成功：每日登录奖励已领取' };
+      return { ok: true, message: '签到成功：每日登录奖励已领取', ...(refreshed ? { cookieRefresh: refreshed } : {}) };
     }
     if (t2.includes('请重新登录') || r2.status === 403) {
       throw new Error('Cookie 已失效，请重新登录后复制新的 Cookie');

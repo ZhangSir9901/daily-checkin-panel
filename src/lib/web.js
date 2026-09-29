@@ -28,8 +28,9 @@ export function browserHeaders(pageUrl, extra = {}) {
 
 // 从响应收集 Cookie（Workers 下优先 getSetCookie；兜底单头）
 export function cookiesFrom(res) {
-  const out = [];
+  // 永远不抛错：读不到 Set-Cookie 就返回 ''，调用方无需再包 try/catch
   try {
+    const out = [];
     if (typeof res.headers.getSetCookie === 'function') {
       for (const c of res.headers.getSetCookie()) {
         const i = c.indexOf(';');
@@ -37,10 +38,10 @@ export function cookiesFrom(res) {
       }
       return out.join('; ');
     }
-  } catch { /* 忽略，走兜底 */ }
-  const c = res.headers.get('set-cookie');
-  if (c) out.push(c.split(';')[0]);
-  return out.join('; ');
+    const c = res.headers.get('set-cookie');
+    if (c) out.push(c.split(';')[0]);
+    return out.join('; ');
+  } catch { return ''; }
 }
 
 // 合并两次收集到的 Cookie（同名以后者为准）
