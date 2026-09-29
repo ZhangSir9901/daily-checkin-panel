@@ -118,7 +118,7 @@ export function buildZip(files) {
 // 避免 Key 随下载文件传播，也方便随时在面板里换 Key。
 export async function handleExtZip(req, env) {
   const url = new URL(req.url);
-  const origin = url.origin; // 当前面板地址，如 https://xxx.workers.dev
+  const origin = url.origin; // 当前面板地址，如 https://checkin.example.com
 
   const fileNames = ['manifest.json', 'popup.html', 'popup.js', 'background.js', 'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png'];
   const files = [];

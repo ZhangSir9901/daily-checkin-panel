@@ -1,7 +1,7 @@
 // 签到面板 Cookie 助手 - 后台执行引擎
 // 每小时从面板获取 browser 模式的待执行任务，在用户浏览器中完成签到（使用用户网络），上报结果。
 
-// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 https://your-panel.your-name.workers.dev 占位符）
+// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 __PANEL_URL__ 占位符）
 const DEFAULT_PANEL_URL = '__PANEL_URL__';
 
 const ALARM_NAME = 'checkin-jobs';

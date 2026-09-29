@@ -68,4 +68,11 @@ await t('扩展 zip：文件名带中文时置 UTF-8 标志位（否则 Windows 
   assert.match(res.headers.get('Content-Disposition') || '', /filename\*=UTF-8''/);
 });
 
+await t('扩展 zip：自定义域名请求时注入该域名、包里不许出现 workers.dev', async () => {
+  const { buf } = await zipFor('https://checkin.example.com');
+  assert.ok(has(buf, 'https://checkin.example.com'), '包里要注入请求时的自定义域名');
+  assert.ok(!has(buf, 'workers.dev'), '自定义域名部署的包里不许残留 workers.dev（否则用户会以为只能填 workers.dev）');
+  assert.ok(!has(buf, '__PANEL_URL__'), '占位符必须被替换掉');
+});
+
 console.log(`\n${n} 组通过`);

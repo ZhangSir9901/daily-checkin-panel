@@ -1,5 +1,5 @@
 // 签到面板 Cookie 助手 - popup.js
-// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 https://your-panel.your-name.workers.dev 占位符），
+// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 __PANEL_URL__ 占位符），
 // 扩展首次打开时自动带出，用户仍可手动修改。
 const DEFAULT_PANEL_URL = '__PANEL_URL__';
 // API Key 不从下载包里注入：由用户在面板「设置」页复制后手动填入，避免 Key 随文件传播、也方便随时更换。
@@ -61,7 +61,7 @@ function normalizePanelUrl(raw) {
 }
 function panelUrlProblem(url) {
   let u;
-  try { u = new URL(url); } catch { return '面板地址不是合法网址（示例：https://xxx.workers.dev）'; }
+  try { u = new URL(url); } catch { return '面板地址不是合法网址（示例：https://checkin.example.com）'; }
   const loop = u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname === '[::1]';
   if (u.protocol !== 'https:' && !loop) return '面板地址必须是 https —— 否则 Cookie 和 API Key 会明文上网';
   return '';
@@ -69,7 +69,7 @@ function panelUrlProblem(url) {
 // 读取输入框里的面板地址并校验；不合格时把提示写进状态栏并返回空串
 async function panelUrlFromInput(showErr = status) {
   let url = normalizePanelUrl($('panel-url').value);
-  if (!url) { showErr('请先填写签到面板地址（示例：https://xxx.workers.dev）', 'err'); return ''; }
+  if (!url) { showErr('请先填写签到面板地址（示例：https://checkin.example.com）', 'err'); return ''; }
   const problem = panelUrlProblem(url);
   if (problem) { showErr(problem, 'err'); return ''; }
   await writeCfg({ panelUrl: url });
