@@ -215,4 +215,40 @@ t('自动检查心跳：面板顶部能看出定时到底有没有在跑', () =>
   assert.doesNotMatch(html, /setInterval\(.*loadSchedule/, '轮询不能整块重渲染（那会把用户正开着的浮层关掉）');
 });
 
+t('执行：面板不许自己把慢请求提前掐断（否则会报一个假的「执行失败」）', () => {
+  // 线上后果：点「执行」/「全部执行」，60 秒到点面板自己 abort，弹一句「执行失败」；
+  // 而服务端还在跑，站点很可能已经签上了 —— 用户照着提示再点一次，就是第二轮重复请求。
+  assert.match(html, /const API_TIMEOUT_MS = 60000;/, '普通请求保留 60 秒默认超时');
+  assert.match(html, /const RUN_TIMEOUT_MS = 150000;/, '执行类请求要单独放开超时');
+  assert.match(html, /async function api\(path, method = 'GET', data, opts = \{\}\) \{/, 'api 要支持自定义超时');
+  assert.match(html, /opts\.timeoutMs/, '超时要能从调用处传进来');
+  assert.match(html, /err\.timedOut = true;/, '超时要能识别出来（好说清「不是失败，是没等到」）');
+  assert.equal((html.match(/r\.json\(\)\.catch\(\(\) => \(\{\}\)\)/g) || []).length, 0,
+    '不能再用 r.json() 吞掉非 JSON 的错误页（524 会变成一句看不懂的「请求失败 524」）');
+  assert.match(html, /raw\.trim\(\)\.startsWith\('\{'\)/, '要能分辨「JSON 错误」与「Cloudflare 的 HTML 错误页」');
+});
+
+t('执行：单个账号走同一条路径，结果口径完全一致', () => {
+  assert.match(html, /async function runOneAccount\(id, btn = null, quiet = false\)/, '要有 runOneAccount');
+  assert.match(html, /api\('\/api\/accounts\/' \+ id \+ '\/run', 'POST', undefined, \{ timeoutMs: RUN_TIMEOUT_MS \}\)/, '要用放开后的超时');
+  assert.match(html, /tb\.querySelectorAll\('\[data-run\]'\)\.forEach\(\(b\) => \(b\.onclick = \(\) => runOneAccount\(b\.dataset\.run, b\)\)\)/,
+    '行内「执行」按钮要调它');
+});
+
+t('全部执行：逐账号发请求，不再用一个请求串完全部', () => {
+  // /api/run-all 是「一个请求跑完所有账号」：每个账号最坏等 90 秒 →
+  // Cloudflare 单个请求约 100 秒上限（回 524）、浏览器 60 秒就断 —— 必然假失败。
+  const at = html.indexOf("$('btn-run-all').onclick");
+  assert.ok(at > 0, '找不到全部执行的处理器');
+  const seg = html.slice(at, at + 2200);
+  assert.doesNotMatch(seg, /api\('\/api\/run-all'/, '面板不该再调那个长请求');
+  assert.match(seg, /for \(let i = 0; i < list\.length; i\+\+\)/, '要逐账号循环');
+  assert.match(seg, /runOneAccount\(a\.id, null, true\)/, '循环里走同一条执行路径（只是不逐条弹提示）');
+  assert.match(seg, /执行中… \$\{i \+ 1\}\/\$\{list\.length\}/, '按钮上要能看到进度');
+  assert.match(seg, /ACCTS \|\| \[\]\)\.filter\(\(a\) => a\.enabled\)/, '只跑启用的账号');
+  assert.match(seg, /api\('\/api\/notify-report'/, '手动跑完仍要推日报（以前挂在 /api/run-all 上）');
+  // 推送失败不许影响面板上的结果
+  assert.match(seg, /api\('\/api\/notify-report'[\s\S]{0,120}?\.catch\(\(\) => \{\}\)/, '推送失败要静默');
+});
+
 console.log(`\n${n} 通过`);

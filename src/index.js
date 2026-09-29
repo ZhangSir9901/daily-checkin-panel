@@ -7,7 +7,7 @@ import { handleExtZip } from './ext-zip.js';
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { listCommunitySites, importSiteConfig, deleteCommunitySite, validateSiteConfig, makeCommunitySite, exportAccountConfig } from './community.js';
-import { getNotifyConfig, setNotifyConfig } from './notify.js';
+import { getNotifyConfig, setNotifyConfig, sendNotify } from './notify.js';
 import { probeSignEndpoints } from './probe.js';
 import { shouldRun, nextLastKey, validHour, validTime, validTz, accountHour, dayInTz, dayStartInTz } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
@@ -156,7 +156,14 @@ async function handleApi(req, env, url) {
     let rmeta = {};
     try { rmeta = JSON.parse(fullAcc?.meta || '{}'); } catch { /* 忽略 */ }
     if (validStatus === 'ok') {
-      rmeta.last_signin_date = dayInTz(new Date(), await scheduleTz(env.DB));
+      // 【「今天」要按站点自己的日界算】
+      // 糊涂鳄（WordPress + RiPro）按 UTC 计日 —— 北京时间 08:00 才是它的新的一天。
+      // 而账号行上「已签到/未签到」的判据是**站点日界**（前端 accountDay()，用 meta.dayTz）。
+      // 这里如果拿面板时区去写，就会出现「扩展刚报成功、那一行却写着未签到」的自相矛盾
+      // （北京时间 00:00~08:00 这一段最明显）。runner.js 一直用的是站点日界，这里以前漏了，
+      // 变成同一天有三套算法。
+      const siteDayTz = ((getSite(acc.site, await loadCustomSites(env)) || {}).dayTz) || '';
+      rmeta.last_signin_date = dayInTz(new Date(), siteDayTz || (await scheduleTz(env.DB)));
     }
     await env.DB.prepare('UPDATE accounts SET last_status=?, last_msg=?, last_detail=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
       .bind(validStatus, message || '', detail || '', Date.now(), JSON.stringify(rmeta), Date.now(), acc.id).run();
@@ -706,7 +713,11 @@ async function handleApi(req, env, url) {
   // 新增账号
   if (path === '/api/accounts' && method === 'POST') {
     const { name, site, creds } = await readBody(req);
-    const s = getSite(site);
+    // 【这里必须带上社区站点】/api/sites 是把内置站点 + 已导入的社区站点一起返回的，
+    // 所以面板的「站点」下拉里选得到社区站点、表单体检也过。
+    // 但这里以前只查内置的 —— 于是一保存就回「未知站点」，
+    // 也就是「社区站点看着能选，却永远加不进去」。其它几处（改账号、执行、导出）都带上了。
+    const s = getSite(site, await loadCustomSites(env));
     if (!s) return json({ error: '未知站点' }, 400);
     if (!name || !String(name).trim()) return json({ error: '请填写备注名' }, 400);
     for (const f of s.fields) {
@@ -878,9 +889,32 @@ async function handleApi(req, env, url) {
   }
 
   // 手动执行全部启用的账号
+  //
+  // 【注意：面板 UI 已经不再调它】一个请求串完全部账号在 Cloudflare 上是走不通的 ——
+  // 每个账号最坏要等 90 秒（本地中继），Cloudflare 对单个请求有约 100 秒的硬上限
+  // （超了直接回 524 页面），浏览器那边更是 60 秒就自己掐断。
+  // 面板现在改成逐账号发请求（见 public/index.html 的 btn-run-all），这里保留给 API 调用者。
   if (path === '/api/run-all' && method === 'POST') {
     const r = await runAll(env, { manual: true });
     return json({ ok: true, ...r });
+  }
+
+  // 手动「全部执行」的日报推送。
+  // 为什么单独一个接口：UI 改成逐账号执行后，就没有一个「跑完全部」的服务端请求了，
+  // 而推送日报原本挂在 /api/run-all 上 —— 不补这一下，开了推送的人手动跑一轮就收不到日报
+  // （等于把一个已经存在的功能悄悄弄丢）。正文由面板把每一行的真实结果传上来，服务端只负责发。
+  if (path === '/api/notify-report' && method === 'POST') {
+    const { ok = 0, fail = 0, skip = 0, lines = [] } = await readBody(req);
+    const list = (Array.isArray(lines) ? lines : []).slice(0, 60).map((l) => String(l).slice(0, 300));
+    const body = `手动任务完成：成功 ${Number(ok) || 0} 个，失败 ${Number(fail) || 0} 个`
+      + (Number(skip) ? `，跳过 ${Number(skip)} 个` : '')
+      + (list.length ? '\n' + list.join('\n') : '');
+    try {
+      await sendNotify(env, env.DB, '签到日报', body);
+    } catch (e) {
+      return json({ error: '推送失败：' + String((e && e.message) || e) }, 502);
+    }
+    return json({ ok: true });
   }
 
   // 签到接口自动探测：输入网站首页，自动寻找候选签到接口

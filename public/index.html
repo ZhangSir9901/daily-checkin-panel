@@ -993,10 +993,18 @@
 const $ = (id) => document.getElementById(id);
 let SITES = [];
 
-async function api(path, method = 'GET', data) {
-  // 60 秒超时，防止按钮卡在"执行中…"
+// 普通请求 60 秒足够（读列表、存账号）。但**签到的请求天生慢**：
+// 走本地中继时，服务端会等扩展最多 90 秒才判超时（见 src/lib/relay.js 的 waitRelayResult），
+// 所以「执行」类请求必须单独放开超时 —— 否则面板会在 60 秒时自己掐断，
+// 报一句「请求超时（60秒），请重试」，而服务端其实还在跑、站点很可能已经签上了；
+// 用户照着提示再点一次，等于对同一个账号再打一遍签到接口。
+const API_TIMEOUT_MS = 60000;
+const RUN_TIMEOUT_MS = 150000;
+
+async function api(path, method = 'GET', data, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs) || API_TIMEOUT_MS;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 60000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const r = await fetch(path, {
       method,
@@ -1004,12 +1012,31 @@ async function api(path, method = 'GET', data) {
       body: data ? JSON.stringify(data) : undefined,
       signal: ctrl.signal,
     });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || ('请求失败 ' + r.status));
+    // 先读文本再解析：出错时 Cloudflare 回的是 HTML 页面（比如 524），
+    // 直接 r.json() 只会得到「请求失败 524」这种看不出所以然的提示。
+    const raw = await r.text();
+    let j = {};
+    try { j = raw ? JSON.parse(raw) : {}; } catch { j = {}; }
+    if (!r.ok) {
+      // 524：Cloudflare 等源站超过 100 秒上限就回这个。它**不是**「签到失败」，
+      // 而是「没等到握手」—— 服务端很可能还在把这一轮跑完。
+      if (r.status === 524 || (r.status >= 500 && !raw.trim().startsWith('{'))) {
+        const err = new Error('面板服务器没有在 100 秒内回结果（HTTP ' + r.status + '）—— 签到可能已经在服务端跑完，稍后看这一行的最终状态');
+        err.timedOut = true;
+        throw err;
+      }
+      throw new Error(j.error || ('请求失败 ' + r.status));
+    }
     if (j.error) throw new Error(j.error);
     return j;
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('请求超时（60秒），请重试');
+    if (e.name === 'AbortError') {
+      // 如实说：是**面板这边**不再等了，不是服务端失败。
+      // 服务端会把最终结果写回账号行，所以下一步是「看结果」而不是「再点一次」。
+      const err = new Error(`等了 ${Math.round(timeoutMs / 1000)} 秒还没回结果 —— 服务器可能仍在执行，稍后看这一行的最终状态`);
+      err.timedOut = true;
+      throw err;
+    }
     throw e;
   } finally {
     clearTimeout(timer);
@@ -2516,15 +2543,7 @@ function bindRowActions(tb, accounts) {
       applyExecToRow(id);
     } catch (e) { toast('切换失败：' + e.message); b.disabled = false; b.innerHTML = orig; }
   }));
-  tb.querySelectorAll('[data-run]').forEach((b) => (b.onclick = async () => {
-    b.disabled = true; const orig = b.textContent; b.textContent = '执行中…';
-    try {
-      const r = await api('/api/accounts/' + b.dataset.run + '/run', 'POST');
-      toast((r.ok ? '成功：' : '失败：') + (r.result.message || ''));
-    } catch (e) { toast('执行失败：' + e.message); }
-    b.disabled = false; b.textContent = orig;
-    loadAccounts();
-  }));
+  tb.querySelectorAll('[data-run]').forEach((b) => (b.onclick = () => runOneAccount(b.dataset.run, b)));
   tb.querySelectorAll('[data-edit]').forEach((b) => (b.onclick = () => openModal(Number(b.dataset.edit))));
   tb.querySelectorAll('[data-del]').forEach((b) => (b.onclick = async () => {
     if (!confirm('确定删除该账号吗？')) return;
@@ -2550,14 +2569,63 @@ function applyExecToRow(accId) {
   bindRowActions(cell, ACCTS);
 }
 
-$('btn-run-all').onclick = async (e) => {
-  const b = e.target; b.disabled = true; b.textContent = '执行中…';
+// 执行一个账号（按钮上的「执行」和「全部执行」共用同一条路径，结果口径完全一致）。
+// 返回 { ok, result } 或 null（等待超时/出错）。
+// quiet=true 时不逐条弹提示（批量执行时用进度 + 末尾一句汇总就够了）。
+async function runOneAccount(id, btn = null, quiet = false) {
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '执行中…'; }
   try {
-    const r = await api('/api/run-all', 'POST');
-    toast(`完成：成功 ${r.ok} 个，失败 ${r.fail} 个`);
-  } catch (err) { toast('执行失败：' + err.message); }
-  b.disabled = false; b.textContent = '全部执行';
+    const r = await api('/api/accounts/' + id + '/run', 'POST', undefined, { timeoutMs: RUN_TIMEOUT_MS });
+    if (!quiet) toast((r.ok ? '成功：' : '失败：') + (r.result.message || ''), r.ok ? 2600 : 5000);
+    return r;
+  } catch (e) {
+    if (!quiet) toast(e.timedOut ? '等待超时：' + e.message : '执行失败：' + e.message, 5000);
+    return null;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+    loadAccounts();
+  }
+}
+
+// 全部执行：**逐账号发请求**，不再用一个请求串完全部。
+//
+// 【为什么必须这样】以前点一下就是 POST /api/run-all，那是「一个请求跑完所有账号」：
+//   · 每个账号最坏要等 90 秒（本地中继），五个账号就是七八分钟；
+//   · Cloudflare 对单个请求有约 100 秒的硬上限，超了直接回 524 页面；
+//   · 浏览器这边 60 秒就先掐断了。
+// 结果：用户看到「执行失败」，而服务端其实还在一个一个地签 —— 再点一次又是第二轮。
+// 逐账号发请求后，每个请求都远低于上限，进度和结果还能一行一行地出。
+$('btn-run-all').onclick = async () => {
+  const b = $('btn-run-all');
+  if (b.disabled) return;
+  const list = (ACCTS || []).filter((a) => a.enabled);
+  if (!list.length) { toast('没有启用的账号'); return; }
+  b.disabled = true;
+  let ok = 0;
+  let fail = 0;
+  let skip = 0;
+  const lines = [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    b.textContent = `执行中… ${i + 1}/${list.length}`;
+    const r = await runOneAccount(a.id, null, true);
+    // 口径要和单账号那一句（「成功：…／失败：…」）完全一致：都认服务端的 ok，
+    // 只有当它没带 status 时才回退到 ok。曾经这里只看 result.status ——
+    // 万一服务端少给一个字段，汇总就会变成「成功 0 个」（而每一行其实是成功的）。
+    const st = (r && r.result && r.result.status) || (r && r.ok ? 'ok' : 'fail');
+    const msg = String((r && r.result && r.result.message) || '（等不到结果）').slice(0, 200);
+    if (st === 'ok') ok++;
+    else if (st === 'skip') skip++;
+    else fail++;
+    lines.push(`${st === 'ok' ? '✅' : st === 'skip' ? '⏭️' : '❌'} ${a.name || a.site}：${msg}`);
+  }
+  b.disabled = false;
+  b.textContent = '全部执行';
+  toast(`完成：成功 ${ok} 个，失败 ${fail} 个` + (skip ? `，跳过 ${skip} 个` : ''), 4600);
   loadAccounts();
+  // 日报推送（开了推送才有动作；失败也不打扰用户，面板上的结果才是准的）
+  api('/api/notify-report', 'POST', { ok, fail, skip, lines }).catch(() => {});
 };
 
 // ---------- 账号弹窗 ----------

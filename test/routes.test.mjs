@@ -23,6 +23,7 @@ const SID = 's'.repeat(48);
 function makeDb() {
   const kv = new Map([['admin_hash', 'pbkdf2$fake'], ['relay_last_poll', String(Date.now())], ['external_api_key', KEY]]);
   const sessions = new Map([[SID, Date.now() + 864e5]]);
+  const community = []; // 已导入的社区站点（导入之后要能拿它建账号）
   const accounts = [{
     id: 1, name: '测试账号', site: 'wuaipojie', enabled: 1, creds: 'x', meta: '{}',
     last_status: 'ok', last_msg: 'm', last_detail: 'd', last_run_at: Date.now(),
@@ -43,7 +44,9 @@ function makeDb() {
           const e = sessions.get(stmt._args[0]);
           return e === undefined ? null : { expires_at: e };
         }
-        if (/^SELECT \* FROM accounts WHERE id = \?/i.test(sql)) {
+        // 账号行的各种取法（SELECT * / SELECT id, site, name / SELECT meta）：一律按 id 返回整行，
+        // 真 D1 只回被选中的列，但测试只关心值对不对，多给两列不影响。
+        if (/^SELECT [\s\S]* FROM accounts WHERE id = \?/i.test(sql)) {
           const r = accounts.find((x) => Number(x.id) === Number(stmt._args[0]));
           return r ? { ...r } : null;
         }
@@ -53,15 +56,36 @@ function makeDb() {
       },
       async all() {
         if (/^PRAGMA table_info/i.test(sql)) return { results: [] };
+        if (/FROM community_sites/i.test(sql)) return { results: community.map((x) => ({ ...x })) };
         if (/FROM accounts/i.test(sql)) return { results: accounts.map((x) => ({ ...x })) };
         return { results: [] };
       },
       async run() {
         const a = stmt._args;
+        // UPDATE accounts 要真的落进假库（外面上报写的是 meta.last_signin_date，不记就测不了）
+        if (/^UPDATE accounts SET last_status/i.test(sql)) {
+          const [st, msg, detail, at, meta, upd, id] = a;
+          const row = accounts.find((x) => Number(x.id) === Number(id));
+          if (row) { row.last_status = st; row.last_msg = msg; row.last_detail = detail; row.last_run_at = at; row.meta = meta; row.updated_at = upd; }
+          return { meta: { changes: 1 } };
+        }
         if (/^(CREATE TABLE|CREATE INDEX|ALTER TABLE|DELETE FROM|UPDATE|PRAGMA)/i.test(sql)) return { meta: { changes: 0 } };
+        if (/community_sites/i.test(sql)) {
+          const [id, name, author, version, source, def, createdAt, updatedAt] = a;
+          const i = community.findIndex((x) => x.id === id);
+          const row = { id, name, author, version, source, def, created_at: createdAt, updated_at: updatedAt };
+          if (i >= 0) community[i] = row; else community.push(row);
+          return { meta: { changes: 1 } };
+        }
         if (/^(INSERT INTO|INSERT OR REPLACE INTO|INSERT OR IGNORE INTO)/i.test(sql)) {
           if (/settings/i.test(sql)) { kv.set(a[0], a[1]); return { meta: { changes: 1 } }; }
           if (/sessions/i.test(sql)) { sessions.set(a[0], Number(a[2])); return { meta: { changes: 1 } }; }
+          if (/accounts/i.test(sql)) {
+            // 真 D1 会回 last_row_id，面板就是拿它去「试跑」的
+            const id = Math.max(0, ...accounts.map((x) => Number(x.id))) + 1;
+            accounts.push({ id, name: a[0], site: a[1], creds: a[2], enabled: a[3] || 1, meta: '{}', created_at: a[4], updated_at: a[5] });
+            return { meta: { changes: 1, last_row_id: id } };
+          }
           return { meta: { changes: 1 } };
         }
         return { meta: { changes: 0 } };
@@ -135,6 +159,7 @@ const ADMIN_ROUTES = [
   ['POST', '/api/sites/community/check', { def: {} }],
   ['PUT', '/api/sites/community/author', { author: 'me' }],
   ['GET', '/api/accounts/1/run-log', undefined],
+  ['POST', '/api/notify-report', { ok: 1, fail: 0, lines: ['✅ 测试账号：今日已签到'] }],
 ];
 
 await t('管理接口：没登录一律 401（不许 500，也不许悄悄放行）', async () => {
@@ -191,6 +216,81 @@ await t('扩展轮询带上版本号时，面板会记下来（用于显示「�
   const r = await call(db, 'GET', '/api/external/relay-pending?wait=0&v=2.8', { key: KEY });
   assert.ok([200, 204].includes(r.status), '带 Key 时应正常返回，实际 ' + r.status);
   assert.equal(db.kv.get('relay_version'), '2.8', '版本号要落库（面板顶部那行靠它）');
+});
+
+await t('手动日报推送接口：登录后可调，参数再脏也不许抛（正文由面板传上来）', async () => {
+  const db = makeDb();
+  const r1 = await call(db, 'POST', '/api/notify-report', { body: { ok: 2, fail: 1, skip: 1, lines: ['✅ a：x', '❌ b：y'] }, sid: SID });
+  assert.equal(r1.status, 200, JSON.stringify(r1.json));
+  assert.equal(r1.json.ok, true);
+  // 没开推送时应该静默成功（不是报错）——否则面板每次都会弹一个「推送失败」
+  const r2 = await call(db, 'POST', '/api/notify-report', { body: { lines: 'not-an-array' }, sid: SID });
+  assert.equal(r2.status, 200, JSON.stringify(r2.json));
+  const r3 = await call(db, 'POST', '/api/notify-report', { sid: SID }); // 一个字段都不给
+  assert.equal(r3.status, 200, JSON.stringify(r3.json));
+});
+
+await t('社区站点：导入之后真的能用它建账号（不许「选得到却存不进去」）', async () => {
+  // /api/sites 把社区站点也一并返回 → 面板下拉里选得到、表单体检也算通过，
+  // 但新建账号曾经只查内置站点，于点保存就回「未知站点」。
+  const db = makeDb();
+  const def = {
+    schema: 'daily-checkin-site/1', id: 'bbs_example_com', name: '示例论坛',
+    fields: [{ key: 'cookie', label: 'Cookie', required: true }],
+    steps: [{ url: 'https://bbs.example.com/sign', method: 'POST', expect_contains: '签到成功' }],
+  };
+  const imp = await call(db, 'POST', '/api/sites/community', { body: { config: JSON.stringify(def) }, sid: SID });
+  assert.equal(imp.status, 200, JSON.stringify(imp.json));
+  const sites = await call(db, 'GET', '/api/sites', { sid: SID });
+  assert.ok((sites.json.sites || []).some((s) => s.id === 'bbs_example_com'),
+    '站点列表里要能看到刚导入的社区站点（用户就是这么选到它的）');
+  const created = await call(db, 'POST', '/api/accounts', { body: { name: '示例', site: 'bbs_example_com', creds: { cookie: 'a=b' } }, sid: SID });
+  assert.equal(created.status, 200, '社区站点也要能建账号，实际：' + JSON.stringify(created.json));
+  assert.ok(created.json.id, '要返回新账号的 id（面板随后会拿它试跑）');
+  // 改账号那条路早就是带社区站点的，别哪天又被改回只查内置站点
+  const updated = await call(db, 'PUT', `/api/accounts/${created.json.id}`, { body: { name: '示例2', site: 'bbs_example_com', creds: { cookie: 'a=b' } }, sid: SID });
+  assert.equal(updated.status, 200, JSON.stringify(updated.json));
+});
+
+// 把「现在」钉在一个 UTC 与北京不在同一天的时刻：
+// 2026-09-29T18:00:00Z → 北京时间已经是 09-30 02:00，而 UTC 还是 09-29。
+// 糊涂鳄按 UTC 计日，所以它那边「今天」应该是 09-29。
+function withNow(iso, fn) {
+  const RealDate = Date;
+  const fixed = new RealDate(iso).getTime();
+  class FakeDate extends RealDate {
+    constructor(...args) { if (args.length === 0) super(fixed); else super(...args); }
+    static now() { return fixed; }
+  }
+  globalThis.Date = FakeDate;
+  return Promise.resolve().then(fn).finally(() => { globalThis.Date = RealDate; });
+}
+
+await t('扩展上报成功时，「今天」按**站点自己的日界**算（糊涂鳄是 UTC，不是面板时区）', async () => {
+  // 不这么算的后果：扩展刚报「签到成功」，账号行却写着「未签到」——
+  // 因为那一行的判据用的是站点日界（前端 accountDay），而入库的日期用的是面板时区。
+  const db = makeDb();
+  await fillCreds(db);
+  db.accounts[0].site = 'hutue'; // hutue 声明了 dayTz: 'UTC'
+  db.accounts[0].meta = '{}';
+  db.kv.set('schedule_tz', 'Asia/Shanghai');
+  let r;
+  await withNow('2026-09-29T18:00:00Z', async () => {
+    r = await call(db, 'POST', '/api/external/report', { key: KEY, body: { account_id: 1, status: 'ok', message: '今日已签到，请明日再来' } });
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const meta = JSON.parse(db.accounts[0].meta || '{}');
+  assert.equal(meta.last_signin_date, '2026-09-29', '糊涂鳄按 UTC 计日，此刻它的「今天」还是 09-29');
+  assert.equal(db.accounts[0].last_status, 'ok');
+});
+
+await t('扩展上报失败时不许写「今日已签到」', async () => {
+  const db = makeDb();
+  db.accounts[0].meta = '{}';
+  const r = await call(db, 'POST', '/api/external/report', { key: KEY, body: { account_id: 1, status: 'fail', message: '登录已失效' } });
+  assert.equal(r.status, 200);
+  assert.equal(JSON.parse(db.accounts[0].meta || '{}').last_signin_date, undefined, '失败不能冒充成功');
+  assert.equal(db.accounts[0].last_status, 'fail');
 });
 
 await t('定时任务：没有任何账号时也不许崩（心跳照写）', async () => {
