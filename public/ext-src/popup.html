@@ -3,33 +3,97 @@
 <head>
 <meta charset="utf-8">
 <style>
-  body { width: 320px; padding: 16px; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #0f1420; color: #e8edf7; }
-  h3 { margin: 0 0 12px; font-size: 15px; }
-  .muted { color: #8b98b3; font-size: 12px; line-height: 1.6; }
-  button { width: 100%; padding: 11px; margin: 6px 0; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
-  .primary { background: linear-gradient(135deg, #5b8cff, #4a7de8); color: #fff; }
-  .ghost { background: transparent; border: 1px solid #26314a; color: #e8edf7; }
-  button:hover { opacity: .9; }
+  * { box-sizing: border-box; }
+  /* 浅色主题（默认） */
+  :root {
+    --bg: #ffffff;
+    --bg-input: #f4f6fb;
+    --text: #1a2333;
+    --text-muted: #6b7690;
+    --border: #dfe5f0;
+    --border-strong: #c4cede;
+    --accent: #3b72e8;
+    --accent-hover: #2f62cf;
+    --accent-soft: rgba(59,114,232,.1);
+    --accent-text: #3b72e8;
+    --divider: #eceff5;
+    --warn-bg: rgba(176,116,0,.08);
+    --warn-border: rgba(176,116,0,.3);
+    --warn-text: #8a5f00;
+    --ok: #1a9e54;
+    --err: #d64545;
+  }
+  /* 深色主题：跟随系统 */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1420;
+      --bg-input: #0d1322;
+      --text: #e8edf7;
+      --text-muted: #8b98b3;
+      --border: #26314a;
+      --border-strong: #35436a;
+      --accent: #5b8cff;
+      --accent-hover: #4a7de8;
+      --accent-soft: rgba(91,140,255,.12);
+      --accent-text: #7aa5ff;
+      --divider: #1c2538;
+      --warn-bg: rgba(255,176,32,.08);
+      --warn-border: rgba(255,176,32,.25);
+      --warn-text: #e8c07a;
+      --ok: #3ddc84;
+      --err: #ff6b6b;
+    }
+  }
+  body { width: 320px; padding: 16px; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+  .header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .header h3 { margin: 0; font-size: 15px; font-weight: 700; }
+  .header .ver { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+  .update-btn { margin-left: auto; width: auto; padding: 4px 10px; margin-bottom: 0; font-size: 12px; font-weight: 500; background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent-text); border-radius: 12px; cursor: pointer; }
+  .update-btn:hover { filter: brightness(1.08); }
+  .update-tip { font-size: 12px; line-height: 1.6; margin: 0 0 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); border: 1px solid var(--warn-border); color: var(--warn-text); }
+  .update-tip .dl-btn { display: inline-block; margin-top: 6px; padding: 6px 14px; background: var(--accent); color: #fff; border-radius: 6px; font-weight: 600; cursor: pointer; border: 0; font-size: 13px; }
+  .update-tip .dl-btn:hover { background: var(--accent-hover); }
+  .domain { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px; word-break: break-all; }
+  .domain .count { display: inline-block; background: var(--accent-soft); color: var(--accent-text); padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-left: 4px; }
+  /* 按钮统一：都是描边风格，主按钮用强调色描边+淡底色，比次按钮更显眼 */
+  button { width: 100%; padding: 11px; margin: 0 0 8px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent; background: transparent; }
+  .primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+  .primary:hover { filter: brightness(1.08); border-color: var(--accent-hover); }
+  .secondary { border-color: var(--border-strong); color: var(--text); }
+  .secondary:hover { border-color: var(--accent); color: var(--accent-text); }
   button:disabled { opacity: .5; cursor: wait; }
-  #status { font-size: 12px; color: #8b98b3; margin-top: 8px; min-height: 18px; }
-  #status.ok { color: #3ddc84; }
-  #status.err { color: #ff6b6b; }
-  label { font-size: 12px; color: #8b98b3; display: block; margin: 10px 0 4px; }
-  input { width: 100%; box-sizing: border-box; background: #0d1322; border: 1px solid #26314a; color: #e8edf7; border-radius: 8px; padding: 9px 12px; font-size: 13px; }
-  .count { display: inline-block; background: rgba(91,140,255,.15); color: #7aa5ff; padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-left: 6px; }
+  .note { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin: 0 0 12px; }
+  .divider { border: 0; border-top: 1px solid var(--divider); margin: 4px 0 12px; }
+  .section-title { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
+  label { font-size: 12px; color: var(--text-muted); display: block; margin: 0 0 4px; }
+  input { width: 100%; background: var(--bg-input); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 10px; }
+  input:focus { outline: none; border-color: var(--accent); }
+  input::placeholder { color: var(--text-muted); opacity: .7; }
+  #status { font-size: 12px; color: var(--text-muted); margin-top: 4px; min-height: 18px; line-height: 1.5; }
+  #status.ok { color: var(--ok); }
+  #status.err { color: var(--err); }
 </style>
 </head>
 <body>
-  <h3>🖊️ 签到面板助手 <span class="muted" id="title-ver"></span> <span class="count" id="count"></span></h3>
-  <div class="muted" id="domain">正在读取当前网站…</div>
+  <div class="header">
+    <h3>🍪 签到面板助手</h3>
+    <span class="ver" id="title-ver"></span>
+    <button class="update-btn" id="btn-update" style="display:none" title="检查扩展更新">🔄 检查更新</button>
+  </div>
+  <div id="update-tip" class="update-tip" style="display:none"></div>
+  <div class="domain"><span id="domain">正在读取当前网站…</span><span class="count" id="count" style="display:none"></span></div>
+
   <button class="primary" id="btn-send">一键发送到签到面板</button>
-  <button class="ghost" id="btn-copy">📋 一键复制全部信息（含 UA）</button>
-  <div class="muted" style="margin-top:-2px">发送方式是「一次性交接码」：凭据不进地址栏，短码 5 分钟内有效、取一次即作废。</div>
-  <button class="ghost" id="btn-check-conn">🔌 面板连接检查</button>
+  <button class="secondary" id="btn-copy">📋 一键复制全部信息（含 UA）</button>
+  <p class="note">发送方式是「一次性交接码」：凭据不进地址栏，短码 5 分钟内有效、取一次即作废。</p>
+
+  <hr class="divider">
+  <div class="section-title">面板连接</div>
   <label>签到面板地址</label>
   <input id="panel-url" placeholder="https://daily-checkin-panel.xxx.workers.dev">
   <label>API Key（面板设置页获取）</label>
   <input id="api-key" type="password" placeholder="填入后面板点「执行」即用你的本机网络发请求">
+  <button class="secondary" id="btn-check-conn">🔌 检查连接</button>
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>

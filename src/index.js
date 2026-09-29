@@ -4,6 +4,7 @@
 import { ensureSchema, getSetting, setSetting } from './db.js';
 import { hashPassword, verifyPassword, encryptJSON, decryptJSON, decryptJSONWith, accountKey, randomHex } from './crypto.js';
 import { handleExtZip } from './ext-zip.js';
+import { EXT_FILES } from './ext-files.js';
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { listCommunitySites, importSiteConfig, deleteCommunitySite, validateSiteConfig, makeCommunitySite, exportAccountConfig } from './community.js';
@@ -222,8 +223,13 @@ async function handleApi(req, env, url) {
   const contentLength = Number(req.headers.get('Content-Length') || '0') || 0;
   if (contentLength > MAX_BODY_BYTES) return json({ error: '请求体过大（上限 512KB）' }, 413);
 
-  // 跨站写操作兜底：带了会话 Cookie 的浏览器请求，Origin 必须是本面板
-  if (method !== 'GET' && method !== 'HEAD' && parseCookies(req).sid && !sameOrigin(req, url)) {
+  // 跨站写操作兜底：带了会话 Cookie 的浏览器请求，Origin 必须是本面板。
+  // 【2026-09-29 修】/api/external/* 走 API Key 鉴权（自定义请求头，CSRF 伪造不了），
+  // 不适用这条会话 CSRF 检查：扩展回传中继结果时，浏览器会自动带上用户登录面板的
+  // sid 会话 Cookie，而扩展的 fetch 没有 Origin 头 —— 以前这里直接 403，
+  // 导致「中继结果回传失败（HTTP 403）」，签到了却写不回结果。
+  if (method !== 'GET' && method !== 'HEAD' && !path.startsWith('/api/external/')
+      && parseCookies(req).sid && !sameOrigin(req, url)) {
     return json({ error: '跨站请求被拒绝（Origin 与面板不一致）' }, 403);
   }
 
@@ -425,9 +431,18 @@ async function handleApi(req, env, url) {
   if (path === '/api/external/ping' && method === 'GET') {
     const deny = await extGuard();
     if (deny) return deny;
-    // 版本号取自 src/version.js（唯一真源）—— 以前这里写死 '2.2'，
-    // 扩展「面板连接检查」永远显示旧版本，升级了面板也看不出来。
     return json({ ok: true, version: PANEL_VERSION, time: Date.now() });
+  }
+
+  // ---- 扩展最新版本号（弹窗里的更新按钮用：比对本地版本，有新版就提示下载）----
+  // 不需要 API Key：版本号不是敏感信息
+  if (path === '/api/external/ext-version' && method === 'GET') {
+    let ver = '';
+    try {
+      const m = JSON.parse(EXT_FILES['manifest.json'] || '{}');
+      ver = String(m.version || '');
+    } catch { /* 忽略 */ }
+    return json({ ok: true, version: ver });
   }
 
   // ---- 浏览器扩展：任务已并入「本地网络中继」，这里不再下发脚本 ----
@@ -1377,7 +1392,8 @@ async function handleApi(req, env, url) {
     const version = (await getSetting(env.DB, 'relay_version')) || '';
     const { relayBacklog } = await import('./lib/relay.js');
     const backlog = await relayBacklog(env.DB);
-    return json({ online, last_poll: last, version, backlog });
+    const latestVersion = (() => { try { return String(JSON.parse(EXT_FILES['manifest.json'] || '{}').version || ''); } catch { return ''; } })();
+    return json({ online, last_poll: last, version, latest_version: latestVersion, backlog });
   }
 
   // 修改管理密码
@@ -1412,6 +1428,7 @@ async function handleApi(req, env, url) {
       online: !!lastSeen && Date.now() - lastSeen < 120000,
       last_seen_ago_sec: lastSeen ? Math.floor((Date.now() - lastSeen) / 1000) : null,
       version: info.version || '',
+      latest_version: (() => { try { return String(JSON.parse(EXT_FILES['manifest.json'] || '{}').version || ''); } catch { return ''; } })(),
       ua: info.ua || '',
       capabilities: info.capabilities || [],
       signed_recently: !!lastSigned && Date.now() - lastSigned < 600000,

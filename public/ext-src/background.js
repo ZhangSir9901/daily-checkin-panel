@@ -99,6 +99,7 @@ async function getConfig() {
 // 从面板获取待执行任务
 async function fetchJobs(panelUrl, apiKey) {
   const resp = await fetch(panelUrl + '/api/external/browser-jobs', {
+    credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie（避免 CSRF 检查误伤）
     headers: { 'X-Api-Key': apiKey },
   });
   if (!resp.ok) throw new Error('获取任务失败：HTTP ' + resp.status);
@@ -534,6 +535,7 @@ async function reportCookieRotation(panelUrl, apiKey, job, host) {
     const d = diffRotated(fresh, job.cookie);
     if (!d) return; // 没变化，一个请求都不发
     const resp = await fetch(panelUrl + '/api/external/creds-rotation', {
+      credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
       body: JSON.stringify({ account_id: job.account_id, domain: 'https://' + host + '/', cookies: d.changed }),
@@ -1082,6 +1084,7 @@ async function fetchRelayJobs(panelUrl, apiKey, waitMs = RELAY_LONGPOLL_MS) {
   let ver = '';
   try { ver = (chrome.runtime.getManifest() || {}).version || ''; } catch { /* 忽略 */ }
   const resp = await fetch(panelUrl + '/api/external/relay-pending?wait=' + waitMs + (ver ? '&v=' + encodeURIComponent(ver) : ''), {
+    credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie
     headers: { 'X-Api-Key': apiKey },
   });
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -1110,6 +1113,7 @@ async function submitRelayResult(panelUrl, apiKey, jobId, result) {
   for (let i = 0; i < 3; i++) {
     try {
       const resp = await fetch(panelUrl + '/api/external/relay/' + jobId + '/result', {
+        credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie（2026-09-29：带 sid 会被面板 CSRF 检查 403）
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
         body,
@@ -1198,6 +1202,9 @@ function sanitizeHeaders(raw) {
 // 只有主站的 robots.txt / portal.php / home.php 全部超时）。
 // 原因是挑战/验证脚本在后台标签里被节流，服务端一直等不到「验证完成」，连接就不回包。
 // 所以：第一次用短超时快速试探；若超时，就把标签**激活到前台**再试一次，跑完把焦点还给用户。
+// 【2026-09-29】绝大多数站点只是普通的 Cookie API 请求，不需要标签页。
+// 改成：优先在 service worker 里直接 fetch（<all_urls> 权限 + credentials:include 会自动带 Cookie，
+// 不开任何标签页）；只有直接 fetch 超时/失败、或任务显式要求前台时，才回退到标签页路径。
 async function executeRelayJob(job) {
   // 三道闸门（见上面说明）：不合法的任务直接回传错误，不照做
   const bad = checkRelayJob(job);
@@ -1206,6 +1213,80 @@ async function executeRelayJob(job) {
   const domain = url.hostname;
   const method = String(job.method || 'GET').toUpperCase();
   const reqHeaders = sanitizeHeaders(job.headers);
+  const needsForeground = !!(job.options && job.options.foreground);
+
+  // 纯 fetch 实现：service worker 里直接跑，不依赖任何标签页/DOM。
+  // （原来是包在 executeScript 里丢进标签页执行的，逻辑一字未动，只是换了个运行位置。）
+  const directFetch = async (url, method, headers, bodyB64, options, timeoutMs, maxBytes) => {
+    const b64ToBytes = (b64) => {
+      const s = atob(b64);
+      const arr = new Uint8Array(s.length);
+      for (let i = 0; i < s.length; i++) arr[i] = s.charCodeAt(i);
+      return arr;
+    };
+    const bytesToB64 = (bytes) => {
+      let s = '';
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    };
+    const init = {
+      method,
+      headers,
+      credentials: 'include', // 始终携带用户 Cookie
+      redirect: options.redirect === 'manual' ? 'follow' : (options.redirect || 'follow'),
+    };
+    if (bodyB64) init.body = b64ToBytes(bodyB64);
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    if (ctrl) init.signal = ctrl.signal;
+    let timer = null;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        try { if (ctrl) ctrl.abort(); } catch { /* 忽略 */ }
+        resolve({ timeout: true });
+      }, timeoutMs || 18000);
+    });
+    const call = (async () => {
+      const resp = await fetch(url, init);
+      const buf = new Uint8Array(await resp.arrayBuffer());
+      if (maxBytes && buf.length > maxBytes) return { tooLarge: buf.length, status: resp.status };
+      const h = {};
+      resp.headers.forEach((v, k) => { h[k] = v; });
+      return {
+        status: resp.status,
+        headers: h,
+        body_base64: bytesToB64(buf),
+        url: resp.url,
+      };
+    })();
+    try {
+      return await Promise.race([call, timeout]);
+    } finally {
+      clearTimeout(timer);
+      call.catch(() => {});
+    }
+  };
+
+  // 第一步：不开标签页，直接在 service worker 里试一次（短超时快速试探）。
+  // 任务显式要求前台（反爬挑战站）时跳过这步，直接走标签页。
+  if (!needsForeground) {
+    try {
+      const r = await directFetch(url.href, method, reqHeaders, job.body_base64 || null, job.options || {}, RELAY_FIRST_TRY_MS, RELAY_MAX_BYTES);
+      if (r && !r.timeout) {
+        if (r.tooLarge) {
+          return { error: `响应体过大（${Math.round(r.tooLarge / 1048576)}MB，上限 ${Math.round(RELAY_MAX_BYTES / 1048576)}MB），已放弃回传` };
+        }
+        const respHeaders = { ...(r.headers || {}), 'x-relay-url': r.url || job.url };
+        console.log('[签到面板] 中继请求直接完成（无标签页）：', method, url.hostname);
+        return { status: r.status, headers: respHeaders, body_base64: r.body_base64 };
+      }
+      console.log('[签到面板] 直接请求超时，回退到标签页重试：', url.hostname);
+    } catch (e) {
+      console.log('[签到面板] 直接请求失败，回退到标签页重试：', (e && e.message) || e);
+    }
+  }
+
+  // 第二步（回退）：走标签页执行（反爬挑战站需要真实页面环境）。
+  // 标签页开在专用的最小化窗口里（见 openOwnTab），用户看不到。
   let tab = null;
   let created = false;
   let prevActiveId = null;
