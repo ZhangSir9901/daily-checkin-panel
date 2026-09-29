@@ -1387,7 +1387,8 @@ async function handleApi(req, env, url) {
     const version = (await getSetting(env.DB, 'relay_version')) || '';
     const { relayBacklog } = await import('./lib/relay.js');
     const backlog = await relayBacklog(env.DB);
-    return json({ online, last_poll: last, version, backlog });
+    const latestVersion = (() => { try { return String(JSON.parse(EXT_FILES['manifest.json'] || '{}').version || ''); } catch { return ''; } })();
+    return json({ online, last_poll: last, version, latest_version: latestVersion, backlog });
   }
 
   // 修改管理密码
@@ -1422,6 +1423,7 @@ async function handleApi(req, env, url) {
       online: !!lastSeen && Date.now() - lastSeen < 120000,
       last_seen_ago_sec: lastSeen ? Math.floor((Date.now() - lastSeen) / 1000) : null,
       version: info.version || '',
+      latest_version: (() => { try { return String(JSON.parse(EXT_FILES['manifest.json'] || '{}').version || ''); } catch { return ''; } })(),
       ua: info.ua || '',
       capabilities: info.capabilities || [],
       signed_recently: !!lastSigned && Date.now() - lastSigned < 600000,
