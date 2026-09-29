@@ -2514,6 +2514,11 @@ async function checkCookieHash() {
       return toast('取回交接内容失败：' + (e.message || e) + '（本页刷新可重试）');
     }
     const d0 = got && got.payload;
+    // 扩展「录制签到」发来的请求草稿：打开添加账号，自定义 HTTP 表单已预填好
+    if (d0 && d0.kind === 'record') {
+      history.replaceState(null, '', location.pathname);
+      return applyRecordDraft(d0);
+    }
     if (!d0 || !d0.cookies) return toast('扩展没有读取到 Cookie，请在扩展里重新发送');
     // 内容已经拿到手，这时才抹掉地址栏里的短码（取不回来时留着，刷新可重试）
     history.replaceState(null, '', location.pathname);
@@ -2562,6 +2567,28 @@ async function checkCookieHash() {
   // 兼容旧版小书签（按账号生成）
   const siteId = d.site || (d.account && (ACCTS.find((a) => String(a.id) === String(d.account)) || {}).site) || '';
   openCookieApplyDialog(siteId, d.cookie, d.domain || '');
+}
+
+// ---------- 扩展「录制签到」：把抓到的请求填进「添加账号 → 自定义 HTTP」 ----------
+// 录制的是用户亲手点的那次真实签到请求（method / url / headers / body 原样），
+// 和「从 cURL 填入」效果一样，只是连 F12 都不用开。Cookie 直接写进请求头，
+// 和 cURL 导入的口径一致（失效后执行日志会提示，重新录一次即可）。
+async function applyRecordDraft(d) {
+  const r = (d && d.record) || {};
+  if (!r.url) return toast('录制内容缺少请求地址，请重新录制');
+  $('f-site').value = 'http';
+  await openModal();
+  const host = hostOf(r.url || d.pageUrl || '');
+  if (!$('f-name').value) $('f-name').value = (host || '录制') + '签到';
+  setField('url', r.url || '');
+  setField('method', (r.method || 'POST').toUpperCase());
+  let headers = r.headers || {};
+  // 录制时扩展已经把 Cookie 拼进了 headers；双保险：headers 里没有就补一条
+  const hasCookie = Object.keys(headers).some((k) => k.toLowerCase() === 'cookie');
+  if (!hasCookie && d.cookies) headers = { ...headers, Cookie: d.cookies };
+  setField('headers', JSON.stringify(headers, null, 2));
+  setField('body', r.body || '');
+  toast('已填入录制的签到请求，检查一遍后点「保存」');
 }
 
 async function initMain() {

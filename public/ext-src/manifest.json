@@ -31,7 +31,8 @@
     "scripting",
     "storage",
     "alarms",
-    "tabs"
+    "tabs",
+    "webRequest"
   ],
-  "version": "2.18"
+  "version": "2.19"
 }

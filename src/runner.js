@@ -8,6 +8,7 @@ import { listCommunitySites, makeCommunitySite } from './community.js';
 import { sendNotify } from './notify.js';
 import { dayInTz } from './schedule.js';
 import { OUTCOME } from './lib/signals.js';
+import { diagnose } from './lib/doctor.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -459,6 +460,9 @@ export async function runAccount(env, account) {
 
   const duration = Date.now() - t0;
   const now = Date.now();
+  // 失败自诊断：给日志加一句能直接照着做的建议（成功/跳过不打扰）
+  const diag = diagnose({ status, message, detail });
+  if (diag) message = (message + '｜' + diag).slice(0, 1000);
   await db
     .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
     .bind(account.id, account.site, account.name, status, message, detail, duration, now)

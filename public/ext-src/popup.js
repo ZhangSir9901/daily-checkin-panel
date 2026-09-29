@@ -134,6 +134,8 @@ async function init() {
     writeCfg({ panelUrl: normalizePanelUrl(DEFAULT_PANEL_URL) || DEFAULT_PANEL_URL });
   }
   if (apiKey) $('api-key').value = apiKey;
+  // 恢复录制状态显示（上次打开弹窗时可能正在录制）
+  refreshRecState();
 
   // 获取当前标签页
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -402,6 +404,58 @@ $('btn-check-conn').onclick = async () => {
   } catch (e) {
     status('检查失败：' + (e.message || e), 'err');
   }
+};
+
+// ---------- 签到录制 ----------
+// 点「🎬 录制签到请求」→ 后台在当前标签页监听 90 秒 →
+// 用户在页面上亲手点一次签到按钮 → 扩展抓到请求、生成草稿、自动打开面板预填。
+// popup 关掉也没关系：录制状态在后台，抓到后会自动开面板标签页。
+function showRecState(recording, deadline) {
+  const note = $('record-note');
+  const btn = $('btn-record');
+  if (recording) {
+    const left = Math.max(0, Math.round(((deadline || 0) - Date.now()) / 1000));
+    note.style.display = '';
+    note.textContent = `🔴 录制中…去页面上亲手点一次「签到」按钮（剩余约 ${left} 秒）。不想录了可再点一次按钮取消。`;
+    btn.textContent = '⏹ 停止录制';
+  } else {
+    note.style.display = 'none';
+    btn.textContent = '🎬 录制签到请求';
+  }
+}
+async function refreshRecState() {
+  try {
+    const r = await chrome.runtime.sendMessage({ action: 'recState' });
+    showRecState(!!(r && r.recording), r && r.deadline);
+  } catch { /* 后台没醒：当没在录制 */ }
+}
+$('btn-record').onclick = async () => {
+  let cur = null;
+  try { cur = await chrome.runtime.sendMessage({ action: 'recState' }); } catch { /* 忽略 */ }
+  if (cur && cur.recording) {
+    await chrome.runtime.sendMessage({ action: 'recStop' }).catch(() => {});
+    showRecState(false);
+    return status('已停止录制', '');
+  }
+  const panelUrl = await panelUrlFromInput();
+  if (!panelUrl) return;
+  const apiKey = $('api-key').value.trim();
+  if (!apiKey) return status('录制要用交接码发面板，请先填写 API Key（面板设置页获取）', 'err');
+  let tab = null;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    tab = tabs && tabs[0];
+  } catch { /* 忽略 */ }
+  if (!tab) return status('读不到当前标签页', 'err');
+  let r;
+  try {
+    r = await chrome.runtime.sendMessage({ action: 'recStart', tabId: tab.id, panelUrl, apiKey });
+  } catch (e) {
+    return status('录制启动失败：' + (e && e.message ? e.message : '后台无响应'), 'err');
+  }
+  if (!r || !r.ok) return status('录制启动失败：' + ((r && r.error) || '未知错误'), 'err');
+  showRecState(true, Date.now() + 90000);
+  status('录制已开始：去页面上亲手点一次「签到」按钮，抓到后会自动打开面板', 'ok');
 };
 
 init();

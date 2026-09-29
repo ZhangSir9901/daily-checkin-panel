@@ -549,7 +549,36 @@ async function handleApi(req, env, url) {
   // 面板页面用短码取回。好处是登录凭据不再进入浏览器地址栏 / 历史记录。
   if (path === '/api/external/handoff' && method === 'POST') {
     const deny = await extGuard();
-    if (deny) return deny;      const { domain, pageUrl, cookies, cookieList, userAgent, localStorage, stats } = await readBody(req);
+    if (deny) return deny;
+    const body = await readBody(req);
+    const { domain, pageUrl, cookies, cookieList, userAgent, localStorage, stats } = body;
+    // kind=record：扩展「录制签到」抓到的请求草稿。record 必须带 url；Cookie 允许为空。
+    if (body.kind === 'record') {
+      const record = body.record || {};
+      if (!record.url) return json({ error: '录制内容缺少请求地址' }, 400);
+      if (String(cookies || '').length > 200 * 1024) {
+        return json({ error: 'Cookie 内容过大（超过 200KB），请只交接目标站点的 Cookie' }, 413);
+      }
+      const code = randomHex(16);
+      const now = Date.now();
+      await env.DB.prepare('INSERT INTO handoffs(code, payload, created_at, expires_at, used) VALUES(?,?,?,?,0)')
+        .bind(code, JSON.stringify({
+          kind: 'record',
+          domain: String(domain || ''),
+          pageUrl: String(pageUrl || ''),
+          cookies: String(cookies || ''),
+          userAgent: String(userAgent || ''),
+          record: {
+            method: String(record.method || 'GET').toUpperCase(),
+            url: String(record.url || ''),
+            headers: record.headers && typeof record.headers === 'object' ? record.headers : {},
+            body: String(record.body || ''),
+          },
+          ts: now,
+        }), now, now + 5 * 60 * 1000).run();
+      await env.DB.prepare('DELETE FROM handoffs WHERE expires_at < ?').bind(now - 3600000).run().catch(() => {});
+      return json({ ok: true, code, expires_in: 300 });
+    }
     if (!cookies || !String(cookies).trim()) return json({ error: '没有可交接的 Cookie' }, 400);
     // 交接内容会整包塞进 D1 的一行里（SQLite 行的理论上限远小于此，超了就是写入报错 500）。
     // 入口那条 512KB 上限管的是「整个请求体」，这里再给实际要落库的 Cookie 串单独卡一道，

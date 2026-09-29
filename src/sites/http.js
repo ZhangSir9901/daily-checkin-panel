@@ -165,7 +165,7 @@ export const httpTask = {
     { key: 'expect_status', label: '期望状态码', type: 'text', required: false, placeholder: '200（默认）' },
     { key: 'expect_contains', label: '响应应包含', type: 'text', required: false, placeholder: '如 "success"，留空则只校验状态码' },
   ],
-  tips: '新网站接入：在电脑浏览器人工登录该网站并完成一次签到 → F12 网络面板找到签到请求 → 右键「复制为 cURL」→ 添加账号时粘贴并点「从 cURL 导入」（Cookie 会自动带入，无需手动复制）。多步流程（如先登录拿 token 再签到）用「多步录制」：每一步粘贴对应的 cURL，用「提取变量」把上一步响应的字段（如 data.token）存为变量，下一步用 {{token}} 引用。Cookie 失效时执行日志会提示，重新录制一次即可。',
+  tips: '新网站接入：在电脑浏览器人工登录该网站并完成一次签到 → F12 网络面板找到签到请求 → 右键「复制为 cURL」→ 添加账号时粘贴并点「从 cURL 导入」（Cookie 会自动带入，无需手动复制）。更快的方式：扩展 2.19+ 的「🎬 录制签到请求」——在网站上亲手点一次签到，扩展自动把请求抓下来发到面板预填。多步流程（如先登录拿 token 再签到）用「多步录制」：每一步粘贴对应的 cURL，用「提取变量」把上一步响应的字段（如 data.token）存为变量，下一步用 {{token}} 引用。Cookie 失效时执行日志会提示，重新录制一次即可。',
 
   async run(creds) {
     // 多步模式

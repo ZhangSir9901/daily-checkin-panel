@@ -1544,6 +1544,7 @@ if (chrome.windows && chrome.windows.onRemoved && typeof chrome.windows.onRemove
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) runJobs();
   if (alarm.name === RELAY_ALARM) startRelayBurst();
+  if (alarm.name === REC_ALARM) recStop();
 });
 
 // 扩展安装/启动时设置定时器
@@ -1568,6 +1569,154 @@ chrome.alarms.get(ALARM_NAME, (a) => {
 chrome.alarms.get(RELAY_ALARM, (a) => {
   if (!a) chrome.alarms.create(RELAY_ALARM, { periodInMinutes: RELAY_INTERVAL_MIN });
 });
+
+// ================= 签到录制 =================
+// popup 点「🎬 录制签到」→ 在当前标签页监听 90 秒；
+// 用户在页面上亲手点一次签到按钮 → 抓到第一个同站点的 XHR/fetch 请求 →
+// 生成配置草稿 → 一次性交接码发面板 → 自动打开面板，添加账号表单已预填好。
+//
+// 为什么用 webRequest 而不是 debugger：debugger 会在浏览器顶上挂一条
+// 「正在调试此浏览器」的黄条；webRequest 只是观察请求（不 blocking），
+// manifest 里已有的 <all_urls> host 权限就够，不需要额外向用户要授权。
+const REC_ALARM = 'rec-stop';
+const REC_TIMEOUT_MS = 90000;
+const REC_BADGE_COLOR = '#d64545';
+
+// 录制状态放 chrome.storage.session：Service Worker 被回收重建后还能续上。
+async function recGet() {
+  try {
+    const s = chrome.storage && chrome.storage.session;
+    if (s && s.get) { const o = await s.get(['rec']); return (o && o.rec) || null; }
+  } catch { /* 忽略 */ }
+  return null;
+}
+async function recSet(v) {
+  try { await chrome.storage.session.set({ rec: v || null }); } catch { /* 忽略 */ }
+}
+async function recStop() {
+  try { await chrome.storage.session.remove(['rec']); } catch { /* 忽略 */ }
+  try { await chrome.alarms.clear(REC_ALARM); } catch { /* 忽略 */ }
+  try { chrome.action.setBadgeText({ text: '' }); } catch { /* 忽略 */ }
+}
+
+// requestBody / requestHeaders 按 requestId 配对：onBeforeRequest 先到，存起来等 header 事件。
+const recPending = new Map(); // requestId -> { method, url, body }
+
+function recBodyText(reqBody) {
+  if (!reqBody) return '';
+  try {
+    if (reqBody.formData) {
+      const p = new URLSearchParams();
+      for (const k of Object.keys(reqBody.formData)) {
+        for (const v of reqBody.formData[k]) p.append(k, v);
+      }
+      return p.toString();
+    }
+    const raw = reqBody.raw && reqBody.raw[0];
+    if (raw && raw.bytes) return new TextDecoder().decode(raw.bytes);
+  } catch { /* 忽略 */ }
+  return '';
+}
+
+chrome.webRequest.onBeforeRequest.addListener(
+  (d) => {
+    if (!d || d.tabId < 0) return;
+    recGet().then((rec) => {
+      if (!rec || d.tabId !== rec.tabId) return;
+      try { recPending.set(d.requestId, { method: d.method, url: d.url, body: recBodyText(d.requestBody) }); } catch { /* 忽略 */ }
+    }).catch(() => {});
+  },
+  { urls: ['<all_urls>'] },
+  ['requestBody']
+);
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  (d) => {
+    if (!d || d.tabId < 0) return;
+    recGet().then((rec) => {
+      if (!rec || d.tabId !== rec.tabId) return;
+      if (Date.now() > rec.deadline) { recStop(); return; }
+      // 只要同站点的 XHR/fetch：录制开始前页面加载的杂请求大多已发完，
+      // 开始后第一个同站 XHR 极大概率就是用户亲手点的那次签到。
+      if (d.type !== 'xmlhttprequest') return;
+      let host = '';
+      try { host = new URL(d.url).hostname; } catch { return; }
+      if (!host || host !== rec.host) return;
+      const pend = recPending.get(d.requestId) || {};
+      recPending.delete(d.requestId);
+      finishRecording(rec, d, pend).catch(() => {});
+    }).catch(() => {});
+  },
+  { urls: ['<all_urls>'] },
+  ['requestHeaders']
+);
+
+async function finishRecording(rec, d, pend) {
+  await recStop();
+  const headers = {};
+  for (const h of d.requestHeaders || []) {
+    const k = String((h && h.name) || '');
+    if (!k || /^(content-length|host)$/i.test(k)) continue; // fetch 会自己算，不让用户配
+    headers[k] = String((h && h.value) || '');
+  }
+  const payload = {
+    kind: 'record',
+    pageUrl: rec.pageUrl,
+    domain: rec.host,
+    cookies: rec.cookies || '',
+    userAgent: rec.userAgent || '',
+    record: {
+      method: pend.method || d.method || 'GET',
+      url: d.url,
+      headers,
+      body: pend.body || '',
+    },
+  };
+  // 和「一键发送」走同一条一次性交接码通道：凭据不进地址栏，短码 5 分钟有效、取一次作废。
+  let code = '';
+  try {
+    const resp = await fetch(rec.panelUrl + '/api/external/handoff', {
+      credentials: 'omit',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': rec.apiKey },
+      body: JSON.stringify(payload),
+    });
+    if (resp.ok) { const j = await resp.json().catch(() => null); code = (j && j.code) || ''; }
+  } catch { /* 面板不可达：本次录制作废，用户重新录一次 */ }
+  if (code) { try { chrome.tabs.create({ url: rec.panelUrl + '#handoff=' + code }); } catch { /* 忽略 */ } }
+}
+
+async function recStart(msg) {
+  const tabId = msg && msg.tabId;
+  if (!tabId) throw new Error('拿不到当前标签页');
+  const tab = await chrome.tabs.get(tabId).catch(() => null);
+  if (!tab || !tab.url) throw new Error('读不到当前标签页');
+  if (/^(chrome|chrome-extension|edge|about):/.test(tab.url)) throw new Error('浏览器内部页面不能录制');
+  let host = '';
+  try { host = new URL(tab.url).hostname; } catch { throw new Error('当前页面地址无效'); }
+  // 录制时顺手把 Cookie 也带上：面板预填时直接写进请求头（和「从 cURL 填入」一样），省得再抓一次。
+  let cookies = '';
+  try {
+    const list = await chrome.cookies.getAll({ url: tab.url });
+    cookies = (list || []).map((c) => c.name + '=' + c.value).join('; ');
+  } catch { /* 忽略 */ }
+  let userAgent = '';
+  try {
+    const r = await chrome.scripting.executeScript({ target: { tabId }, func: () => navigator.userAgent });
+    userAgent = (r && r[0] && r[0].result) || '';
+  } catch { /* 忽略 */ }
+  const rec = {
+    tabId, host, pageUrl: tab.url, panelUrl: msg.panelUrl, apiKey: msg.apiKey,
+    cookies, userAgent, deadline: Date.now() + REC_TIMEOUT_MS,
+  };
+  await recSet(rec);
+  try { await chrome.alarms.create(REC_ALARM, { when: rec.deadline }); } catch { /* 忽略 */ }
+  try {
+    chrome.action.setBadgeText({ text: 'REC' });
+    chrome.action.setBadgeBackgroundColor({ color: REC_BADGE_COLOR });
+  } catch { /* 忽略 */ }
+  return { ok: true };
+}
 
 // popup 手动触发。
 // 【安全】只接受本扩展自己的页面发来的消息（sender.id 就是本扩展的 id）：
@@ -1599,6 +1748,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === 'stopRelay') {
     stopRelayBurst();
     sendResponse({ ok: true });
+    return true;
+  }
+  if (msg && msg.action === 'recStart') {
+    recStart(msg)
+      .then(() => sendResponse({ ok: true }))
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true; // 异步响应
+  }
+  if (msg && msg.action === 'recStop') {
+    recStop().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: true }));
+    return true;
+  }
+  if (msg && msg.action === 'recState') {
+    recGet()
+      .then((rec) => sendResponse({ ok: true, recording: !!rec, deadline: (rec && rec.deadline) || 0 }))
+      .catch(() => sendResponse({ ok: true, recording: false }));
     return true;
   }
 });
