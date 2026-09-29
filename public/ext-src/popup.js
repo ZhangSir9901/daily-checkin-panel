@@ -241,6 +241,7 @@ $('btn-send').onclick = async () => {
   if (apiKey) {
     try {
       const resp = await fetch(panelUrl + '/api/external/handoff', {
+        credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
         body: JSON.stringify(payload),
@@ -379,6 +380,7 @@ $('btn-check-conn').onclick = async () => {
     let resp;
     try {
       resp = await fetch(panelUrl + '/api/external/ping', {
+        credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie
         headers: { 'X-Api-Key': apiKey },
       });
     } catch (e) {

@@ -223,8 +223,13 @@ async function handleApi(req, env, url) {
   const contentLength = Number(req.headers.get('Content-Length') || '0') || 0;
   if (contentLength > MAX_BODY_BYTES) return json({ error: '请求体过大（上限 512KB）' }, 413);
 
-  // 跨站写操作兜底：带了会话 Cookie 的浏览器请求，Origin 必须是本面板
-  if (method !== 'GET' && method !== 'HEAD' && parseCookies(req).sid && !sameOrigin(req, url)) {
+  // 跨站写操作兜底：带了会话 Cookie 的浏览器请求，Origin 必须是本面板。
+  // 【2026-09-29 修】/api/external/* 走 API Key 鉴权（自定义请求头，CSRF 伪造不了），
+  // 不适用这条会话 CSRF 检查：扩展回传中继结果时，浏览器会自动带上用户登录面板的
+  // sid 会话 Cookie，而扩展的 fetch 没有 Origin 头 —— 以前这里直接 403，
+  // 导致「中继结果回传失败（HTTP 403）」，签到了却写不回结果。
+  if (method !== 'GET' && method !== 'HEAD' && !path.startsWith('/api/external/')
+      && parseCookies(req).sid && !sameOrigin(req, url)) {
     return json({ error: '跨站请求被拒绝（Origin 与面板不一致）' }, 403);
   }
 

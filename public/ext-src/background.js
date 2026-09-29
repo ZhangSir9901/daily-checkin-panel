@@ -99,6 +99,7 @@ async function getConfig() {
 // 从面板获取待执行任务
 async function fetchJobs(panelUrl, apiKey) {
   const resp = await fetch(panelUrl + '/api/external/browser-jobs', {
+    credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie（避免 CSRF 检查误伤）
     headers: { 'X-Api-Key': apiKey },
   });
   if (!resp.ok) throw new Error('获取任务失败：HTTP ' + resp.status);
@@ -534,6 +535,7 @@ async function reportCookieRotation(panelUrl, apiKey, job, host) {
     const d = diffRotated(fresh, job.cookie);
     if (!d) return; // 没变化，一个请求都不发
     const resp = await fetch(panelUrl + '/api/external/creds-rotation', {
+      credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
       body: JSON.stringify({ account_id: job.account_id, domain: 'https://' + host + '/', cookies: d.changed }),
@@ -1056,6 +1058,7 @@ async function fetchRelayJobs(panelUrl, apiKey, waitMs = RELAY_LONGPOLL_MS) {
   let ver = '';
   try { ver = (chrome.runtime.getManifest() || {}).version || ''; } catch { /* 忽略 */ }
   const resp = await fetch(panelUrl + '/api/external/relay-pending?wait=' + waitMs + (ver ? '&v=' + encodeURIComponent(ver) : ''), {
+    credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie
     headers: { 'X-Api-Key': apiKey },
   });
   if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -1084,6 +1087,7 @@ async function submitRelayResult(panelUrl, apiKey, jobId, result) {
   for (let i = 0; i < 3; i++) {
     try {
       const resp = await fetch(panelUrl + '/api/external/relay/' + jobId + '/result', {
+        credentials: 'omit', // API Key 鉴权，不带面板会话 Cookie（2026-09-29：带 sid 会被面板 CSRF 检查 403）
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
         body,
