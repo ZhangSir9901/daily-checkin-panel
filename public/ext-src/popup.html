@@ -55,11 +55,11 @@
   .update-tip .dl-btn:hover { background: var(--accent-hover); }
   .domain { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px; word-break: break-all; }
   .domain .count { display: inline-block; background: var(--accent-soft); color: var(--accent-text); padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-left: 4px; }
-  /* 按钮统一：主按钮实心、次按钮描边，同一套圆角/字号/间距 */
-  button { width: 100%; padding: 11px; margin: 0 0 8px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent; }
-  .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-  .secondary { background: transparent; border-color: var(--border-strong); color: var(--text); }
+  /* 按钮统一：都是描边风格，主按钮用强调色描边+淡底色，比次按钮更显眼 */
+  button { width: 100%; padding: 11px; margin: 0 0 8px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent; background: transparent; }
+  .primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+  .primary:hover { filter: brightness(1.08); border-color: var(--accent-hover); }
+  .secondary { border-color: var(--border-strong); color: var(--text); }
   .secondary:hover { border-color: var(--accent); color: var(--accent-text); }
   button:disabled { opacity: .5; cursor: wait; }
   .note { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin: 0 0 12px; }
