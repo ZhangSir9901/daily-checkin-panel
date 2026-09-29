@@ -9,8 +9,14 @@
 async function ensureColumn(db, table, column, ddl) {
   const { results } = await db.prepare(`PRAGMA table_info(${table})`).all();
   const cols = (results || []).map((r) => r.name);
-  if (!cols.includes(column)) {
+  if (cols.includes(column)) return;
+  try {
     await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`).run();
+  } catch (e) {
+    // 【并发冷启动】刚部署、第一个请求进来时，好几个请求会同时跑迁移：
+    // 检查到这里都发现没有这列，然后一个先加上了，后面的 ALTER 就报 duplicate column。
+    // 目的已经达成，不该因此让请求 500。
+    if (!/duplicate column/i.test(String((e && e.message) || e))) throw e;
   }
 }
 
@@ -132,7 +138,14 @@ export async function ensureSchema(db) {
   // 增量迁移：老库补列/补索引，保证升级不丢数据
   const cur = parseInt((await getSetting(db, 'schema_version')) || '0', 10) || 0;
   for (let i = cur; i < MIGRATIONS.length; i++) {
-    await MIGRATIONS[i](db);
+    try {
+      await MIGRATIONS[i](db);
+    } catch (e) {
+      // 同一版本的迁移被另一个并发请求同时跑了（CREATE TABLE/INDEX 会报 already exists）：
+      // 结构已经就位，不算失败。真正的问题是别的错误时照样抛。
+      const m = String((e && e.message) || e);
+      if (!/already exists|duplicate column/i.test(m)) throw e;
+    }
     await setSetting(db, 'schema_version', String(i + 1));
   }
 }

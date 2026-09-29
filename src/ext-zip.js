@@ -142,13 +142,16 @@ export async function handleExtZip(req, env) {
   }
 
   const zipBytes = buildZip(files);
-  // 文件名用 RFC 5987 编码支持中文
-  const fileName = 'cookie插件2.2.zip';
+  // 文件名用 RFC 5987 编码支持中文。
+  // 不再把版本号写进文件名/扩展名了 —— 「cookie插件2.2」会让扩展在 chrome://extensions
+  // 里永远显示 2.2（而它实际已经是 2.8），用户看到就以为装的是旧版。
+  // 版本号在 chrome://extensions 和弹窗标题旁边都会单独显示。
+  const fileName = '签到面板助手.zip';
   const encodedName = encodeURIComponent(fileName).replace(/['()]/g, escape);
   return new Response(zipBytes, {
     headers: {
       'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="cookie-plugin-2.2.zip"; filename*=UTF-8''${encodedName}`,
+      'Content-Disposition': `attachment; filename="checkin-panel-helper.zip"; filename*=UTF-8''${encodedName}`,
       'Cache-Control': 'no-store',
     },
   });

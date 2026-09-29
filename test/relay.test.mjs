@@ -179,4 +179,54 @@ await t('runner：同一账号 10 分钟内不重复排浏览器带路工单', a
   assert.equal(jobs.length, 0, '已有工单时不应再排一张');
 });
 
+// ---- relayFetch 的透传与容错 ----
+// ① foreground：站点用 `fetch(url, { foreground: true })` 声明「超时可以把这个标签页提到前台重试」
+//    （README 与文档里写明的唯一开关）。它必须真的进到任务里 —— 曾经 relayFetch 漏传这个字段，
+//    于是无论怎么声明都不会抢焦点，那个开关等于不存在。
+// ② 回传的响应头不是合法 JSON 时，不能把异常抛在「解析结果」这一步，
+//    那会让面板把「链路小毛病」误报成站点的问题。
+function fakeRelayDb(job) {
+  const inserted = [];
+  return {
+    inserted,
+    prepare(sql) {
+      const stmt = {
+        _args: [],
+        bind(...a) { stmt._args = a; return stmt; },
+        async run() { if (/INSERT INTO relay_jobs/i.test(sql)) inserted.push(stmt._args); return {}; },
+        async first() { return job; },
+        async all() { return { results: [] }; },
+      };
+      return stmt;
+    },
+  };
+}
+
+await t('relayFetch：foreground 声明必须传到任务里（否则那个开关永远不会生效）', async () => {
+  const { relayFetch } = await import('../src/lib/relay.js');
+  const b64 = Buffer.from('{"ok":true}', 'utf8').toString('base64');
+  const db = fakeRelayDb({ status: 'done', resp_status: 200, resp_headers: '{}', resp_body: b64, method: 'POST', url: 'https://x/y' });
+  const res = await relayFetch(db, 'https://x/y', { method: 'POST', body: 'a=1', foreground: true });
+  assert.equal(res.status, 200);
+  const opts = JSON.parse(db.inserted[0][5]);
+  assert.equal(opts.foreground, true, 'foreground 必须进 options');
+});
+
+await t('relayFetch：不声明 foreground 时不会抢焦点（默认关闭）', async () => {
+  const { relayFetch } = await import('../src/lib/relay.js');
+  const db = fakeRelayDb({ status: 'done', resp_status: 200, resp_headers: '{}', resp_body: 'e30=', method: 'GET', url: 'https://x/y' });
+  await relayFetch(db, 'https://x/y', {});
+  const opts = JSON.parse(db.inserted[0][5]);
+  assert.equal(opts.foreground, undefined);
+});
+
+await t('中继：回传的头不是合法 JSON 时照旧把响应交给站点（不许在这里抛错）', async () => {
+  const b64 = Buffer.from('{"status":"0"}', 'utf8').toString('base64');
+  const db = fakeRelayDb({ status: 'done', resp_status: 200, resp_headers: '{{{坏掉的头', resp_body: b64, method: 'GET', url: 'https://x/y' });
+  const r = await waitRelayResult(db, 'r9', 300, 20);
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.headers), []);
+  assert.equal(new TextDecoder().decode(r.body), '{"status":"0"}');
+});
+
 console.log(`\n${n} 组通过`);

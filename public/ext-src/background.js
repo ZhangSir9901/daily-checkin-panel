@@ -554,10 +554,17 @@ function waitTabComplete(tabId, timeoutMs) {
 // 于是：用户正在看 52pojie 的那个标签页被扩展拿去导航来导航去（任务页 → 签到链接 → 再读一遍），
 // 用户看到的就是「浏览器签到乱跳」，甚至自己正在读的页面被改掉。
 //
-// 现在的规矩：**用户的标签页一律不碰**（不看、不导航、不关闭），只用我们自己开的标签页，用完自己关。
+// 现在的规矩：**用户的标签页一律不碰**（不看、不导航、不关闭），只用我们自己开的标签页；
+// 同一个域名只开**一个**，后续请求复用，空闲一段时间后自动关掉（见 RELAY_TAB_IDLE_MS）。
 // 新建的标签页用 active:false（后台打开），不抢焦点。
 const ownTabs = new Map(); // tabId -> { domain, at }
 const OWN_TAB_TTL_MS = 10 * 60 * 1000;
+// 中继专用标签页的空闲回收时间：比上面短得多。
+// 一次签到（比如糊涂鳄）要打好几个请求（首页 → 主题 JS → 签到接口），
+// 以前**每个请求**都开一个标签页、用完立刻关 —— 用户看到的就是「浏览器一直在新建页面」。
+// 现在改成：一个域名只开一个后台标签页，后续请求都复用它；
+// 连续 45 秒没用到才关掉（够覆盖一次签到的全部请求，又不会一直挂着）。
+const RELAY_TAB_IDLE_MS = 45 * 1000;
 
 function sameDomain(url, domain) {
   try {
@@ -572,8 +579,14 @@ function sameDomain(url, domain) {
 function rememberOwnTab(id, domain) {
   if (id == null) return;
   ownTabs.set(id, { domain: String(domain || ''), at: Date.now() });
-  for (const [tid, info] of ownTabs) {
-    if (Date.now() - info.at > OWN_TAB_TTL_MS) ownTabs.delete(tid);
+  // 清掉过期记录。
+  // 【以前只删记录、不关标签页】——一旦某个域名超过 10 分钟没再用到，它的记录会被这里悄悄丢掉，
+  // 之后 sweepOwnTabs 就再也不认识那个标签页了（回收是照着 ownTabs 关的），
+  // 于是我们在用户浏览器里留了一个永远没人管的标签页。现在顺手一起关掉。
+  for (const [tid, info] of Array.from(ownTabs)) {
+    if (tid === id || Date.now() - info.at <= OWN_TAB_TTL_MS) continue;
+    ownTabs.delete(tid);
+    try { chrome.tabs.remove(tid).catch(() => {}); } catch { /* 已经关了就算了 */ }
   }
 }
 
@@ -581,7 +594,8 @@ function forgetOwnTab(id) {
   ownTabs.delete(id);
 }
 
-// 找一个「我们自己开的、还是这个域名」的标签页（没有就返回 null）
+// 找一个「我们自己开的、还是这个域名」的标签页（没有就返回 null）。
+// 复用时刷新使用时间：有它在，sweepOwnTabs 才知道这个标签页还在干活。
 async function findOwnTab(domain) {
   if (!ownTabs.size) return null;
   let tabs = [];
@@ -589,6 +603,8 @@ async function findOwnTab(domain) {
   for (const t of tabs || []) {
     if (!ownTabs.has(t.id)) continue;
     if (!sameDomain(t.url || t.pendingUrl, domain)) continue;
+    const info = ownTabs.get(t.id);
+    if (info) info.at = Date.now();
     return t;
   }
   return null;
@@ -969,12 +985,40 @@ async function fetchRelayJobs(panelUrl, apiKey, waitMs = RELAY_LONGPOLL_MS) {
 }
 
 // 回传中继结果
+//
+// 【两道自保，都是线上踩过的坑（2026-09-28）】
+//   ① **绝不能回传空 body**：`JSON.stringify(undefined)` 返回 undefined，fetch 会把它当成
+//      「没有请求体」，面板那边解析成空对象，最后存成一条「完成了、但没有状态码也没有正文」的结果。
+//      站点模块拿到空响应就会得出「站点不认这个接口」这类**错误结论** —— 用户看到的是
+//      「本地网络签到失败」，而站点其实一直回答得好好的。所以先把 payload 归一化。
+//   ② **必须看 HTTP 状态并重试**：以前 `.catch(() => {})` 把一切都吞掉，包括「面板返回 500 / 401」，
+//      于是任务永远停在「租约中」，两分钟后被面板判成「扩展没有回传（可能被关闭或休眠）」——
+//      而扩展早就答完了。现在 5xx / 网络错误重试 3 次，4xx 立即停（Key 错重试无意义）。
 async function submitRelayResult(panelUrl, apiKey, jobId, result) {
-  await fetch(panelUrl + '/api/external/relay/' + jobId + '/result', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
-    body: JSON.stringify(result),
-  }).catch(() => { /* 忽略 */ });
+  const obj = (result && typeof result === 'object' && !Array.isArray(result)) ? { ...result } : {};
+  // 既没有状态码也没有错误说明 → 当作「扩展内部错误」如实回传，不要发空 body
+  if (obj.status == null && !obj.error) {
+    obj.error = '中继执行没有返回结果（扩展内部错误：' + String(result === undefined ? 'undefined' : result).slice(0, 120) + '）';
+  }
+  const body = JSON.stringify(obj);
+  let last = '';
+  for (let i = 0; i < 3; i++) {
+    try {
+      const resp = await fetch(panelUrl + '/api/external/relay/' + jobId + '/result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': apiKey },
+        body,
+      });
+      if (resp.ok) return true;
+      last = 'HTTP ' + resp.status;
+      if (resp.status >= 400 && resp.status < 500) break; // Key/参数错，重试无意义
+    } catch (e) {
+      last = String((e && e.message) || e);
+    }
+    if (i < 2) await sleep(600 * (i + 1));
+  }
+  console.error(`[签到面板] 中继结果回传失败（${last}）：${jobId}`);
+  return false;
 }
 
 // ============ 中继请求的三道闸门 ============
@@ -1173,11 +1217,14 @@ async function executeRelayJob(job) {
     if (activated && prevActiveId != null) {
       chrome.tabs.update(prevActiveId, { active: true }).catch(() => {});
     }
-    // 自己新建的关闭（避免堆积）；复用的（也是我们自己的）保留
-    if (created && tab && tab.id != null) {
-      forgetOwnTab(tab.id);
-      chrome.tabs.remove(tab.id).catch(() => {});
-    }
+    // 【这里刻意不再立刻关标签页】
+    // 一次签到要打好几个请求（首页 → 主题 JS → 签到接口），以前每个请求都
+    // 「开一个 → 用完关掉」，用户看到的就是「浏览器总在新建页面」。
+    // 现在这个标签页留给本域名后续的请求复用，由 runRelayRound 末尾的
+    // sweepOwnTabs(RELAY_TAB_IDLE_MS) 在空闲 45 秒后统一关掉。
+    // 它是后台标签页（active:false），不会抢焦点、也不会打断用户正在看的页面。
+    // （created 仅用于日志，说明这一轮是不是新开的）
+    if (created && tab && tab.id != null) rememberOwnTab(tab.id, domain);
   }
 }
 
@@ -1226,9 +1273,10 @@ async function runRelayRound() {
       } catch { /* 忽略 */ }
     }
   }
-  // 顺手回收我们自己开着的陈旧后台标签页：以前只在「创建时」清理记录，
-  // 标签页本身会一直留着（复用的那条不会关），开久了就攒一堆。
-  await sweepOwnTabs();
+  // 顺手回收我们自己开的后台标签页：中继标签页按「空闲 45 秒」回收 ——
+  // 一次签到的各个请求之间会有几秒停顿，45 秒足够让它们复用同一个页面，
+  // 而签到结束后最多 45 秒它自己就消失了（用户不会看到一堆残留标签页）。
+  await sweepOwnTabs(RELAY_TAB_IDLE_MS);
   // count 只算「这一轮真的处理了几条」：算上没领回来的那些会让突发误以为一直有活干
   return { ok: true, count: batch.length, total: (jobs || []).length };
 }
@@ -1277,9 +1325,9 @@ function stopRelayBurst() {
   relayGen++;
 }
 
-// 回收我们自己开的后台标签页：超过 TTL 没再被用到的就关掉。
+// 回收我们自己开的后台标签页：空闲超过 idleMs 没再被用到的就关掉。
 // （只动 ownTabs 里记着的 —— 那都是我们开的；用户的标签页一律不碰）
-async function sweepOwnTabs() {
+async function sweepOwnTabs(idleMs = OWN_TAB_TTL_MS) {
   if (!ownTabs.size) return 0;
   const now = Date.now();
   let tabs = [];
@@ -1287,7 +1335,7 @@ async function sweepOwnTabs() {
   const live = new Set((tabs || []).map((t) => t.id));
   let closed = 0;
   for (const [tid, info] of Array.from(ownTabs)) {
-    if (now - info.at <= OWN_TAB_TTL_MS) continue;
+    if (now - info.at <= idleMs) continue;
     ownTabs.delete(tid);
     if (!live.has(tid)) continue;
     try { await chrome.tabs.remove(tid); closed++; } catch { /* 已经关了就算了 */ }

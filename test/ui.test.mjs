@@ -157,7 +157,10 @@ t('执行路线自动选路：徽章显示「实际路线」，换过路要写�
   assert.match(html, /\.msg-main, \.msg-raw, \.msg-route, \.hint-tip'/, '截断判定要把换路记录也算进去');
   // 旧建议是错的（实测直连更快更稳），必须删干净
   assert.doesNotMatch(html, /糊涂鳄对机房 IP 更严格/, '糊涂鳄的旧建议（让我切本地网络）与实测不符');
-  assert.match(html, /hutue: '糊涂鳄的签到接口从 CF 网络直连正常/, '糊涂鳄要改成「直连正常」的说法');
+  // 糊涂鳄一个模块管两个域名，提示必须把「dj 直连正常 / hutue.cn 只能本地网络」都说清楚，
+  // 只说一半（曾经只写「直连正常」）就是在误导 hutue.cn 那个账号。
+  assert.match(html, /hutue: '糊涂鳄分两个独立站：dj\.hutue\.cn 从 CF 网络直连正常/, '糊涂鳄提示没区分两个域名');
+  assert.match(html, /hutue\.cn 在 CF 出口被站点 WAF 整站拦死/, '要写明 hutue.cn 从 CF 出口被整站拦死（实测依据）');
 });
 
 t('反馈里不摆英文代码，账号行模板里也不能夹注释（会被当成页面内容）', () => {
@@ -184,6 +187,32 @@ t('反馈里不摆英文代码，账号行模板里也不能夹注释（会被�
   assert.match(checkTool, /模板字符串里出现了/, '自检工具要能报出泄漏');
   const verifySrc = readFileSync(join(root, 'tools', 'verify.mjs'), 'utf8');
   assert.match(verifySrc, /check-template-comments\.mjs/, '自检要接进 verify.mjs');
+});
+
+t('浮层自动收起：共用浮层必须认领「当前主人」（否则鼠标还没进浮层就消失）', () => {
+  // 线上表现：点开「全局签到」时间胶囊，鼠标还没来得及移进浮层，它就自己收起来了。
+  // 根因：时间浮层是**全页面共用一个元素**，而每个胶囊渲染时都直接覆盖
+  // pop.onmouseenter —— 鼠标真进了浮层，cancel 清掉的是「别人的」定时器，
+  // 当前胶囊那个 320ms 收起定时器照旧到点执行。
+  assert.match(html, /const _popOwner = new WeakMap\(\)/, '缺少「这个浮层现在归谁管」的记录');
+  assert.match(html, /pop\.onmouseenter = \(\) => \{ const c = _popOwner\.get\(pop\); if \(c\) c\.cancel\(\); \}/,
+    '鼠标进浮层时要现查主人、清掉它的定时器（不能绑死在某个胶囊上）');
+  assert.match(html, /ctl\.own\(\)/, '打开浮层时要说清「现在归我管」（own）');
+  assert.doesNotMatch(html, /\n\s*bindAutoHide\(pop, chip\);/, '不能回到「渲染时就绑定、丢掉返回值」的老写法（后面创建的胶囊会把它覆盖掉）');
+  assert.match(html, /const ctl = bindAutoHide\(pop, chip\);/, '浮动层要拿到控制器（好在打开时认领）');
+  // 时区浮层同样要有主人概念，否则它的自动收起也会失效
+  assert.match(html, /bindAutoHide\(pop, btn\)\.own\(\)/, '时区浮层也要认领');
+});
+
+t('自动检查心跳：面板顶部能看出定时到底有没有在跑', () => {
+  // 「时间到了却没签到」以前在面板上完全看不出来：心跳把这层补上。
+  assert.match(html, /function schedBeatText\(s\)/, '要有心跳文案函数');
+  assert.match(html, /自动检查：暂无记录/, '没有任何记录时也要给一句话');
+  assert.match(html, /if \(minutes > 45\)/, '超过 45 分钟没记录就要判定为停摆');
+  assert.match(html, /⚠️ 自动检查\$\{hours\}/, '停摆要显式告警（含最后一次时间与排查方向）');
+  assert.match(html, /paintSchedLine\(s, displayTime\)/, '顶部那行要用它渲染');
+  assert.match(html, /setInterval\(async \(\) => \{[\s\S]{0,240}?paintSchedLine\(s, displayTime\)/, '要有只刷心跳的轮询');
+  assert.doesNotMatch(html, /setInterval\(.*loadSchedule/, '轮询不能整块重渲染（那会把用户正开着的浮层关掉）');
 });
 
 console.log(`\n${n} 通过`);

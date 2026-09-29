@@ -39,6 +39,9 @@ run([join('tools', 'check-dom-refs.mjs')], 'index.html');
 step('内联 JS 模板字符串：不许把 // 注释当成页面内容渲染出去');
 run([join('tools', 'check-template-comments.mjs')], 'index.html');
 
+step('扩展嵌入文件：src/ext-files.js 必须与 public/ext-src/ 一致（否则下载到的是旧版扩展）');
+run([join('tools', 'check-ext-files.mjs')], 'ext-files.js');
+
 step('index.html 内联 JS 语法');
 {
   const html = readFileSync(join(root, 'public', 'index.html'), 'utf8');

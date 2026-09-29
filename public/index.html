@@ -733,10 +733,10 @@
         <!-- 扩展下载：放在「全局签到」下面，用 .push-bottom 把自己的底边和右边那栏对齐 -->
         <div class="ext-mini push-bottom">
           <div class="ext-mini-head">
-            <b>🧩 浏览器扩展 cookie插件2.2</b>
+            <b>🧩 浏览器扩展 签到面板助手</b>
             <span id="ext-box-state" class="badge off">检测中…</span>
             <span class="grow"></span>
-            <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载</a>
+            <a href="/checkin-helper.zip" class="bookmarklet" download>⬇️ 下载</a>
           </div>
           <p>它干两件事：<b>① 一键取 Cookie</b>（连 HttpOnly 都能读，NodeSeek 这类站也行）；
             <b>② 当「本地网络中继」</b>，让吾爱破解这些屏蔽机房 IP 的站点也能签。
@@ -907,10 +907,10 @@
       </div>
       <div class="card">
         <h2>🔌 浏览器扩展</h2>
-        <p class="muted">安装「cookie插件2.2」扩展后，它就是面板的<b>本地网络中继</b>：面板点「执行」时请求由扩展在您的浏览器里发出（用您的本机 IP 和登录态），因此能绕过 CF 网络的 IP 封禁与人机验证。扩展会自动挂长轮询接单，响应通常在 1 秒内。扩展需要下面的 API Key 才能连接面板。</p>
+        <p class="muted">安装「签到面板助手」扩展后，它就是面板的<b>本地网络中继</b>：面板点「执行」时请求由扩展在您的浏览器里发出（用您的本机 IP 和登录态），因此能绕过 CF 网络的 IP 封禁与人机验证。扩展会自动挂长轮询接单，响应通常在 1 秒内。扩展需要下面的 API Key 才能连接面板。</p>
         <p class="muted">中继状态：<span id="relay-status" class="badge off">检测中…</span> <span class="muted" style="font-size:12px">扩展在线时，标记为「🌐 本地网络」的账号会经您的本机网络执行</span></p>
         <div class="row" style="margin:12px 0 4px">
-          <a href="/cookie-plugin-2.2.zip" class="bookmarklet" download>⬇️ 下载 cookie插件2.2</a>
+          <a href="/checkin-helper.zip" class="bookmarklet" download>⬇️ 下载 签到面板助手</a>
           <button class="ghost sm" id="btn-ext-help" type="button">📖 安装步骤</button>
         </div>
         <div id="ext-help" class="tips hidden" style="margin-top:8px">
@@ -1125,9 +1125,19 @@ document.querySelectorAll('.tabs button').forEach((b) => {
 let _tpxPop = null;
 
 // 浮层「鼠标移开自动收起」（时间与时区两个浮层共用）：
-//   离开胶囊或浮层后等 320ms 再收（留给鼠标从胶囊滑进浮层的余量），
+//   离开胶囊或浮层后等一会儿再收（留给鼠标从胶囊滑进浮层的余量），
 //   期间只要鼠标又进了任一方就取消。点选项 / 完成按钮仍是立即确定的路径。
-function bindAutoHide(pop, chip, delay = 320) {
+//
+// ★ 2026-09-29 修掉的真 bug（“鼠标还没移到浮层，浮层就没了”）：
+//   时间浮层是**全页面共用一个元素**（_tpxPopover），而 renderTimePicker 每个胶囊
+//   （全局时间 + 每个账号行）都会调一次 bindAutoHide —— 于是每次绑定都把
+//   `pop.onmouseenter/onmouseleave` 覆盖成「最后一个创建的胶囊」的控制器。
+//   结果：鼠标真的滑进浮层时，cancel 清掉的是**别人的**定时器，当前这个胶囊的
+//   收起定时器照旧到点执行 → 浮层必在 320ms 后消失。
+//   现在改成：每个浮层元素记住「当前属于谁」，并在**打开时**重新认领，
+//   保证鼠标进入浮层时清掉的就是当前这个胶囊的定时器。
+const _popOwner = new WeakMap(); // pop 元素 -> 当前打开它的那个控制器
+function bindAutoHide(pop, chip, delay = 450) {
   let timer = 0;
   const cancel = () => { if (timer) { clearTimeout(timer); timer = 0; } };
   // 只在浮层真的开着时才倒数 —— 否则「点选项收起」也会因鼠标离场排一个定时器，
@@ -1137,13 +1147,15 @@ function bindAutoHide(pop, chip, delay = 320) {
     if (pop.classList.contains('hidden')) return;
     timer = setTimeout(() => { pop.classList.add('hidden'); timer = 0; }, delay);
   };
-  pop.onmouseenter = cancel;
-  pop.onmouseleave = arm;
+  const ctl = { cancel, arm };
+  // 事件里**现查**当前主人：共用浮层时，只有最后打开它的那个胶囊才算数
+  pop.onmouseenter = () => { const c = _popOwner.get(pop); if (c) c.cancel(); };
+  pop.onmouseleave = () => { const c = _popOwner.get(pop); if (c) c.arm(); };
   if (chip) {
     chip.onmouseenter = cancel;
     chip.onmouseleave = arm;
   }
-  return { cancel, arm };
+  return { cancel, arm, own: () => _popOwner.set(pop, ctl) };
 }
 function _tpxPopover() {
   if (_tpxPop) return _tpxPop;
@@ -1253,6 +1265,8 @@ function renderTimePicker(container, initial, opts = {}) {
       };
     }
     pop.querySelector('.tpx-done').onclick = (e) => { e.stopPropagation(); pop.classList.add('hidden'); };
+    ctl.cancel(); // 清掉上一次可能还挂着的「准备收起」（连点两个胶囊时）
+    ctl.own(); // 认领这个共用浮层：现在它归这个胶囊管
     pop.classList.remove('hidden');
     const r = chip.getBoundingClientRect();
     const w = 250; // 与 .tpx-pop 的 CSS 宽度一致（不一致会让浮层歪一边）
@@ -1263,8 +1277,8 @@ function renderTimePicker(container, initial, opts = {}) {
     pop.style.top = top + 'px';
     requestAnimationFrame(() => center(pop));
   };
+  const ctl = bindAutoHide(pop, chip);
   chip.onclick = (e) => { e.stopPropagation(); open(); };
-  bindAutoHide(pop, chip);
 
   return {
     get: time,
@@ -1355,7 +1369,7 @@ function renderTzPicker(container, initial) {
     pop.style.left = left + 'px';
     pop.style.top = top + 'px';
     // 鼠标移开（胶囊或列表）→ 自动收起；点中某一项就是确定（立即生效并收起）
-    bindAutoHide(pop, btn);
+    bindAutoHide(pop, btn).own();
   };
   container.innerHTML = '';
   container.appendChild(btn);
@@ -1403,6 +1417,39 @@ function watchNewDay() {
 setInterval(watchNewDay, 20000);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') watchNewDay(); });
 
+// ---------- 「自动检查」心跳 ----------
+// 定时任务每分钟都会来「看一眼」（不一定要签到）。所以：
+//   · 45 分钟内有过记录 → 自动执行是活的，直接显示它上次看了什么；
+//   · 超过 45 分钟没记录 → 它停摆了，必须显式告警。
+// 为什么值得专门做这块：定时任务默默不跑时，面板上什么都不会变，
+// 用户看到的只是「时间到了却没签到」——根本无从下手。
+function beatDayOf(ts, tz) {
+  try {
+    const p = {};
+    for (const x of new Intl.DateTimeFormat('en-CA', { timeZone: tz || SCHED_TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(ts))) p[x.type] = x.value;
+    return `${p.year}-${p.month}-${p.day}`;
+  } catch { return ''; }
+}
+function beatShort(ts, tz) {
+  let hm = '';
+  try {
+    hm = new Intl.DateTimeFormat('zh-CN', { timeZone: tz || SCHED_TZ, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ts));
+  } catch { hm = new Date(ts).toLocaleTimeString('zh-CN', { hour12: false }).slice(0, 5); }
+  const d = beatDayOf(ts, tz);
+  return d === todayInTz(tz || SCHED_TZ) ? hm : `${d.slice(5)} ${hm}`;
+}
+function schedBeatText(s) {
+  const last = s && s.last;
+  const at = Number((last && last.at) || (s && s.cron_at) || 0) || 0;
+  if (!at) return '自动检查：暂无记录';
+  const minutes = Math.round((Date.now() - at) / 60000);
+  if (minutes > 45) {
+    const hours = minutes >= 120 ? `已停 ${Math.round(minutes / 60)} 小时` : `已停 ${minutes} 分钟`;
+    return `⚠️ 自动检查${hours}（最后一次 ${beatShort(at, s && s.tz)}）—— 请确认面板已部署最新版、且 Cron 触发器仍在`;
+  }
+  if (last && Number(last.ran) > 0) return `自动检查 ${beatShort(at, s && s.tz)}（到点 ${last.ran} 个 · 成功 ${last.ok}）`;
+  return `自动检查 ${beatShort(at, s && s.tz)}（本轮没有账号到点）`;
+}
 async function loadSchedule() {
   try {
     const s = await api('/api/schedule');
@@ -1410,7 +1457,7 @@ async function loadSchedule() {
     SCHED_TZ = s.tz || 'Asia/Shanghai';
     // 规范化显示：旧的 "08" 显示为 "08:00"
     const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
-    $('sched-line').textContent = `全局签到 ${displayTime}（${tzLabel(s.tz)}）· 到点自动执行，也能手动点「执行」`;
+    paintSchedLine(s, displayTime);
     // 全局签到时间：紧凑胶囊（点开滚轮浮层），noFollow 因为它就是「全局」本身
     if (!schedPicker) schedPicker = renderTimePicker($('sched-tp'), displayTime, { noFollow: true, large: true });
     else schedPicker.set(displayTime);
@@ -1418,6 +1465,18 @@ async function loadSchedule() {
     else tzPicker.set(s.tz);
   } catch (e) { $('sched-line').textContent = '全局签到时间加载失败'; }
 }
+function paintSchedLine(s, displayTime) {
+  $('sched-line').textContent = `全局签到 ${displayTime}（${tzLabel(s.tz)}）· 到点自动执行，也能手动点「执行」· ${schedBeatText(s)}`;
+}
+// 只刷新顶部那行心跳，不动时间/时区选择器。
+// （必须分开：整块重渲染会在用户正点开浮层时把浮层关掉 —— 那就是「刚点开就没了」。）
+setInterval(async () => {
+  try {
+    const s = await api('/api/schedule');
+    const displayTime = s.time && s.time.includes(':') ? s.time : (s.time || '08') + ':00';
+    paintSchedLine(s, displayTime);
+  } catch { /* 离线时不打扰用户 */ }
+}, 60000);
 
 $('btn-save-sched').onclick = async () => {
   try {
@@ -2052,9 +2111,13 @@ let ACCTS = [];
 const SITE_MODE_HINT = {
   wuaipojie: '吾爱破解主站被网宿 WAF 保护：脚本化请求（含本地中继）整站读不到，已自动改用「浏览器导航签到」——点下面的「🌐 浏览器签到」立即执行，或直接点「执行」（也会自动走这条路）',
   nodeseek: 'NodeSeek 登录有人机验证、CF 网络又没有 IPv6：CF 直连不通时会自动改走「本地网络」，不用手动切',
-  // 糊涂鳄实测（2026-09-28）：从 CF 直连完全正常（首页 200、签到接口 0.4 秒返回），
-  // 反倒是以前被塞进本地中继队列才变成「中继超时」的假失败 —— 别再建议用户切本地网络。
-  hutue: '糊涂鳄的签到接口从 CF 网络直连正常（实测 0.4 秒返回），保持默认即可；万一直连被拦，会自动改走「本地网络」',
+  // 糊涂鳄这一个站点模块管着**两个独立站点**，它们对 CF 出口的待遇完全不同，
+  // 所以这里的说法必须同时盖住两个域名，否则对其中一个必然是误导：
+  //   · dj.hutue.cn：CF 直连正常（实测首页 200、签到接口 0.4 秒返回）；
+  //   · hutue.cn   ：2026-09-29 实测从 CF 出口整站被站点 WAF 拦（连 robots.txt 都回
+  //                  `error code: 1002`），只能走「本地网络」，因此签到时会借你的浏览器
+  //                  后台打一个页面（不抢焦点、用完自动关）。
+  hutue: '糊涂鳄分两个独立站：dj.hutue.cn 从 CF 网络直连正常；hutue.cn 在 CF 出口被站点 WAF 整站拦死（实测连 robots.txt 都是 error code 1002），默认走「本地网络」，签到时会用你浏览器后台开一个页面代发请求（不抢焦点、用完自动关）。两条路线走不通都会自动换另一条，保持「自动」即可',
   kanxue: '看雪在 CF 网络常被拦：直连失败会自动改走「本地网络」，不用手动切',
   misign: 'Discuz 论坛多数会拦机房 IP：直连失败会自动改走「本地网络」，不用手动切',
   v2ex: 'V2EX 在 CF 网络常被拦：直连失败会自动改走「本地网络」，不用手动切',

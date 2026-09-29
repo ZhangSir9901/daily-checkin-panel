@@ -66,18 +66,42 @@ export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 300
     }
     if (job.status === 'done') {
       let respUrl = '';
+      let respHeaders = {};
       try {
-        const h = JSON.parse(job.resp_headers || '{}');
+        respHeaders = JSON.parse(job.resp_headers || '{}') || {};
         // 扩展回传的最终 URL 存在 headers 的 x-relay-url（如果有）
-        respUrl = h['x-relay-url'] || '';
-      } catch { /* 忽略 */ }
+        respUrl = respHeaders['x-relay-url'] || '';
+      } catch { /* 回传的头不是合法 JSON：当作没有头，别在这里抛错把结论带偏 */ }
+      const respStatus = Number(job.resp_status || 0) || 0;
+      const respBody = job.resp_body || '';
+      // 「完成了，但什么都没带回来」——这是**链路**没把响应交回来，不是站点返回空。
+      //
+      // 【踩坑 2026-09-28 线上】以前这里如数把空响应交给站点模块，模块看到「（无响应）」
+      // 就把它当成「站点不认这个接口」，把 user_qiandao 等候选接口一个个重打一遍，
+      // 最后在面板上写「签到失败：… 站点不认这个接口」—— 结论完全是错的，
+      // 用户看到的就是「本地网络签到失败」，而站点其实一直回答得好好的。
+      // 现在在这里就停下：明确告诉用户是这条路的响应丢了，并给出可执行的下一步。
+      if (!respStatus && !respBody) {
+        // 建议部分**不写死路线**：这里不知道用户在「执行方式」里固定了什么、
+        // 另一条路线到底能不能用（扩展在不在线）。写死「切回自动就会改走 CF 直连」
+        // 在「本来就固定着 CF 直连」的账号上是一句会误导人的废话 ——
+        // 具体该切哪条、为什么切不过去，由 runner 拿到全局信息后补上。
+        const err = new Error(
+          '本地网络失败：扩展执行了请求，但没把网站的响应带回来（空响应）。这多半是中继链路的问题，不是站点的问题；'
+          + '可确认扩展已升级到最新版并重新加载，或在「执行方式」里换另一条路线重试。'
+        );
+        err.outcome = 'relay';
+        err.detail = where + '｜中继回传里没有状态码、也没有正文';
+        throw err;
+      }
       return {
-        status: job.resp_status || 0,
-        headers: JSON.parse(job.resp_headers || '{}'),
-        body: job.resp_body ? b64decode(job.resp_body) : new Uint8Array(0),
+        status: respStatus,
+        headers: respHeaders,
+        body: respBody ? b64decode(respBody) : new Uint8Array(0),
         url: respUrl,
       };
     }
+    // running（扩展已领走、正在执行）与 pending 一样：继续等，不是失败也不是完成。
     await sleep(pollMs);
   }
   const err = new Error('等待本地网络响应超时：扩展没有在 ' + Math.round(timeoutMs / 1000) + ' 秒内回传（扩展可能休眠、被关闭，或未配置 API Key）');
@@ -95,7 +119,10 @@ export async function relayFetch(db, url, init = {}) {
     method: init.method || 'GET',
     headers: init.headers || {},
     body: init.body || null,
-    options: { redirect: init.redirect },
+    // foreground 必须一起透传：README / 站点模块里写的 `fetch(url, { foreground: true })`
+    // 是「超时可以把标签页提到前台重试」的唯一开关（queueRelayJob 支持它，但这里曾经漏传，
+    // 于是那个开关怎么开都没用）。默认不带 = 永远不抢焦点。
+    options: { redirect: init.redirect, foreground: init.foreground },
   });
   const { status, headers, body, url: finalUrl } = await waitRelayResult(db, jobId);
   const headerBag = {};

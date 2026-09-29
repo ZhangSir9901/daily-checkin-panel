@@ -376,6 +376,9 @@ async function handleApi(req, env, url) {
     const st = status === 'done' ? 'done' : 'failed';
     await env.DB.prepare("UPDATE ext_commands SET status=?, result=?, updated_at=? WHERE id=? AND status='pending'")
       .bind(st, String(result || '').slice(0, 500), Date.now(), cid).run();
+    // 顺手清理已经处理完的旧指令：这些行以前只被标成 done/failed、从来没人删，会慢慢堆着。
+    await env.DB.prepare("DELETE FROM ext_commands WHERE status != 'pending' AND updated_at < ?")
+      .bind(Date.now() - 3600000).run().catch(() => {});
     return json({ ok: true });
   }
 
@@ -407,11 +410,14 @@ async function handleApi(req, env, url) {
   //
   // POST /api/external/relay { url, method, headers, body } → { job_id }
   //   body 为 base64（可空）；headers 为对象
-  // GET /api/external/relay/:id → { status: pending|done|failed, response?, error? }
+  // GET /api/external/relay/:id → { status: pending|running|done|failed, response?, error? }
   //   response: { status, headers, body_base64 }
+  //   running = 已被扩展领走（租约中），还没回传结果 —— 必须单独报出来，
+  //   不能落进「done」的兜底分支（那会让面板看到「完成了但响应是空的」）。
   // GET /api/external/relay-pending → { jobs: [{ id, url, method, headers, body_base64 }] }（扩展轮询）
   // POST /api/external/relay/:id/result { status, headers, body_base64 } 或 { error }
-  //   扩展执行完成后回传
+  //   扩展执行完成后回传。**租约中的任务（running）也要收**：任务一被领走就是 running，
+  //   只认 pending 会让每一次真实回传都落空（2026-09-28 线上「本地网络全废」的真凶）。
 
   // Worker 提交中继请求
   if (path === '/api/external/relay' && method === 'POST') {
@@ -449,6 +455,11 @@ async function handleApi(req, env, url) {
     const job = await env.DB.prepare('SELECT * FROM relay_jobs WHERE id = ?').bind(mRelayGet[1]).first();
     if (!job) return json({ error: '任务不存在' }, 404);
     if (job.status === 'pending') return json({ status: 'pending' });
+    // 租约中（扩展已经领走、正在执行）：如实报 running。
+    // 【踩坑】以前没有这一条，running 会落到下面「done」的兜底分支，面板看到的就是
+    // 「任务完成了，但状态/正文全是空」—— 于是「本地网络」这条路被误诊成「站点返回空」，
+    // 站点模块再据此得出「站点不认这个接口」的错误结论（线上糊涂鳄就是这么报错的）。
+    if (job.status === 'running') return json({ status: 'running' });
     if (job.status === 'failed') return json({ status: 'failed', error: job.error || '执行失败' });
     return json({
       status: 'done',
@@ -524,11 +535,15 @@ async function handleApi(req, env, url) {
     if (deny) return deny;
     const { status, headers, body_base64, error } = await readBody(req);
     const now = Date.now();
+    // 租约中的任务（running）同样要接受回传：任务一被领走就已标记为 running，
+    // 只写 status='pending' 的话每一次真实回传都会匹配 0 行 —— 面板永远拿不到响应，
+    // 等到超时再报「扩展没有在 2 分钟内回传」，而扩展其实早就答完了。
+    // （结果只能写一次：写入后状态变 done，第二次回传自然不会命中。）
     if (error) {
-      await env.DB.prepare("UPDATE relay_jobs SET status='failed', error=?, updated_at=? WHERE id=? AND status='pending'")
+      await env.DB.prepare("UPDATE relay_jobs SET status='failed', error=?, updated_at=? WHERE id=? AND status IN ('pending','running')")
         .bind(String(error).slice(0, 500), now, mRelayResult[1]).run();
     } else {
-      await env.DB.prepare("UPDATE relay_jobs SET status='done', resp_status=?, resp_headers=?, resp_body=?, updated_at=? WHERE id=? AND status='pending'")
+      await env.DB.prepare("UPDATE relay_jobs SET status='done', resp_status=?, resp_headers=?, resp_body=?, updated_at=? WHERE id=? AND status IN ('pending','running')")
         .bind(
           Number(status) || 0,
           JSON.stringify(headers || {}),
@@ -713,15 +728,10 @@ async function handleApi(req, env, url) {
     const acc = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(id).first();
     if (!acc) return json({ error: '账号不存在' }, 404);
 
-    // 手动执行单个账号（browser 模式由浏览器扩展执行，面板不直接执行）
+    // 手动执行单个账号
+    // （执行方式由 runner.js 统一决定：账号的 meta.execution、站点默认值、
+    //   以及「走不通就自动换另一条」都在那里 —— 这里不再重复算一个没人用的 execMode）
     if (mAcc[2] === '/run' && method === 'POST') {
-      const site = getSite(acc.site, await loadCustomSites(env));
-      let execMode = site?.execution || 'server';
-      try {
-        const m = JSON.parse(acc.meta || '{}');
-        if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
-      } catch { /* 忽略 */ }
-      // 浏览器模式已并入本地中继：直接执行，扩展在线即走用户本地网络（见 runner.js）
       const r = await runAccount(env, acc);
       return json({ ok: r.status === 'ok', result: r });
     }
@@ -838,7 +848,12 @@ async function handleApi(req, env, url) {
   if (path === '/api/schedule' && method === 'GET') {
     const time = (await getSetting(env.DB, 'schedule_time')) || '08';
     const tz = (await getSetting(env.DB, 'schedule_tz')) || 'Asia/Shanghai';
-    return json({ time, tz });
+    // 心跳：面板据此显示「自动执行还活着吗」。
+    // 没有它的时候，定时任务一旦停摆，用户只能看到「账号没签上」，完全不知道为什么。
+    let last = null;
+    try { last = JSON.parse((await getSetting(env.DB, 'cron_last_result')) || 'null'); } catch { last = null; }
+    const cron_at = Number((await getSetting(env.DB, 'cron_last_at')) || '0') || 0;
+    return json({ time, tz, last, cron_at });
   }
   if (path === '/api/schedule' && method === 'PUT') {
     const { time, tz } = await readBody(req);
@@ -1053,6 +1068,8 @@ export default {
       if (url.pathname.startsWith('/api/')) return await handleApi(req, env, url);
       // 扩展下载：动态生成 zip，把当前面板地址注入进去（扩展自动带出面板地址；API Key 仍需手动填）
       if (url.pathname === '/cookie-helper-extension.zip') return await handleExtZip(req, env);
+      // 旧地址保留（老书签/老文档照旧能下）；新地址不再带版本号
+      if (url.pathname === '/checkin-helper.zip') return await handleExtZip(req, env);
       if (url.pathname === '/cookie-plugin-2.2.zip') return await handleExtZip(req, env);
       // 非 API 请求交给静态资源（public 目录）
       if (env.ASSETS) {
@@ -1080,7 +1097,8 @@ export default {
           //                    { accountId: "YYYY-MM-DD HH:MM@YYYY-MM-DD HH:MM" }（失败/结果未知，带尝试时刻）
           let lastMap = {};
           try { lastMap = JSON.parse((await getSetting(env.DB, 'sched_last_map')) || '{}'); } catch { /* 忽略 */ }
-          const { results } = await env.DB.prepare('SELECT id, site, meta FROM accounts WHERE enabled = 1').all();
+          // 带上 name：定时日报要按账号名列出来
+          const { results } = await env.DB.prepare('SELECT id, site, name, meta FROM accounts WHERE enabled = 1').all();
           const now = new Date();
           // 单次 Cron 的时间预算：宁可少跑几个账号，也不要让本次执行拖过一分钟 ——
           // 上一次还没跑完、下一分钟又来一轮，会同时往中继队列里塞任务，扩展（单飞执行）根本跟不上，
@@ -1088,44 +1106,101 @@ export default {
           // 没跑到的账号下一分钟自然会轮到（它们的 key 还没写）。
           const startedAt = Date.now();
           const BUDGET_MS = 45000;
+          // 【必须有这一行】以前它只被赋值、没有声明。ES 模块是严格模式，
+          // 第一个到点的账号执行到 `changed = true` 就会抛 ReferenceError，
+          // 而这个异常被下面那个大 try 吞掉 —— 表现就是：每分钟的定时任务都在
+          // 这里整体中断，面板上「时间到了却什么都没发生」，日志里一条都看不到。
+          let changed = false;
+          let ranCount = 0;
+          let okCount = 0;
+          let failCount = 0;
+          let skipCount = 0;
+          const reportLines = [];
           for (const acc of results || []) {
             if (Date.now() - startedAt > BUDGET_MS) break;
-            // 执行模式：browser 由扩展执行，Worker 跳过；relay/server/auto 由 runner.js 统一处理
-            // （auto 时扩展在线则自动中继，否则云端直连）
-            const site = getSite(acc.site, await loadCustomSites(env));
-            let execMode = site?.execution || 'server';
+            // 【每个账号单独包一层】整段循环共用一个 try 时，任意一个账号抛异常
+            // （配置错误、站点模块 bug、D1 抖动…）都会让**后面所有账号都不再执行**，
+            // 面板上还看不出任何异常。现在一个账号出问题只影响它自己。
             try {
-              const m = JSON.parse(acc.meta || '{}');
-              if (m.execution === 'server' || m.execution === 'browser' || m.execution === 'relay') execMode = m.execution;
-            } catch { /* 忽略 */ }
-            // 浏览器模式已并入本地中继：不再跳过，由 runAccount 决定（扩展在线走本地网络，离线则记 skip）
-            const hour = accountHour(acc.meta, globalTime);
-            const lastKey = lastMap[String(acc.id)];
-            const { run, key, nowKey } = shouldRun(now, hour, tz, lastKey);
-            if (!run) continue;
-            changed = true;
-            // 【关键】先持久化「已尝试」再真正执行。
-            // 一次签到可能要等中继 90 秒，若 Worker 在这中间被回收，
-            // 原来「跑完再一起写」的写法会丢掉这个 key → 下一分钟又跑一遍 → 永远重复。
-            // 写失败形态（key@尝试时刻）后：若中途被打断，也只是过 15 分钟再补一次。
-            lastMap[String(acc.id)] = nextLastKey(key, nowKey, 'fail');
-            await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
-            let runRes = null;
-            try {
-              const full = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(acc.id).first();
-              if (full) runRes = await runAccount(env, full);
+              // 执行方式交给 runner.js 统一决定（账号 meta.execution 在 runner 里读；
+              // 站点默认值也由 runner 用 site.execution / executionFor 处理）。
+              const hour = accountHour(acc.meta, globalTime);
+              const lastKey = lastMap[String(acc.id)];
+              const { run, key, nowKey } = shouldRun(now, hour, tz, lastKey);
+              if (!run) continue;
+              changed = true;
+              ranCount++;
+              // 【关键】先持久化「已尝试」再真正执行。
+              // 一次签到可能要等中继 90 秒，若 Worker 在这中间被回收，
+              // 原来「跑完再一起写」的写法会丢掉这个 key → 下一分钟又跑一遍 → 永远重复。
+              // 写失败形态（key@尝试时刻）后：若中途被打断，也只是过 15 分钟再补一次。
+              lastMap[String(acc.id)] = nextLastKey(key, nowKey, 'fail');
+              await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
+              let runRes = null;
+              try {
+                const full = await env.DB.prepare('SELECT * FROM accounts WHERE id = ?').bind(acc.id).first();
+                if (full) runRes = await runAccount(env, full);
+              } catch (e) {
+                console.error('[cron] account', acc.id, e);
+              }
+              // 成功（或已交给扩展去做）才改成「今天不用再跑」；否则保留失败形态等自动补跑。
+              if ((runRes && runRes.status === 'ok') || (runRes && runRes.retryable === false)) {
+                lastMap[String(acc.id)] = key;
+                await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
+              }
+              // 日报用：把这一轮的真实结论收起来（status 拿不到就按失败计）
+              const st = (runRes && runRes.status) || 'fail';
+              if (st === 'ok') okCount++;
+              else if (st === 'skip') skipCount++;
+              else failCount++;
+              const icon = st === 'ok' ? '✅' : st === 'skip' ? '⏭️' : '❌';
+              reportLines.push(`${icon} ${acc.name || acc.site}：${String((runRes && runRes.message) || '（无反馈）').slice(0, 200)}`);
+              // 账号之间稍作间隔，降低被目标站点限流的概率
+              await new Promise((r) => setTimeout(r, 1200));
             } catch (e) {
               console.error('[cron] account', acc.id, e);
             }
-            // 成功（或已交给扩展去做）才改成「今天不用再跑」；否则保留失败形态等自动补跑。
-            if ((runRes && runRes.status === 'ok') || (runRes && runRes.retryable === false)) {
-              lastMap[String(acc.id)] = key;
-              await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
-            }
-            // 账号之间稍作间隔，降低被目标站点限流的概率
-            await new Promise((r) => setTimeout(r, 1200));
           }
-          if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap));
+          if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
+
+          // 心跳：记下「这次自动检查是什么时候跑的、跑了几个」。
+          // 没到点的大多数分钟（ranCount=0）不必写库，所以最多半小时写一次 ——
+          // 这样面板既能显示「自动执行还活着」，也几乎不增加 D1 写入。
+          // 【顺序】心跳要写在推送日报**之前**：webhook 万一挂住不动，
+          // 用户至少还能从心跳看出「定时任务确实跑过了」，而不是一片空白。
+          const prevBeat = Number((await getSetting(env.DB, 'cron_last_at').catch(() => '0')) || 0) || 0;
+          if (ranCount > 0 || Date.now() - prevBeat > 30 * 60000) {
+            const beat = { at: Date.now(), ran: ranCount, ok: okCount, total: (results || []).length, planned: changed };
+            await setSetting(env.DB, 'cron_last_at', String(beat.at)).catch(() => {});
+            await setSetting(env.DB, 'cron_last_result', JSON.stringify(beat)).catch(() => {});
+          }
+
+          // ---- 定时签到日报（推送通知）----
+          // 【以前只有手动点「全部执行」才会推送】README 承诺的是「每天定时自动签到 + 推签到日报」，
+          // 而 runAll()（带推送的那个）只被 /api/run-all 调用，定时任务是逐账号跑 runAccount 的 ——
+          // 于是自动签到这条路上**永远收不到任何通知**，用户只能自己回面板看。
+          // 现在补上：一轮真的跑了账号就推送一次，同一天只推一次（失败后的自动补跑不再重复刷）。
+          if (ranCount > 0) {
+            try {
+              const reportDay = dayInTz(now, tz);
+              if ((await getSetting(env.DB, 'notify_report_day')) !== reportDay) {
+                const body = `自动签到：成功 ${okCount} 个 · 跳过 ${skipCount} 个 · 失败 ${failCount} 个\n`
+                  + reportLines.join('\n')
+                  + '\n（有失败/跳过的，面板会在 15 分钟后自动补跑一次，以面板上的最终结果为准）';
+                const { sendNotify } = await import('./notify.js');
+                await sendNotify(env, env.DB, '签到日报（自动）', body);
+                await setSetting(env.DB, 'notify_report_day', reportDay).catch(() => {});
+              }
+            } catch (e) {
+              console.error('[cron] 推送日报失败', e);
+            }
+          }
+          // 运行日志只保留最近 500 条。
+          // （手动「全部执行」那条路一直有这一步，定时这条路没有 —— 而失败重试每小时会写好几条，
+          //   长期不清理只会让 runs 表一直长。）
+          if (ranCount > 0) {
+            await env.DB.prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 500)')
+              .run().catch(() => {});          }
         } catch (e) {
           console.error('[cron]', e);
         }

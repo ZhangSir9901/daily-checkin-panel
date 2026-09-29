@@ -207,6 +207,46 @@ function definitive(message, sig, detail) {
   return { done: true, result: { ok: false, message, outcome: (sig && sig.outcome) || '', detail } };
 }
 
+// 「请求根本没发出去」和「发出去了但没等到回包」必须分开——两者后续该做的事完全相反：
+//   · 连不上（fetch failed / DNS 解析不了 / 连接被拒 / TLS 握手失败）→ 这条出口连站点都到不了，
+//     换个出口重试是对的，而且肯定不会「签两次」（上一次压根没发出去）；
+//   · 没等到回包（超时）→ 请求很可能已经送达（签到可能已生效），换出口重发就有可能签两次。
+// 线上 2026-09-28：糊涂鳄被固定走「CF 网络」时，CF 出口对 hutue.cn 就是这个连不上/被拦的情形，
+// 以前一律归成「结果未知」，于是那一行永远只显示「结果未知」，明明换条路就能签上。
+function couldNotSend(em) {
+  const m = String(em || '');
+  if (!m) return false;
+  if (/超时|timeout|timed out|没等到回包|没收到回包/i.test(m)) return false;
+  return /fetch failed|ENOTFOUND|ECONNREFUSED|ECONNRESET|EAI_AGAIN|getaddrinfo|ENETUNREACH|socket|handshake|certificate|SSL|TLS|network|连不上|无法连接|连接被拒/i.test(m);
+}
+
+// 这条出口到不了本站：按「出口不通」报（runner 会自动换另一条路线重试）。
+function routeDead(action, em, trace) {
+  const e = new Error(`${action}：连不上站点（${String(em).slice(0, 120)}）—— 这条网络出口到不了本站，不是在站点那边签到失败`);
+  e.outcome = 'relay';
+  e.detail = detailOf(action, '', trace);
+  return e;
+}
+
+// 空响应（既没状态码、也没正文）是**链路**的空白，不是站点对接口的回答。
+//
+// 【踩坑 2026-09-28 线上】“本地网络”中继那一天把响应丢了，面板只看到「（无响应）」，
+// 本模块于是把 user_qiandao / xb_user_qiandao / … 五个候选接口一个个判成
+// 「站点不认这个接口」，最后写出一句「签到失败：… 站点不认这个接口」——
+// 站点明明一直在正常回答，用户看到的却是「本地网络签到失败」。
+// 现在碰到空响应立即停下，并把「这不是站点的问题」和可执行的下一步说清楚。
+function emptyResponse(what) {
+  // 建议部分不写死另一条路线：站点模块看不到用户固定了哪条、扩展在不在线。
+  // （写死「切回自动就会改走 CF 直连」在「本来就固定着 CF 直连」的账号上是误导。）
+  // 具体该换哪条、为什么换不过去，由 runner 拿到全局信息后补在反馈末尾。
+  const e = new Error(
+    `${what}没有带回任何响应（空响应）。这多半是链路问题（例如「本地网络」中继没把响应交回来），不是站点不认这个接口；`
+    + '可确认浏览器扩展已升级到最新版并重新加载，或在「执行方式」里换另一条路线重试。'
+  );
+  e.outcome = 'relay'; // 网络层失败 → 自动模式会换另一条路线重试
+  return e;
+}
+
 // 「站点不认这个接口」的判定 —— 只有这种情况才允许换下一个 action。
 //
 // 为什么必须分清：WordPress 对不存在的 action 会**原样返回字符串 "0"**，插件也可能回
@@ -245,7 +285,7 @@ function detailOf(action, raw, trace) {
 export const hutue = {
   id: 'hutue',
   name: '糊涂鳄',
-  desc: '糊涂鳄资源站每日签到（WordPress/RiPro 悬浮窗）。支持 hutue.cn 与 dj.hutue.cn，自动发现签到接口。',
+  desc: '糊涂鳄资源站每日签到（WordPress/RiPro 悬浮窗）。支持 hutue.cn 与 dj.hutue.cn（两站独立），自动发现签到接口、按域名选出口。',
   // 默认走 CF 直连。
   //
   // 【实测依据，2026-09-28】本站从 Cloudflare 机房 IP 直连完全正常：
@@ -256,6 +296,17 @@ export const hutue = {
   // 面板记「失败」而网站其实早就签好了 —— 用户看到的就是「面板跟网站对不上」。
   // 现在 runner 的自动模式是「server 站先直连、走不通才换本地网络」（见 runner.js 的 isRouteFailure）。
   execution: 'server',
+  // 但同一个模块管着两个**独立站点**，它们的「CF 出口能不能用」并不一样：
+  //   · dj.hutue.cn：从 CF 直连完全正常（首页 200、签到接口 0.4 秒回）
+  //   · hutue.cn   ：2026-09-28 实测从 CF 机房 IP 连**首页**都被站点 WAF 回 `error code: 1002`
+  //                  （`/api/http-test` 实测），而本机 IP 直连签到接口 178ms 就正常回答。
+  // 所以默认路线按域名给：hutue.cn 默认走「本地网络」，dj 默认走「CF 直连」。
+  // 手动切换仍然优先，自动模式下走不通也会自动换另一条。
+  executionFor(siteUrl) {
+    const h = String(siteUrl || '').toLowerCase();
+    if (/hutue\.cn/.test(h) && !/dj\.hutue\.cn/.test(h)) return 'relay';
+    return 'server';
+  },
   domain: 'dj.hutue.cn', // 默认域名；实际按账号的 site_url 动态决定
   // 本站「一天」按 UTC 算（= 北京时间 08:00 重置），不是面板时区的 00:00。
   // 依据（2026-09-28 线上日志）：9/28 00:33 / 07:04 / 07:56（北京）三次站点都回
@@ -288,7 +339,7 @@ export const hutue = {
       placeholder: '留空用默认；扩展会自动抓取',
     },
   ],
-  tips: '先在浏览器中登录站点（首页右侧会出现「打卡签到」悬浮窗，每天 5 晶石）→ 用扩展「一键发送到签到面板」→ 面板会自动识别并保存。面板认的是悬浮窗按钮真正绑定的接口（RiPro 的 user_qiandao）；站点还有另一个长得很像的「会员中心首页签到」（只给 1 积分），不会被误用。hutue.cn 和 dj.hutue.cn 是两个独立站点，需要分别添加账号。注意：本站按 UTC 计日，北京时间 08:00 才算它新的一天——签到时间建议设在 08:05 之后。面板默认用 CF 网络直连本站（实测 0.4 秒返回，比借本机网络更快更稳），万一直连被拦会自动改走「本地网络」。',
+  tips: '先在浏览器中登录站点（首页右侧会出现「打卡签到」悬浮窗，每天 5 晶石）→ 用扩展「一键发送到签到面板」→ 面板会自动识别并保存。面板认的是悬浮窗按钮真正绑定的接口（RiPro 的 user_qiandao）；站点还有另一个长得很像的「会员中心首页签到」（只给 1 积分），不会被误用。hutue.cn 和 dj.hutue.cn 是两个独立站点，需要分别添加账号。注意：本站按 UTC 计日，北京时间 08:00 才算它新的一天——签到时间建议设在 08:05 之后。执行路线按域名自动给：dj.hutue.cn 默认走「CF 网络」（实测 0.4 秒返回，比借本机网络更快更稳）；hutue.cn 默认走「本地网络」。hutue.cn 在 CF 出口是**整站**被拦的（2026-09-29 复核：从 CF 机房 IP 不仅首页 200 不到，连 /robots.txt、/wp-admin/admin-ajax.php 都回 `error code: 1002`），所以它只能借你的本机网络 —— 签到期间扩展会在后台开一个 hutue.cn 的页面代发请求（不会抢焦点，同一个域名只开一个、用完 45 秒后自动关）。两条路线走不通时都会自动换另一条，「执行方式」保持「自动」即可。',
 
   async run(creds, ctx = {}) {
     const base = normBase(creds.site_url);
@@ -320,6 +371,8 @@ export const hutue = {
     try {
       const res = await fetch(base + '/', { headers });
       const html = await res.text();
+      // 首页都读成空的时候别再往下猜了：这只说明这条链路没把响应带回来。
+      if (!String(html || '').trim()) throw emptyResponse('站点首页');
       const d = discoverSignin(base, html);
       if (d.ajaxUrl) ajaxUrl = d.ajaxUrl;
       for (const a of d.actions) seenActions.push(a);
@@ -454,6 +507,9 @@ export const hutue = {
         raw = r0.raw;
       } catch (e) {
         const em = String((e && e.message) || e);
+        // 连不上：没发出去的请求重试一次也一样，直接按「这条出口不通」上报，
+        // 交给 runner 换另一条路线（固定路线时也会临时兜底）。
+        if (couldNotSend(em)) throw routeDead(t.action, em, trace);
         // 超时只说明**我们没等到回包**，请求很可能已经送达站点（站点可能已经签成功了）。
         // 所以先重打一次同一个 action：上一次若真生效，站点这次会直接回「今日已签到」。
         note(`${t.action}：首次请求超时（${em.slice(0, 50)}），重试一次以确认到底送达没有`);
@@ -464,6 +520,7 @@ export const hutue = {
           raw = r1.raw;
         } catch (e2) {
           const em2 = String((e2 && e2.message) || e2);
+          if (couldNotSend(em2)) throw routeDead(t.action, em2, trace);
           timeoutFail = `请求已发出但没等到回包（${em2.slice(0, 100)}）`;
           lastReason = `${t.action}：${timeoutFail}`;
           note(`${t.action}：重试仍无回包`);
@@ -473,6 +530,14 @@ export const hutue = {
 
       usedAction = t.action;
       usedRaw = raw;
+      // 空响应：不是「站点不认这个接口」，是这条链路没把响应带回来。
+      // 立刻停下 —— 换接口重打 5 次不会得到别的结果，只会白花用户的网络往返、
+      // 还给出错误的结论（详见 emptyResponse 的说明）。
+      if (!String(raw == null ? '' : raw).trim() && (!status || status <= 0)) {
+        const e = emptyResponse(`${t.action} 的请求`);
+        e.detail = detailOf(t.action, raw, trace);
+        throw e;
+      }
       const verdict = judgeSigninResponse(raw, status);
       if (verdict.done) {
         const r = verdict.result;

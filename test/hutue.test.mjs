@@ -304,4 +304,63 @@ await t('hutue：重试仍等不到回包 → 报「结果未知」（不是「�
   assert.doesNotMatch(err.message, /^签到失败/);
 });
 
+// ---------- 空响应 = 链路没把响应带回来，不是「站点不认这个接口」 ----------
+// 线上事故（2026-09-28，用户报「糊涂鳄用本地网络签到失败」）：
+// 「本地网络」中继把响应丢了，面板只看到「（无响应）」，本模块于是把 user_qiandao 等
+// 五个候选接口一个个判成「站点不认这个接口」，最后写出「签到失败：… 站点不认这个接口」——
+// 站点其实一直在正常回答（实测：带面板那份 Cookie 直连，user_qiandao 0.2 秒就回
+// {"status":"0","msg":"今日已签到，请明日再来"}）。
+await t('hutue：接口回空响应时不骂站点，也不许把 5 个候选接口挨个重打一遍', async () => {
+  let posts = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/')) return { status: 200, text: async () => HOME_REAL };
+    if (!/admin-ajax\.php/.test(u)) return { status: 0, text: async () => '' }; // 主题 JS 之类的附带请求不计
+    posts++;
+    // 中继丢响应时的样子：HTTP 状态 0、正文空
+    return { status: 0, text: async () => '' };
+  };
+  const err = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'c=x' }, { meta: {} }).catch((e) => e);
+  assert.ok(err instanceof Error);
+  assert.equal(err.outcome, 'relay', '要按网络层失败处理（自动模式才会计得换另一条路线）');
+  assert.match(err.message, /空响应/);
+  assert.match(err.message, /不是站点不认这个接口/);
+  // 站点模块不能自己写死「另一条路线是哪条」：它看不到用户固定了什么、扩展在不在线。
+  // 换哪条、为什么换不过去，由 runner 拿到全局信息后补在反馈末尾（见 route.test.mjs）。
+  assert.doesNotMatch(err.message, /CF 直连/, '不该在这里写死另一条路线');
+  assert.match(err.message, /换另一条路线重试/, '但要给出可执行的下一步');
+  assert.doesNotMatch(err.message, /站点不认这个接口（已试/);
+  assert.equal(posts, 1, '只应该打一次就停下，不能把候选接口挨个重打（实际 ' + posts + ' 次）');
+});
+
+await t('hutue：首页都读成空时立刻停下，并如实说明是链路问题', async () => {
+  let posts = 0;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith('/')) return { status: 0, text: async () => '' };
+    if (!/admin-ajax\.php/.test(u)) return { status: 200, text: async () => '{}' };
+    posts++;
+    return { status: 200, text: async () => '{}' };
+  };
+  const err = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'c=x' }, { meta: {} }).catch((e) => e);
+  assert.ok(err instanceof Error);
+  assert.equal(err.outcome, 'relay');
+  assert.match(err.message, /站点首页没有带回任何响应/);
+  assert.equal(posts, 0, '首页就读空时不该再去打签到接口');
+});
+
+await t('hutue：正常的「返回 0」仍然是「站点不认这个接口」，不能被空响应规则吞掉', async () => {
+  const calls = mock((u, m) => {
+    if (u.endsWith('/')) return { body: HOME_REAL };
+    const body = String(m === 'POST' ? '' : '');
+    void body;
+    return { body: '0' };
+  });
+  const err = await hutue.run({ site_url: 'https://dj.hutue.cn', cookie: 'c=x' }, { meta: {} }).catch((e) => e);
+  assert.ok(err instanceof Error);
+  assert.notEqual(err.outcome, 'relay', '「0」是站点的真实回答，不是链路问题');
+  assert.match(err.message, /已试/, '所有候选都试完了才报失败');
+  assert.ok(calls.filter((c) => c.method === 'POST').length >= 3, '「站点不认接口」的路径仍然会换下一个接口试');
+});
+
 console.log(`\n${n} 组通过`);

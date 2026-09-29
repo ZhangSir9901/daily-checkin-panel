@@ -23,6 +23,9 @@ export const ROUTE_NAME = { server: 'CF 直连', relay: '本地网络' };
 export function shortReason(e) {
   const m = String((e && e.message) || e || '');
   if (/UrlACL|Forbidden|Client IP|\b40[13]\b/.test(m)) return '被机房 IP 拦';
+  // 「执行完了但响应丢了」优先级要高于下面的「扩展不在线」：
+  // 这条错误里也带「扩展」两字（是扩展执行了请求），但它不是离线，别误导用户。
+  if (/空响应|没把网站的响应带回来/.test(m)) return '没带回响应';
   if (/没等到回包|没有回包|没收到回包|结果未知/.test(m)) return '没等到回包';
   if (/超时|timeout|timed out/i.test(m)) return '超时';
   if (/fetch failed|network|ENOTFOUND|ECONN|EAI_AGAIN|socket|handshake|certificate|SSL|TLS/i.test(m)) return '连不上';
@@ -84,6 +87,11 @@ export async function runAccount(env, account) {
   // 换路记录：它是唯一能说清楚「面板为什么多打了一次」的线索，
   // 所以声明在 try 外面 —— 失败路径（catch）也要能把它写进 meta。
   const switchNotes = [];
+  // 每条路线「现在能不能用」的结论也放外面：失败提示要能告诉用户
+  // 「另一条路线是用不了还是没试过」，两句话的下一步完全不同。
+  let routeState = [];
+  // 这次实际试过的路线（catch 里要说清「另一条到底试没试」）
+  const triedRoutes = [];
   try {
     meta = JSON.parse(account.meta || '{}');
   } catch { /* 忽略 */ }
@@ -97,6 +105,10 @@ export async function runAccount(env, account) {
   try {
     const site = getSite(account.site, customSites);
     if (!site) throw new Error('未知站点：' + account.site);
+    // 先把凭据解出来：路线默认值可能是**按站点地址**决定的（见下面的 executionFor），
+    // 同一个站点模块可能管着多个域名，默认路线不一定相同。
+    const creds = await decryptJSON(env, db, account.creds);
+    const ctx = { env, db, account, meta };
 
     // ---- 执行路线解析（路线 = 这些 HTTP 请求从哪个网络出去）----
     // server = Cloudflare 机房直连；relay = 借用户本机网络（浏览器扩展中继）。
@@ -110,24 +122,42 @@ export async function runAccount(env, account) {
     //      （server 站先试直连，browser 站先试本地网络）；失败且属于网络层 → 换另一条再试一次。
     //   ③ 站点已有明确结论（Cookie 失效 / 人机验证 / 业务失败）→ 不换路，见 isRouteFailure 的说明。
     const manual = meta.execution || '';
-    const siteDefault = site.execution || 'server';
+    // 站点默认路线：优先问站点模块（它能按具体域名回答），否则用站点声明的静态值。
+    // 为什么需要按域名问：糊涂鳄这一个模块管两个独立站 ——
+    //   dj.hutue.cn 从 CF 直连完全正常；hutue.cn 从 CF 连**首页**都被站点 WAF 回
+     //   `error code: 1002`（实测 2026-09-28），只能走本地网络。
+    const siteDefault = (typeof site.executionFor === 'function' ? site.executionFor(creds && creds.site_url) : '') || site.execution || 'server';
     const lastRoute = meta.exec_route === 'relay' || meta.exec_route === 'server' ? meta.exec_route : '';
     let routePlan;
-    if (manual === 'relay' || manual === 'browser') routePlan = ['relay'];
-    else if (manual === 'server') routePlan = ['server'];
+    // 手动固定的那条路线**优先**，但另一条仍然留作兜底。
+    //
+    // 【语义修正 2026-09-28】原先把「手动固定」实现成「只走这一条，绝不用另一条」：
+    // 用户把 hutue.cn 固定成「CF 网络」后，而该域名从 CF 机房 IP 连首页都被站点 WAF
+    // 回 `error code 1002`（同日实测），于是每一轮都注定失败 —— 账号永远签不上，
+    // 面板上只有一句「遇到网站安全防护」。可那个账号走「本地网络」本来是能签的。
+    // 固定的本意是「优先用我指定的这条」，不是「宁可不签到也不用另一条」：
+    // 现在真的改走了会在「网站反馈」里写明「手动固定的 X 对本站不通，已临时改走 Y」，
+    // 并提示把「执行方式」切回「自动」，用户随时可以改回只走那一条。
+    const pinnedRoute = (manual === 'relay' || manual === 'browser') ? 'relay' : (manual === 'server' ? 'server' : '');
+    // 兜底与失败提示都要用到「手动固定的是哪条」，所以在这里定下来（catch 里取不到 try 内的局部量）。
+    const pinnedForPlan = pinnedRoute;
+    if (pinnedRoute) routePlan = [pinnedRoute, pinnedRoute === 'relay' ? 'server' : 'relay'];
     else {
-      const firstRoute = lastRoute || (siteDefault === 'browser' ? 'relay' : 'server');
+      // 站点默认路线：'relay'/'browser' 都表示「先走本地网络」，其余按「先走 CF 直连」。
+      // （踩过：以前只认 'browser'，于是站点按域名返回的 'relay' 默认值被默默当成 server，
+      //    hutue.cn 就会先去 CF 白撞一次 WAF。）
+      const firstRoute = lastRoute || (siteDefault === 'browser' || siteDefault === 'relay' ? 'relay' : 'server');
       routePlan = firstRoute === 'relay' ? ['relay', 'server'] : ['server', 'relay'];
     }
 
     const { isRelayAvailable, relayBacklog } = await import('./lib/relay.js');
     let skipReason = '';
     // 每条路线「现在能不能用」：直连总能试；本地中继要扩展在线、且队列不忙。
-    const routeState = [];
     for (const route of routePlan) {
       if (route !== 'relay') { routeState.push({ route }); continue; }
       if (!(await isRelayAvailable(db))) {
-        routeState.push({ route, skip: '需要浏览器扩展在线（本地网络中继）。请安装并打开扩展；或在面板把该账号切到「云端执行」。' });
+        // 文案不写死「切到云端执行」：固定走 CF 网络的账号看到这句会莫名（它本来就在 CF 上）。
+        routeState.push({ route, skip: '需要浏览器扩展在线（本地网络中继）。请安装并打开扩展（顶部会显示在线状态）后重试；若该站从 CF 网络也能访问，可在「执行方式」里选「CF 网络」。' });
       } else if ((await relayBacklog(db)) >= RELAY_BACKLOG_LIMIT) {
         // 扩展是单飞执行，队列已经堆了请求：现在再排只会一起超时（会记成失败）。
         routeState.push({ route, skip: '本地中继正忙（队列里还有未完成的请求，扩展会按顺序一个个执行），本次先跳过，稍后会自动重试。' });
@@ -136,7 +166,14 @@ export async function runAccount(env, account) {
       }
     }
     const runnable = routeState.filter((s) => !s.skip);
-    if (!runnable.length) {
+    // 固定那条路线现在**根本跑不了**（扩展离线 / 中继队列积压）时，不许拿另一条偷偷顶替：
+    // 这两种情况都是「此刻做不了」，不是「这条路对这个站点不通」——
+    // 如实报「跳过 · 稍后自动重试」，用户看得见原因，想换也随时能换。
+    // （真正会触发兜底的是另一件事：固定的那条**跑过了**且因网络层原因没成，见下面的换路逻辑。）
+    const pinnedSkipped = pinnedForPlan ? routeState.find((s) => s.route === pinnedForPlan && s.skip) : null;
+    if (pinnedSkipped) {
+      skipReason = `已固定走「${ROUTE_NAME[pinnedForPlan]}」，但现在用不了：${pinnedSkipped.skip}`;
+    } else if (!runnable.length) {
       skipReason = routeState.map((s) => s.skip).filter(Boolean).join(' ') || '没有可用的执行路线';
     }
     // 只能靠浏览器导航签到的站点（如吾爱破解）：扩展离线时「脚本化 + 中继」本身毫无意义，
@@ -189,14 +226,10 @@ export async function runAccount(env, account) {
       }
     }
 
-    const creds = await decryptJSON(env, db, account.creds);
-    const ctx = { env, db, account, meta };
-
     // 逐条路线尝试：网络层失败才换下一条，站点给出的业务结论一律照实回报。
     let res = null;
     let lastErr = null;
     let usedRoute = '';
-    const triedRoutes = [];
     for (const st of runnable) {
       triedRoutes.push(st.route);
       try {
@@ -222,7 +255,12 @@ export async function runAccount(env, account) {
       } catch (e) {
         lastErr = e;
         const alt = runnable.find((s) => !triedRoutes.includes(s.route));
-        if (alt && isRouteFailure(e)) {
+        // 「结果未知」例外：请求**已经发出去了**，只是没等到回包 —— 换个出口再发一遍
+        // 可能把同一次签到写两次，而且换条路也问不出「上一条到底送达没有」。
+        // 这种如实记「结果未知」并交给自动补跑复核（站点模块自己会重打同一接口确认），
+        // 比赌一次重发更靠谱。其余网络层失败（被机房 IP 拦、连不上、空响应）才是真该换路。
+        const unknown = (e && e.outcome) === 'relay-unknown';
+        if (alt && isRouteFailure(e) && !unknown) {
           // 这条网络出口不行，换另一条。记下来写进「网站反馈」，让用户能看出面板做了什么。
           switchNotes.push(`${ROUTE_NAME[st.route]}失败（${shortReason(e)}）`);
           continue;
@@ -236,9 +274,15 @@ export async function runAccount(env, account) {
     // 这次实际走的路线 + 换路记录。单独存在 meta 里（不塞进 detail）：
     // detail 是「网站原话」，要被反馈分类器读，混进我们自己的话会污染判断
     // （比如换路记录里的「超时」二字会让面板误报一条超时建议）。
-    meta.route_note = switchNotes.length
-      ? `自动改走 —— ${switchNotes.join('；')}`
-      : `路线：${ROUTE_NAME[usedRoute] || '未知'}`;
+    //
+    // 手动固定却改走了另一条：必须明说，并且写清「这是临时兜底、固定值没变」。
+    // 否则用户看到「明明固定了 CF 网络，怎么走成本地网络了」会以为是面板乱来。
+    const pinnedFallback = pinnedForPlan && usedRoute && usedRoute !== pinnedForPlan;
+    meta.route_note = !switchNotes.length
+      ? `路线：${ROUTE_NAME[usedRoute] || '未知'}`
+      : pinnedFallback
+        ? `手动固定的「${ROUTE_NAME[pinnedForPlan]}」对本站不通（${switchNotes.join('；')}），已临时改走「${ROUTE_NAME[usedRoute]}」——固定值没有改，想让面板自己挑路线就点「执行方式 → 自动」`
+        : `自动改走 —— ${switchNotes.join('；')}`;
 
     status = res.ok ? 'ok' : 'fail';
     message = String(res.message || '').slice(0, 800);
@@ -271,6 +315,31 @@ export async function runAccount(env, account) {
     } else {
       status = 'fail';
       message = rawMsg.slice(0, 800);
+    }
+
+    // 「手动固定了一条路线、而这条路对本站根本走不通」时，只写「失败」会让人以为站点坏了。
+    //
+    // 实测依据（2026-09-28）：hutue.cn 从 CF 机房直连连**首页**都被站点 WAF 回
+    // `error code: 1002`（同站的 dj.hutue.cn 从 CF 直连却完全正常）；而本机 IP 直连同一个
+    // 签到接口 178ms 就回 {"status":"0","msg":"今日已签到，请明日再来"}。
+    // 也就是说：站点没问题、面板也没问题，是「手动指定的那条出口」不对。
+    // （用 meta.execution 而不是 try 里的 manual：那个变量在 try 作用域内，catch 里取不到）
+    const pinned = String(meta.execution || '');
+    if (pinned && isRouteFailure(e)) {
+      const pinRoute = (pinned === 'browser' || pinned === 'relay') ? 'relay' : 'server';
+      const cur = ROUTE_NAME[pinRoute] || pinned;
+      const otherRoute = pinRoute === 'relay' ? 'server' : 'relay';
+      // 另一条路线这次是「用不了」还是「试了也没成」？两种情况给的话必须不一样：
+      //   · 用不了（如扩展不在线）→ 打开浏览器/装扩展就会自动重试，切「自动」也救不了；
+      //   · 试了没成 → 说明两条都不通，用户该去查 Cookie / 站点状态。
+      const otherSkip = (routeState.find((s) => s.route === otherRoute) || {}).skip || '';
+      const triedOther = triedRoutes.includes(otherRoute);
+      const advice = otherSkip
+        ? `另一条「${ROUTE_NAME[otherRoute]}」现在也用不了：${otherSkip}`
+        : triedOther
+          ? `另一条「${ROUTE_NAME[otherRoute]}」也试过了，同样没成 —— 两条出口都不通，多半是 Cookie 失效或站点在维护`
+          : `把该账号的「执行方式」切回「自动」，面板会改走「${ROUTE_NAME[otherRoute]}」重试`;
+      message = (message + `　（当前固定走「${cur}」，这条路线对本站不通；${advice}）`).slice(0, 1000);
     }
   }
 
