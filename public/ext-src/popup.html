@@ -55,6 +55,8 @@
   .update-tip .dl-btn:hover { background: var(--accent-hover); }
   .domain { font-size: 12px; color: var(--text-muted); line-height: 1.6; margin-bottom: 12px; word-break: break-all; }
   .domain .count { display: inline-block; background: var(--accent-soft); color: var(--accent-text); padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-left: 4px; }
+  .detect { font-size: 12px; color: var(--accent-text); background: var(--accent-soft); border-radius: 8px; padding: 6px 10px; margin: -6px 0 12px; line-height: 1.6; }
+  .detect.unknown { color: var(--text-muted); background: transparent; padding: 0 0 6px; }
   /* 按钮统一：都是描边风格，主按钮用强调色描边+淡底色，比次按钮更显眼 */
   button { width: 100%; padding: 11px; margin: 0 0 8px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: 1px solid transparent; background: transparent; }
   .primary { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
@@ -82,6 +84,7 @@
   </div>
   <div id="update-tip" class="update-tip" style="display:none"></div>
   <div class="domain"><span id="domain">正在读取当前网站…</span><span class="count" id="count" style="display:none"></span></div>
+  <div class="detect" id="detect" style="display:none"></div>
 
   <button class="primary" id="btn-send">一键发送到签到面板</button>
   <button class="secondary" id="btn-copy">📋 一键复制全部信息（含 UA）</button>
@@ -97,6 +100,7 @@
   <input id="api-key" type="password" placeholder="填入后面板点「执行」即用你的本机网络发请求">
   <button class="secondary" id="btn-check-conn">🔌 检查连接</button>
   <div id="status"></div>
+  <script src="detect.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

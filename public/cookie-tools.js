@@ -101,6 +101,10 @@ function parsePasteText(rawInput) {
       cookieList: Array.isArray(d.cookieList) ? d.cookieList : [],
       localStorage: d.localStorage && typeof d.localStorage === 'object' ? d.localStorage : {},
       stats: d.stats || null,
+      // 扩展 ≥2.20 的站点自动识别结果：{ site, confidence, reason }，只收白名单内的值
+      detectedSite: d.detectedSite && typeof d.detectedSite === 'object' && (d.detectedSite.confidence === 'high' || d.detectedSite.confidence === 'medium')
+        ? { site: String(d.detectedSite.site || '').slice(0, 32), confidence: d.detectedSite.confidence, reason: String(d.detectedSite.reason || '').slice(0, 120) }
+        : null,
       format: '扩展「一键复制全部信息」',
     };
   }

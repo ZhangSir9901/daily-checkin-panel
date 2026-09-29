@@ -1908,7 +1908,7 @@ function pasteCheck(info) {
     : { level: 'ok', items: [] };
   const items = base.items.slice();
   const dom = String(info.domain || '').toLowerCase();
-  const siteId = info.siteId || guessSiteByDomain(dom);
+  const siteId = info.siteId || pickDetectedSite(info) || guessSiteByDomain(dom);
   const site = SITES.find((s) => s.id === siteId);
   const mismatch = !!(site && site.domain && dom && regDomain(dom) !== regDomain(site.domain));
   if (!site) {
@@ -1945,7 +1945,7 @@ function refreshPasteState() {
     ckSetLive('✗ ' + (e && e.message ? e.message : e), 'bad');
     return null;
   }
-  info.siteId = guessSiteByDomain(info.domain || '');
+  info.siteId = pickDetectedSite(info) || guessSiteByDomain(info.domain || '');
   const chk = pasteCheck(info);
   const parts = splitCookieParts(info.cookie, info.cookieList);
   if (btn) btn.disabled = chk.level === 'bad';
@@ -2049,7 +2049,7 @@ function renderPasteBreakdown(info, status, check) {
         + (it.detail ? '<br><span class="d">' + esc(it.detail) + '</span>' : '') + '</span></div>').join('') + '</div>'
     : '';
   const parts = splitCookieParts(info.cookie, info.cookieList);
-  const siteId = info.siteId || guessSiteByDomain(info.domain || '');
+  const siteId = info.siteId || pickDetectedSite(info) || guessSiteByDomain(info.domain || '');
   const site = SITES.find((s) => s.id === siteId);
   const uaFrom = info.userAgent
     ? (info.uaAutoFilled ? '当前浏览器（扩展没带，面板自动兜底）' : '抓 Cookie 那台浏览器（扩展带的）')
@@ -2109,7 +2109,7 @@ async function applyPaste() {
   try {
     info = parsePasteBox();
   } catch (e) { return pasteFail(e); }
-  info.siteId = guessSiteByDomain(info.domain || '');
+  info.siteId = pickDetectedSite(info) || guessSiteByDomain(info.domain || '');
   const chk = pasteCheck(info);
   // 硬错误：不保存，说清楚怎么修
   if (chk.level === 'bad') {
@@ -2126,7 +2126,7 @@ async function applyPaste() {
     return;
   }
   renderPasteBreakdown(info, '⏳ 正在保存到面板并试跑一次…', chk);
-  const saved = await autoApplyCookies(chk.siteId, { cookies: info.cookie, domain: info.domain, pageUrl: info.pageUrl, userAgent: info.userAgent, cookieList: info.cookieList, localStorage: info.localStorage }, { inline: (text) => renderPasteBreakdown(info, text, chk) });
+  const saved = await autoApplyCookies(chk.siteId, { cookies: info.cookie, domain: info.domain, pageUrl: info.pageUrl, userAgent: info.userAgent, cookieList: info.cookieList, localStorage: info.localStorage, detectedSite: info.detectedSite || null }, { inline: (text) => renderPasteBreakdown(info, text, chk) });
   // 保存成功就把粘贴框清掉：内容已经进面板，留着只会让下一次误点又存一遍
   if (saved) clearPasteBox();
 }
@@ -2215,6 +2215,25 @@ function hostOf(url) {
   try {
     return String(new URL(String(url || '')).hostname || '').toLowerCase().replace(/^www\./, '');
   } catch { return ''; }
+}
+
+// 识别到无 Cookie 字段的站点（典型：V2Board 机场用邮箱+密码登录，Cookie 流程天然走不通）：
+// 直接打开「添加账号」，站点已选好、域名已预填，用户只需补账号信息。
+// 返回 true 表示「已经处理完」，调用方不要再走 Cookie 流程。
+async function openSiteAccountForm(siteId, d, reason) {
+  const s = SITES.find((x) => x.id === siteId);
+  if (!s) { toast('未知站点'); return false; }
+  const dom = String((d && d.domain) || '').replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  await openModal();
+  $('f-site').value = siteId;
+  const creds = {};
+  if (dom && (s.fields || []).some((f) => f.key === 'domain')) creds.domain = dom;
+  if (dom && (s.fields || []).some((f) => f.key === 'site_url')) creds.site_url = 'https://' + dom;
+  renderFields(siteId, creds);
+  if (typeof liveFormCheck === 'function') liveFormCheck();
+  toast('🔍 已识别为「' + s.name + '」' + (reason ? '（' + reason + '）' : '')
+    + (dom ? '，域名已填好' : '') + '：补上账号信息保存即可');
+  return true;
 }
 
 // 填入 Cookie 确认框：已有账号就选一个填入，没有就直接新建。extra 可带 userAgent（cURL 提取到时新建账号自动填入）
@@ -2343,6 +2362,25 @@ function guessSiteByDomain(domain) {
   return '';
 }
 
+// 扩展 ≥2.20 的站点自动识别：payload 里带 detectedSite = { site, confidence, reason }。
+// high = 扩展有把握（页面指纹 / Cookie 名 / localStorage 键对上），面板直接用，
+//        不再让人手动选站点（人工选容易点错）；medium 只做推荐预选，决定权还在人手里。
+function pickDetectedSite(info) {
+  const det = info && info.detectedSite;
+  if (!det || det.confidence !== 'high') return '';
+  return (SITES || []).some((s) => s.id === det.site) ? det.site : '';
+}
+function detectedSuggest(info) {
+  const det = info && info.detectedSite;
+  if (!det || det.confidence !== 'medium') return null;
+  const s = (SITES || []).find((x) => x.id === det.site);
+  return s ? { site: s.id, reason: det.reason || '' } : null;
+}
+function siteHasCookieField(siteId) {
+  const s = (SITES || []).find((x) => x.id === siteId);
+  return !!(s && (s.fields || []).some((f) => f.key === 'cookie'));
+}
+
 // 一键发送后：自动建/改账号 → 立刻试跑一次 → 展示清晰分解（不需要用户再点保存）
 // 返回值：true = 真的写进面板了（调用方可以据此清掉粘贴框）；false = 交给了对话框 / 失败了
 async function autoApplyCookies(siteId, d) {
@@ -2379,6 +2417,9 @@ async function autoApplyCookies(siteId, d) {
   const missing = (s.fields || []).filter((f) => f.required && f.key !== 'cookie'
     && !(f.key === 'user_agent' && ua) && !auto[f.key]);
   if (missing.length) {
+    // 无 Cookie 字段的站点（如 V2Board 机场走邮箱+密码）：Cookie 流程天然走不通，
+    // 直接打开添加账号并把域名预填好，不让人对着 Cookie 对话框发懵
+    if (!hasCookieField) return openSiteAccountForm(siteId, d, (d.detectedSite && d.detectedSite.reason) || '');
     openCookieApplyDialog(siteId, cookie, d.domain || '', { userAgent: ua, localStorage: ls });
     return false;
   }
@@ -2477,14 +2518,23 @@ function showExtApplied(s, d, info) {
 }
 
 // 扩展域名未匹配时，让用户手动选站点
-function openCookieSitePicker(cookie, domain, userAgent) {
-  const cookieSites = SITES.filter((s) => s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie'));
+function openCookieSitePicker(cookie, domain, userAgent, opts) {
+  opts = opts || {};
+  let cookieSites = SITES.filter((s) => s.id === 'http' || (s.fields || []).some((f) => f.key === 'cookie'));
+  // 被推荐的站点如果不在 Cookie 站点列表里（如 V2Board），也放进来，否则推荐无处可点
+  if (opts.suggested && !cookieSites.some((s) => s.id === opts.suggested)) {
+    const s = SITES.find((x) => x.id === opts.suggested);
+    if (s) cookieSites = [s].concat(cookieSites);
+  }
+  const sugg = opts.suggested ? SITES.find((x) => x.id === opts.suggested) : null;
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal"><h2>选择站点</h2>
-    <p class="muted">来自域名：<b>${esc(domain)}</b>，未能自动识别，请手动选择：</p>
+    <p class="muted">${sugg
+      ? ('🔍 扩展自动识别为「<b>' + esc(sugg.name) + '</b>」' + (opts.reason ? '（' + esc(opts.reason) + '）' : '') + '，已为你预选，确认无误点下一步：')
+      : ('来自域名：<b>' + esc(domain) + '</b>，未能自动识别，请手动选择：')}</p>
     <label>站点</label>
-    <select id="cksp-site">${cookieSites.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+    <select id="cksp-site">${cookieSites.map((s) => `<option value="${s.id}"${sugg && s.id === sugg.id ? ' selected' : ''}>${esc(s.name)}${sugg && s.id === sugg.id ? '（推荐·自动识别）' : ''}</option>`).join('')}</select>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button class="ghost" id="cksp-cancel">取消</button>
       <button id="cksp-ok">下一步</button>
@@ -2494,6 +2544,11 @@ function openCookieSitePicker(cookie, domain, userAgent) {
   bg.querySelector('#cksp-ok').onclick = () => {
     const siteId = bg.querySelector('#cksp-site').value;
     bg.remove();
+    // 选中的是非 Cookie 站点（如 V2Board）：不走 Cookie 确认框，直接开添加账号
+    if (!siteHasCookieField(siteId)) {
+      openSiteAccountForm(siteId, { domain }, opts.reason || '');
+      return;
+    }
     openCookieApplyDialog(siteId, cookie, domain, { userAgent });
   };
 }
@@ -2522,8 +2577,11 @@ async function checkCookieHash() {
     if (!d0 || !d0.cookies) return toast('扩展没有读取到 Cookie，请在扩展里重新发送');
     // 内容已经拿到手，这时才抹掉地址栏里的短码（取不回来时留着，刷新可重试）
     history.replaceState(null, '', location.pathname);
-    const sid0 = guessSiteByDomain(d0.domain || '');
-    if (!sid0) return openCookieSitePicker(d0.cookies, d0.domain || '', d0.userAgent || '');
+    // 扩展 ≥2.20 自带站点识别：高置信直接用，不再让人手动选（人工选容易点错）；
+    // medium 只做推荐预选，决定权还在人手里
+    const sid0 = pickDetectedSite(d0) || guessSiteByDomain(d0.domain || '');
+    const sugg0 = sid0 ? null : detectedSuggest(d0);
+    if (!sid0) return openCookieSitePicker(d0.cookies, d0.domain || '', d0.userAgent || '', sugg0 ? { suggested: sugg0.site, reason: sugg0.reason } : null);
     // 扩展发的是「你当前正看着的那个网站」，正常不会对不上；真对不上就不静默存，让人确认一次
     if (pasteCheck({ ...d0, siteId: sid0 }).mismatch) {
       return openCookieApplyDialog(sid0, d0.cookies, d0.domain || '', { userAgent: d0.userAgent || '' });

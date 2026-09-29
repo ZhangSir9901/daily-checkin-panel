@@ -34,7 +34,7 @@ for (const [key, value] of Object.entries(EXT_FILES)) {
   }
 }
 // 反方向：磁盘上有、嵌入里没有（新加的文件忘了重新生成）
-for (const name of ['manifest.json', 'popup.html', 'popup.js', 'background.js', 'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png']) {
+for (const name of ['manifest.json', 'popup.html', 'popup.js', 'detect.js', 'background.js', 'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png']) {
   const has = EXT_FILES[name] != null || EXT_FILES['@b64:' + name] != null;
   if (!has) problems.push(`${name} 没有嵌入到 ext-files.js`);
 }

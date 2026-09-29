@@ -551,7 +551,7 @@ async function handleApi(req, env, url) {
     const deny = await extGuard();
     if (deny) return deny;
     const body = await readBody(req);
-    const { domain, pageUrl, cookies, cookieList, userAgent, localStorage, stats } = body;
+    const { domain, pageUrl, cookies, cookieList, userAgent, localStorage, stats, detectedSite } = body;
     // kind=record：扩展「录制签到」抓到的请求草稿。record 必须带 url；Cookie 允许为空。
     if (body.kind === 'record') {
       const record = body.record || {};
@@ -597,6 +597,10 @@ async function handleApi(req, env, url) {
         userAgent: String(userAgent || ''),
         localStorage: localStorage && typeof localStorage === 'object' ? localStorage : {},
         stats: stats && typeof stats === 'object' ? stats : {},
+        // 扩展 ≥2.20 的站点自动识别结果：{ site, confidence, reason }，只收白名单内的值
+        detectedSite: detectedSite && typeof detectedSite === 'object' && (detectedSite.confidence === 'high' || detectedSite.confidence === 'medium')
+          ? { site: String(detectedSite.site || '').slice(0, 32), confidence: detectedSite.confidence, reason: String(detectedSite.reason || '').slice(0, 120) }
+          : null,
         ts: now,
       }), now, now + 5 * 60 * 1000).run();
     await env.DB.prepare('DELETE FROM handoffs WHERE expires_at < ?').bind(now - 3600000).run().catch(() => {});

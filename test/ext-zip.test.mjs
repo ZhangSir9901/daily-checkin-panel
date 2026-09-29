@@ -10,7 +10,7 @@ import { EXT_FILES } from '../src/ext-files.js';
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
 
-const FILES = ['manifest.json', 'popup.html', 'popup.js', 'background.js',
+const FILES = ['manifest.json', 'popup.html', 'popup.js', 'detect.js', 'background.js',
   'icon16.png', 'icon32.png', 'icon48.png', 'icon128.png'];
 
 async function zipFor(origin) {

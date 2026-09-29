@@ -182,6 +182,35 @@ async function init() {
   window._pageUA = pageUA;
   window._localStore = localStore;
   const lsCount = Object.keys(localStore).length;
+
+  // 站点自动识别：页面指纹（detect.js 探针）+ Cookie 名 + localStorage 键 + 域名。
+  // 探针失败（如 chrome:// 页面）也不影响，detectSite 照样能用后三种信号判定。
+  let detected = null;
+  try {
+    let fp = null;
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: collectPageFingerprint,
+      });
+      fp = result || null;
+    } catch { /* 探针失败，用其余信号 */ }
+    detected = detectSite(fp, cookies.map((c) => c.name), Object.keys(localStore), domain);
+  } catch { /* 识别失败就当没识别，不挡发送 */ }
+  window._detected = detected;
+  const detectEl = $('detect');
+  if (detected) {
+    const nm = (typeof DETECT_SITE_NAMES !== 'undefined' && DETECT_SITE_NAMES[detected.site]) || detected.site;
+    detectEl.className = 'detect';
+    detectEl.textContent = '🔍 已识别：' + nm + '（' + detected.reason
+      + (detected.confidence === 'high' ? '，发送后自动处理' : '，发送后会推荐预选、由你确认') + '）';
+    detectEl.style.display = 'block';
+  } else {
+    detectEl.className = 'detect unknown';
+    detectEl.textContent = '未能自动识别站点，发送后可能需要手动选一次';
+    detectEl.style.display = 'block';
+  }
+
   const countEl = $('count');
   if (cookies.length) {
     countEl.textContent = cookies.length + ' 个 Cookie';
@@ -220,6 +249,9 @@ function payloadObj() {
       expirationDate: c.expirationDate || null,
     })),
     localStorage: window._localStore || {},
+    // 站点自动识别结果：{ site, confidence: 'high'|'medium', reason }。
+    // 面板收到后：high 直接用（不再让人手动选站点），medium 只做推荐预选。
+    detectedSite: window._detected || null,
     stats: describeCookies(cookies),
     ts: Date.now(),
   };
