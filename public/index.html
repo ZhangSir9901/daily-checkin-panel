@@ -46,7 +46,11 @@
   * { box-sizing:border-box; }
   /* 让浏览器自带的控件（滚动条、下拉框等）跟随深色主题，避免深色页面里冒出白色滑块 */
   /* 深色主题 + 平滑滚动（“去账号列表看这一行”那种跳转不再瞬移） */
-  html { color-scheme:dark; scroll-behavior:smooth; }
+  /* text-size-adjust：关掉手机浏览器（Chrome / Safari）的「字体膨胀」——
+     它会自作主张把某些段落的字号放大，导致手机上同样 12.5px 的字有的大有的小。
+     设为 100% 后全站字号完全按 CSS 来，桌面端不受影响。 */
+  html { color-scheme:dark; scroll-behavior:smooth;
+         -webkit-text-size-adjust:100%; text-size-adjust:100%; }
   body {
     margin:0; color:var(--text);
     background:radial-gradient(1200px 600px at 20% -10%, rgba(91,140,255,.08), transparent),
