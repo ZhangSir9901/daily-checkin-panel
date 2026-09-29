@@ -392,7 +392,7 @@ $('btn-check-conn').onclick = async () => {
     // ③ 解析任务列表
     let data;
     try { data = await resp.json(); } catch { return status('连接失败：面板返回数据格式错误', 'err'); }
-    status(`连接正常 ✅ API Key 有效（面板版本 ${data.version || '未知'}）`, 'ok');
+    status('连接正常 ✅ API Key 有效', 'ok');
   } catch (e) {
     status('检查失败：' + (e.message || e), 'err');
   }
