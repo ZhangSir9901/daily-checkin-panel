@@ -52,10 +52,16 @@ npx wrangler@latest d1 list
 - 想换库：把 `database_id` 换成新库的 id 重新部署即可（旧数据不会自动搬过去）。
 
 > **用 Git 自动部署的人注意**：仓库里的 `wrangler.toml` 是占位符，开源后不会再提交真实 ID。
-> 推送前先去 Cloudflare 仪表盘配一次 D1 绑定（只配一次，以后推送都不用管）：
-> Worker 详情 → **设置 → 绑定 → 添加绑定** → 类型选 **D1 数据库** → 变量名填 `DB` →
-> 数据库选你自己的 `daily-checkin-panel` → 保存。仪表盘的绑定会覆盖 `wrangler.toml` 里的占位符，
-> 配好后再推送就不会报 `binding DB of type d1 must have a valid database_id`。
+> 但光在仪表盘「设置 → 绑定」里配 D1 绑定**不够** —— 构建时 wrangler 会先校验 `wrangler.toml`，
+> 占位符会导致构建直接失败（`binding DB of type d1 must have a valid database_id`）。
+> 正确做法（只配一次，以后推送都不用管）：
+> 1. Worker 详情 → **设置 → 构建 → 变量和机密** → 添加变量 `D1_DATABASE_ID`，
+>    值为你自己的 D1 数据库 ID，类型选「密钥」（加密保存）。
+> 2. 同一页的「构建命令」改成：
+>    `sed -i "s/REPLACE_ME_WITH_YOUR_OWN_D1_ID/${D1_DATABASE_ID}/" wrangler.toml && npx wrangler deploy`
+>    （构建时自动把占位符换成真实 ID 再部署；仓库里的文件不受影响，依然是占位符）。
+> 配好后推送会自动构建成功。教训：2026-09-29 曾以为「仪表盘绑定会覆盖占位符、推送安全」，
+> 结果连续 3 次构建失败、线上停在旧版本 —— 以构建历史页面的实际状态为准，不要靠猜。
 
 ---
 
