@@ -175,7 +175,13 @@ async function init() {
   window._pageUA = pageUA;
   window._localStore = localStore;
   const lsCount = Object.keys(localStore).length;
-  $('count').textContent = cookies.length + ' 个';
+  const countEl = $('count');
+  if (cookies.length) {
+    countEl.textContent = cookies.length + ' 个 Cookie';
+    countEl.style.display = 'inline-block';
+  } else {
+    countEl.style.display = 'none';
+  }
   status(
     cookies.length
       ? `已读取 ${cookies.length} 个 Cookie（${stat.domains} 个域 / ${stat.httpOnly} 个 HttpOnly）` + (lsCount ? ` + ${lsCount} 项 localStorage` : '')

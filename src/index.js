@@ -425,7 +425,7 @@ async function handleApi(req, env, url) {
   if (path === '/api/external/ping' && method === 'GET') {
     const deny = await extGuard();
     if (deny) return deny;
-    return json({ ok: true, version: '2.2', time: Date.now() });
+    return json({ ok: true, version: PANEL_VERSION, time: Date.now() });
   }
 
   // ---- 浏览器扩展：任务已并入「本地网络中继」，这里不再下发脚本 ----

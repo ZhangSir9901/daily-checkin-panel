@@ -3,33 +3,48 @@
 <head>
 <meta charset="utf-8">
 <style>
+  * { box-sizing: border-box; }
   body { width: 320px; padding: 16px; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; background: #0f1420; color: #e8edf7; }
-  h3 { margin: 0 0 12px; font-size: 15px; }
-  .muted { color: #8b98b3; font-size: 12px; line-height: 1.6; }
-  button { width: 100%; padding: 11px; margin: 6px 0; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
-  .primary { background: linear-gradient(135deg, #5b8cff, #4a7de8); color: #fff; }
-  .ghost { background: transparent; border: 1px solid #26314a; color: #e8edf7; }
-  button:hover { opacity: .9; }
+  .header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+  .header h3 { margin: 0; font-size: 15px; font-weight: 700; }
+  .header .ver { font-size: 12px; color: #8b98b3; font-weight: 400; }
+  .domain { font-size: 12px; color: #8b98b3; line-height: 1.6; margin-bottom: 12px; word-break: break-all; }
+  .domain .count { display: inline-block; background: rgba(91,140,255,.15); color: #7aa5ff; padding: 1px 8px; border-radius: 10px; font-size: 11px; margin-left: 4px; }
+  button { width: 100%; padding: 11px; margin: 0 0 8px; border: 0; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .primary { background: #5b8cff; color: #fff; }
+  .primary:hover { background: #4a7de8; }
+  .secondary { background: transparent; border: 1px solid #26314a; color: #e8edf7; }
+  .secondary:hover { border-color: #5b8cff; }
   button:disabled { opacity: .5; cursor: wait; }
-  #status { font-size: 12px; color: #8b98b3; margin-top: 8px; min-height: 18px; }
+  .note { font-size: 12px; color: #8b98b3; line-height: 1.6; margin: 0 0 12px; }
+  .divider { border: 0; border-top: 1px solid #1c2538; margin: 4px 0 12px; }
+  .section-title { font-size: 13px; font-weight: 700; margin: 0 0 8px; }
+  label { font-size: 12px; color: #8b98b3; display: block; margin: 0 0 4px; }
+  input { width: 100%; background: #0d1322; border: 1px solid #26314a; color: #e8edf7; border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 10px; }
+  input:focus { outline: none; border-color: #5b8cff; }
+  #status { font-size: 12px; color: #8b98b3; margin-top: 4px; min-height: 18px; line-height: 1.5; }
   #status.ok { color: #3ddc84; }
   #status.err { color: #ff6b6b; }
-  label { font-size: 12px; color: #8b98b3; display: block; margin: 10px 0 4px; }
-  input { width: 100%; box-sizing: border-box; background: #0d1322; border: 1px solid #26314a; color: #e8edf7; border-radius: 8px; padding: 9px 12px; font-size: 13px; }
-  .count { display: inline-block; background: rgba(91,140,255,.15); color: #7aa5ff; padding: 2px 10px; border-radius: 12px; font-size: 12px; margin-left: 6px; }
 </style>
 </head>
 <body>
-  <h3>🖊️ 签到面板助手 <span class="muted" id="title-ver"></span> <span class="count" id="count"></span></h3>
-  <div class="muted" id="domain">正在读取当前网站…</div>
+  <div class="header">
+    <h3>🍪 签到面板助手</h3>
+    <span class="ver" id="title-ver"></span>
+  </div>
+  <div class="domain"><span id="domain">正在读取当前网站…</span><span class="count" id="count" style="display:none"></span></div>
+
   <button class="primary" id="btn-send">一键发送到签到面板</button>
-  <button class="ghost" id="btn-copy">📋 一键复制全部信息（含 UA）</button>
-  <div class="muted" style="margin-top:-2px">发送方式是「一次性交接码」：凭据不进地址栏，短码 5 分钟内有效、取一次即作废。</div>
-  <button class="ghost" id="btn-check-conn">🔌 面板连接检查</button>
+  <button class="secondary" id="btn-copy">📋 一键复制全部信息（含 UA）</button>
+  <p class="note">发送方式是「一次性交接码」：凭据不进地址栏，短码 5 分钟内有效、取一次即作废。</p>
+
+  <hr class="divider">
+  <div class="section-title">面板连接</div>
   <label>签到面板地址</label>
   <input id="panel-url" placeholder="https://daily-checkin-panel.xxx.workers.dev">
   <label>API Key（面板设置页获取）</label>
   <input id="api-key" type="password" placeholder="填入后面板点「执行」即用你的本机网络发请求">
+  <button class="secondary" id="btn-check-conn">🔌 检查连接</button>
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>
