@@ -27,9 +27,10 @@
 5. **设加密密钥（Secret）**：Worker 详情 → **设置 → 变量和密钥 → 添加** → 类型选 **Secret** →
    名称 `ENCRYPT_KEY` → 值填一段 32 字节的 base64 随机串 → 保存。
    随机串哪来：任意浏览器按 F12 → Console（控制台页面，下面有个">"符号） 后面粘贴
-   `btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))` 回车，输出那串就是
+   `btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))` 回车，输出那串就是；
+   或是网上随机网站生成一个：https://generate-random.org/base64-string → Byte Count 填 32 →
+   点 EXECUTE GENERATION → 点生成的串直接复制。
    （**丢了就解不开已存的 Cookie**，记到密码管理器里）。设完在 Worker 页点一次 **重新部署** 生效。
-   或是网上有随机网站随机一个
 
 > 以后项目更新了：在你 fork 的仓库点 **Sync fork** → Cloudflare 自动重新部署，数据库里的数据不受影响。
 > 每一项「叫什么名字、填什么值」的完整对照表 → [Cloudflare 部署清单](docs/Cloudflare部署清单.md)。

@@ -78,6 +78,11 @@ openssl rand -base64 32
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
+**没命令行？用浏览器或在线网站**：
+
+- 浏览器按 F12 → Console 粘贴 `btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))` 回车；
+- 或打开 https://generate-random.org/base64-string → Byte Count 填 `32` → 点 EXECUTE GENERATION → 点生成的串直接复制。
+
 ### 怎么设到 Cloudflare 上
 
 **命令行（推荐）**
