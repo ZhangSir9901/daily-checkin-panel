@@ -1,8 +1,8 @@
 # Cloudflare 部署清单：名字、绑定、变量各填什么
 
 这份文档只回答一件事：**在 Cloudflare 上到底要建什么、叫什么名字、哪些变量要填、填什么值。**
-照着 [README.md](../README.md) 的「部署（一条命令）」跑 `node deploy.mjs` 的话，下面 1、2、3 项脚本会自动做完；
-想手动部署、或者部署完想核对一遍，就照这张清单逐项对。
+照着 [README.md](../README.md) 的「部署（Cloudflare）」一步步点就行；
+想核对一遍，就照这张清单逐项对。
 
 > 一句话版本：**一个 Worker + 一个 D1 数据库 + 一把加密密钥（Secret）。**
 > 数据库名和绑定名不能改（要和 `wrangler.toml` 一致），`database_id` 和密钥值必须是你自己的。
@@ -141,7 +141,7 @@ npx wrangler@latest tail                    # 实时看 Worker 日志（排错�
 
 | 文件 | 内容 |
 |---|---|
-| [README.md](../README.md) | 一条命令部署（给第一次用的人） |
+| [README.md](../README.md) | Cloudflare 部署步骤（给第一次用的人） |
 | [docs/详细手册.md](详细手册.md) | 每一步在干什么、每个字段什么意思、常见问题 |
 | [SECURITY.md](../SECURITY.md) | 密码 / Cookie 是怎么保护的，密钥为什么不能丢 |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | 想加一个站点适配（社区共享） |

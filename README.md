@@ -12,26 +12,45 @@
 
 ---
 
-## 部署（一条命令）
+## 部署（Cloudflare）
 
-**准备**：一台电脑、一个邮箱、大约 15 分钟。
+**准备**：一个 Cloudflare 账号（免费）、一个 GitHub 账号，大约 15 分钟。不用在电脑上装任何东西。
 
-1. 装 [Node.js](https://nodejs.org/) 的 **LTS** 版（一路「下一步」），命令行里 `node -v` 能打印版本号即可。
-2. 把本项目下载到电脑上（绿色 **Code** → **Download ZIP**）并解压到一个文件夹。
-3. **在这个文件夹里**打开命令行（Windows：点文件夹上方地址栏 → 输入 `cmd` 回车），输入：
+**1. 把代码弄到你自己的 GitHub**
+Fork 本仓库（右上角 Fork），或下载 ZIP 后上传到你新建的仓库。
 
-   ```bash
-   node deploy.mjs
-   ```
+**2. 建 D1 数据库**
+Cloudflare 控制台 → 左侧 `Workers & Pages` → `D1` → `Create`：
+- 名称填 `daily-checkin-panel`
+- 建好后点进去，复制 **Database ID**（一串 UUID）备用
 
-   它会按顺序帮你：检查环境 → 打开浏览器登录 Cloudflare → 建免费数据库并写进 `wrangler.toml` →
-   生成加密密钥 → 部署前把关 → 部署 → **当场验收**（首页能不能开、数据库通不通，哪项没过会直接告诉你敲哪几条命令）。
+**3. 接 GitHub 自动部署**
+Cloudflare 控制台 → `Workers & Pages` → `Create` → `Connect to Git`：
+- 选你 Fork 的仓库，分支 `master`
+- 构建命令填 `npx wrangler deploy`，点 `Save and Deploy`
 
-   最后会打印**你的面板地址**（形如 `https://daily-checkin-panel.你的名字.workers.dev`），复制存好。
+**4. 绑定数据库**
+Worker 建好后 → `Settings` → `Bindings` → `Add binding` → `D1 database`：
+- Variable name 填 `DB`（**必须叫这个**，代码里写的是 `env.DB`）
+- 选第 2 步建的 `daily-checkin-panel` 库 → `Add binding`
 
-想一步步手动做、或部署报错要弄清原因 → [详细手册](docs/详细手册.md)；
-**只想确认「建什么、名字叫什么、变量填什么」** → [Cloudflare 部署清单](docs/Cloudflare部署清单.md)（D1 名 `daily-checkin-panel`、绑定名 `DB`、`ENCRYPT_KEY` 怎么生成，那里是一张表）。
-只想先体检、不发布：`node deploy.mjs --check`。
+> 或者把第 2 步复制的 Database ID 填进 `wrangler.toml` 的 `database_id` 再推送，效果一样。仓库里默认是占位符。
+
+**5. 设置加密密钥**
+`Settings` → `Variables and Secrets` → `Add` → 类型选 **Secret**：
+- 变量名 `ENCRYPT_KEY`
+- 值填一串 32 字节的 base64（在线生成一个，或跑 `openssl rand -base64 32`）
+- `Save` 后重新 `Deploy` 一次
+
+⚠️ 这把钥匙丢了，已存的账号 Cookie 就解不开了，只能重新录入。**不要删除它。**
+
+**6. 打开面板**
+部署成功后，`Workers & Pages` 里点你的 Worker，`Visit` 打开的就是面板地址（形如 `https://daily-checkin-panel.你的名字.workers.dev`）。
+
+之后每次往 GitHub 推代码，Cloudflare 会自动重新部署，无需手动操作。
+
+变量名、绑定名、每一项填什么的速查表 → [Cloudflare 部署清单](docs/Cloudflare部署清单.md)；
+部署报错要弄清原因 → [详细手册](docs/详细手册.md)。
 
 ---
 
