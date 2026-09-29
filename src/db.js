@@ -94,6 +94,14 @@ const MIGRATIONS = [
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`).run(),
+  // v12：login_limits（登录失败限速：同一来源连续试错就临时锁住，防止有人拿脚本硬猜管理密码）
+  async (db) => db.prepare(`CREATE TABLE IF NOT EXISTS login_limits (
+    ip TEXT PRIMARY KEY,
+    fails INTEGER NOT NULL DEFAULT 0,
+    first_at INTEGER NOT NULL,
+    locked_until INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  )`).run(),
 ];
 
 export async function ensureSchema(db) {

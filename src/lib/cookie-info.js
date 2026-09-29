@@ -1,7 +1,7 @@
 // Cookie 里「自带到期时间」的那类凭据：解析出它到底还能不能用。
 //
 // 为什么值得单独做一个模块：WordPress 的登录态 Cookie（`wordpress_logged_in_<hash>`）值形如
-//     laoguo|1791635708|token|hmac        （URL 编码）
+//     other-user|1791635708|token|hmac        （URL 编码）
 // 中间那段就是**站点自己判「认不认这个会话」用的到期时间**（`wp_parse_auth_cookie`：
 // 到期时间过了就当作未登录）。也就是说，不用发任何请求，光看 Cookie 就能知道
 // 「这份 Cookie 是不是已经废了」——而这正是用户最容易卡住的地方：
@@ -196,8 +196,8 @@ export function wpLoginSessions(cookie, now = Date.now()) {
 //
 // 线上案例（2026-09-29）：hutue.cn 那一行永远显示「登录已失效，请重新获取 Cookie」，
 // 而用户其实是照做了的 —— 他复制回来的串里同时混着两套会话：
-//   wordpress_logged_in_ec35f1949a…（hutue.cn 的会话，guo527029137）→ 11:05 已过期
-//   wordpress_logged_in_ca7674586a…（dj.hutue.cn 的会话，laoguo）→ 还活着
+//   wordpress_logged_in_ec35f1949a…（hutue.cn 的会话，demo-user）→ 11:05 已过期
+//   wordpress_logged_in_ca7674586a…（dj.hutue.cn 的会话，other-user）→ 还活着
 // 于是「我更新了 Cookie」和「登录已失效」在他眼里是矛盾的。这里把每一段归属谁、
 // 什么时候到期讲清楚，他自己一眼就能看出该去哪重新登录。
 // 返回一句话（没有 WP 会话段时也返回一句能照着做的说明）。
@@ -223,6 +223,68 @@ export function wpLoginDiagnosis(cookie, siteUrl, now = Date.now()) {
       + ' —— 同品牌的两个独立站（hutue.cn / dj.hutue.cn）各自一套登录态，必须分别在各自站点登录后再复制');
   }
   return parts.join('；') + '。';
+}
+
+// 凭据值里**自带**的另一种到期时间：JWT（`aaa.bbb.ccc` 三段 base64url）。
+//
+// 为什么值得单独解：Akile 要的就是 localStorage 里的 `akile-token`（一个 JWT），
+// 而用户在面板里更新的往往是 Cookie —— 面板一直说「过期」、他说「我明明更新了」，
+// 两边都没错。把 exp 解出来，界面上就能直接写出「这个 token 于 X 时刻过期」，
+// 不用等人去猜。
+// 返回毫秒时间戳；不是 JWT / 解不出 exp 时返回 0（调用方要能接受）。
+export function jwtExp(value) {
+  const s = String(value || '').trim();
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(s)) return 0;
+  let obj = null;
+  try {
+    // base64url → base64：换字符表**并且补回被 JWT 省掉的 `=`**（atob 遇到长度模 4 余 1 会直接抛）
+    let b64 = s.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    b64 += '='.repeat((4 - (b64.length % 4)) % 4);
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    obj = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return 0;
+  }
+  const exp = Number(obj && obj.exp);
+  // exp 是**秒**。太小的值不像是时间戳（1e9 秒 ≈ 2001 年），当解错处理。
+  return Number.isFinite(exp) && exp > 1e9 ? exp * 1000 : 0;
+}
+
+// 「这份凭据什么时候到期」——账号列表里鼠标悬浮站点名时显示的那句话。
+//
+// 只回答**凭据自己带着**的到期时间，分两类：
+//   sessions：WordPress 登录会话（到期时间写在 cookie 值里，站点自己也在看它）
+//   tokens  ：JWT 型 token（如 akile-token，exp 一到就作废）
+// 其它站点（Discuz、机场面板…）的会话有效期只在服务器那边知道，这里**不猜** ——
+// 界面上如实说「这份凭据里没写到期时间」，总比编一个时间出来强。
+//
+// 入参是解密后的 creds 对象（可能为空/不是对象），返回：
+//   { sessions: [{ field, user, exp, expired }], tokens: [{ field, exp, expired }] }
+export function credentialExpiry(creds, now = Date.now()) {
+  const sessions = [];
+  const tokens = [];
+  const seenS = new Set();
+  const seenT = new Set();
+  if (!creds || typeof creds !== 'object') return { sessions, tokens };
+  for (const [field, raw] of Object.entries(creds)) {
+    const val = typeof raw === 'string' ? raw : '';
+    if (!val) continue;
+    // 一个字段里可能塞着好几段 WordPress 会话（复制时把两个站混在一串里就是这种）
+    for (const s of wpLoginSessions(val, now)) {
+      const k = `${s.user}|${s.exp}`;
+      if (seenS.has(k)) continue;
+      seenS.add(k);
+      sessions.push({ field, user: s.user, exp: s.exp, expired: s.expired });
+    }
+    const jwt = jwtExp(val);
+    if (jwt) {
+      const k = `${field}|${jwt}`;
+      if (!seenT.has(k)) { seenT.add(k); tokens.push({ field, exp: jwt, expired: jwt < now }); }
+    }
+  }
+  return { sessions, tokens };
 }
 
 // 一句话概括一份 Cookie 的登录态，给「签到失败」的文案用。

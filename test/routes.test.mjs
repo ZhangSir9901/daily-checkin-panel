@@ -23,7 +23,13 @@ const SID = 's'.repeat(48);
 function makeDb() {
   const kv = new Map([['admin_hash', 'pbkdf2$fake'], ['relay_last_poll', String(Date.now())], ['external_api_key', KEY]]);
   const sessions = new Map([[SID, Date.now() + 864e5]]);
+  const loginLimits = new Map(); // ip -> { fails, first_at, locked_until }（登录限速）
   const community = []; // 已导入的社区站点（导入之后要能拿它建账号）
+  // 一行字段坏掉的中继任务（见 first()/all() 里的用途）
+  const relayJob = {
+    id: 'r_1', url: 'https://hutue.cn/', method: 'GET', headers: '{不是 JSON', body: null,
+    options: '也坏了', status: 'done', resp_status: 200, resp_headers: '[坏掉的]', resp_body: '',
+  };
   const accounts = [{
     id: 1, name: '测试账号', site: 'wuaipojie', enabled: 1, creds: 'x', meta: '{}',
     last_status: 'ok', last_msg: 'm', last_detail: 'd', last_run_at: Date.now(),
@@ -44,12 +50,19 @@ function makeDb() {
           const e = sessions.get(stmt._args[0]);
           return e === undefined ? null : { expires_at: e };
         }
+        if (/FROM login_limits WHERE ip = \?/i.test(sql)) {
+          const r = loginLimits.get(stmt._args[0]);
+          return r ? { ...r } : null;
+        }
         // 账号行的各种取法（SELECT * / SELECT id, site, name / SELECT meta）：一律按 id 返回整行，
         // 真 D1 只回被选中的列，但测试只关心值对不对，多给两列不影响。
         if (/^SELECT [\s\S]* FROM accounts WHERE id = \?/i.test(sql)) {
           const r = accounts.find((x) => Number(x.id) === Number(stmt._args[0]));
           return r ? { ...r } : null;
         }
+        // 中继任务：故意给一行「JSON 坏掉」的数据（旧版本写的 / 手改的 / 写一半被打断的）——
+        // 中继那几列本来就是该存 JSON 的，一行坏数据不该让整条链路瘫成 500。
+        if (/FROM relay_jobs WHERE id = \?/i.test(sql)) return { ...relayJob };
         if (/^SELECT COUNT\(\*\) AS n/i.test(sql)) return { n: 0 };
         if (/^SELECT COUNT\(\*\) AS c/i.test(sql)) return { c: 0 };
         return null;
@@ -57,11 +70,32 @@ function makeDb() {
       async all() {
         if (/^PRAGMA table_info/i.test(sql)) return { results: [] };
         if (/FROM community_sites/i.test(sql)) return { results: community.map((x) => ({ ...x })) };
+        if (/FROM relay_jobs/i.test(sql)) return { results: [{ ...relayJob }] };
         if (/FROM accounts/i.test(sql)) return { results: accounts.map((x) => ({ ...x })) };
         return { results: [] };
       },
       async run() {
         const a = stmt._args;
+        // 登录限速表要真的能读能写：不写进假库的话，recordLoginFail 每次都从 1 开始，
+        // 「连错 8 次锁 15 分钟」永远测不出来。
+        // 只处理「增删改」，不能把建表语句（CREATE TABLE … login_limits …）也吃进来 ——
+        // 那会插出一条 a[0] === undefined 的脏记录，看上去就像「限速计数没被清掉」。
+        if (/login_limits/i.test(sql) && /^(INSERT|DELETE|UPDATE)/i.test(sql)) {
+          if (/^DELETE FROM login_limits WHERE ip/i.test(sql)) { loginLimits.delete(a[0]); return { meta: { changes: 1 } }; }
+          // 清理旧记录（WHERE updated_at < ?）：只能删「确实过期」的。
+          // 这里如果写成 clear()，生产代码里那次 10% 概率的清理会把刚记上的失败次数
+          // 一起抹掉 —— 测试就会时好时坏（假库太宽松比不写测试更坑）。
+          if (/^DELETE FROM login_limits WHERE updated_at/i.test(sql)) {
+            let n = 0;
+            for (const [k, v] of loginLimits) if (Number(v.updated_at) < Number(a[0])) { loginLimits.delete(k); n++; }
+            return { meta: { changes: n } };
+          }
+          if (/^DELETE FROM login_limits/i.test(sql)) { loginLimits.clear(); return { meta: { changes: 1 } }; }
+          const [ip, fails, first, locked, upd] = a;
+          loginLimits.set(ip, { fails, first_at: first, locked_until: locked, updated_at: upd });
+          return { meta: { changes: 1 } };
+        }
+        if (/^DELETE FROM sessions/i.test(sql)) { sessions.clear(); return { meta: { changes: 1 } }; }
         // UPDATE accounts 要真的落进假库（外面上报写的是 meta.last_signin_date，不记就测不了）
         if (/^UPDATE accounts SET last_status/i.test(sql)) {
           const [st, msg, detail, at, meta, upd, id] = a;
@@ -93,7 +127,7 @@ function makeDb() {
     };
     return stmt;
   };
-  return { kv, sessions, accounts, prepare, async batch(s) { return Promise.all((s || []).map((x) => x.run())); } };
+  return { kv, sessions, accounts, loginLimits, prepare, async batch(s) { return Promise.all((s || []).map((x) => x.run())); } };
 }
 
 const worker = (await import('../src/index.js')).default;
@@ -160,6 +194,8 @@ const ADMIN_ROUTES = [
   ['PUT', '/api/sites/community/author', { author: 'me' }],
   ['GET', '/api/accounts/1/run-log', undefined],
   ['POST', '/api/notify-report', { ok: 1, fail: 0, lines: ['✅ 测试账号：今日已签到'] }],
+  ['POST', '/api/notify-test', {}],
+  ['POST', '/api/notify-telegram-chats', {}],
 ];
 
 await t('管理接口：没登录一律 401（不许 500，也不许悄悄放行）', async () => {
@@ -291,6 +327,236 @@ await t('扩展上报失败时不许写「今日已签到」', async () => {
   assert.equal(r.status, 200);
   assert.equal(JSON.parse(db.accounts[0].meta || '{}').last_signin_date, undefined, '失败不能冒充成功');
   assert.equal(db.accounts[0].last_status, 'fail');
+});
+
+await t('登录限速：连续输错会被临时锁住（挡住「拿脚本一直猜管理密码」）', async () => {
+  const db = makeDb();
+  const { hashPassword } = await import('../src/crypto.js');
+  db.kv.set('admin_hash', await hashPassword('correct-horse-battery'));
+  let last = null;
+  for (let i = 0; i < 8; i++) last = await call(db, 'POST', '/api/login', { body: { password: 'wrong-' + i } });
+  assert.equal(last.status, 429, '错到第 8 次要锁住，实际 ' + last.status + ' ' + JSON.stringify(last.json));
+  assert.match(String(last.json.error), /锁定|太多/);
+  // 锁住期间就算给对密码也不放行 —— 否则限速形同虚设
+  const blocked = await call(db, 'POST', '/api/login', { body: { password: 'correct-horse-battery' } });
+  assert.equal(blocked.status, 429);
+  // 提示里要说清楚还要等多久，不能只说「不行」
+  assert.match(String(blocked.json.error), /分钟/);
+});
+
+await t('登录限速：密码正确会清掉失败计数（自己人不被自己的手误锁在外面）', async () => {
+  const db = makeDb();
+  const { hashPassword } = await import('../src/crypto.js');
+  db.kv.set('admin_hash', await hashPassword('correct-horse-battery'));
+  const bad = await call(db, 'POST', '/api/login', { body: { password: 'nope' } });
+  assert.equal(bad.status, 401);
+  assert.match(String(bad.json.error), /还可以再试/, '要告诉用户还剩几次机会');
+  const ok = await call(db, 'POST', '/api/login', { body: { password: 'correct-horse-battery' } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+  assert.equal(db.loginLimits.size, 0, '登录成功后计数要清掉');
+});
+
+await t('跨站写操作被拒：带了会话 Cookie 但 Origin 不是本面板 → 403', async () => {
+  const db = makeDb();
+  const post = (origin) => worker.fetch(new Request('https://panel.example/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: 'sid=' + SID, Origin: origin },
+    body: JSON.stringify({ enabled: false }),
+  }), envFor(db), {});
+  const evil = await post('https://evil.example');
+  assert.equal(evil.status, 403, '跨站写操作必须被拦');
+  const same = await post('https://panel.example');
+  assert.equal(same.status, 200, '同源照旧能用，实际 ' + await same.text());
+  // 扩展 / curl 这类没有 Origin 的客户端不受影响
+  const noOrigin = await worker.fetch(new Request('https://panel.example/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Cookie: 'sid=' + SID },
+    body: JSON.stringify({ enabled: false }),
+  }), envFor(db), {});
+  assert.equal(noOrigin.status, 200);
+});
+
+await t('社区配置拉取：内网地址一律拒绝（不许拿面板当内网探针）', async () => {
+  const db = makeDb();
+  const urls = ['http://127.0.0.1:8080/x.json', 'http://192.168.1.1/a.json', 'http://169.254.169.254/latest/meta-data/', 'http://localhost/x.json', 'file:///etc/passwd'];
+  for (const url of urls) {
+    const r = await call(db, 'POST', '/api/sites/community', { body: { url }, sid: SID });
+    assert.equal(r.status, 400, url + ' 应该被拒，实际 ' + r.status);
+  }
+});
+
+// ---------- 首次设置 / 登录：跨站请求必须挡住 ----------
+//
+// 【为什么这两条特别危险】它们是**唯一两个在没有会话 Cookie 时也能写库的接口**，
+// 而上面那条 Origin 兜底是「带了 sid 才校验」——正好盖不到它们：
+//   ├─ /api/setup：全新实例还没设密码，恶意页面可以用你的浏览器替你设一个 → 真正的部署者被锁在门外；
+//   └─ /api/login：登录 CSRF，把你登成攻击者的账号，你之后做的事全落在别人的账号上。
+await t('/api/setup 带跨站 Origin → 403（不许替面板主人初始化）', async () => {
+  const db = makeDb();
+  db.kv.delete('admin_hash'); // 全新实例
+  const raw = (origin) => worker.fetch(new Request('https://panel.example/api/setup', {
+    method: 'POST',
+    headers: origin ? { 'Content-Type': 'application/json', Origin: origin } : { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'attacker-password' }),
+  }), envFor(db), {});
+  const evil = await raw('https://evil.example');
+  assert.equal(evil.status, 403, '跨站首装必须被拦');
+  assert.equal(db.kv.get('admin_hash'), undefined, '拦下来时一个字都不许写进库');
+  // 同源（面板自己）照旧能用；没有 Origin 的客户端（curl / 脚本）也不受影响
+  const fresh = makeDb(); fresh.kv.delete('admin_hash');
+  const same = await worker.fetch(new Request('https://panel.example/api/setup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://panel.example' },
+    body: JSON.stringify({ password: 'a-good-password' }),
+  }), envFor(fresh), {});
+  assert.equal(same.status, 200, '同源首装要能正常用，实际 ' + same.status);
+  const cli = await worker.fetch(new Request('https://panel.example/api/setup', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'a-good-password' }),
+  }), envFor(makeDbF() ), {});
+  assert.equal(cli.status, 200, '命令行初始化（没有 Origin）不能被误伤');
+  function makeDbF() { const d = makeDb(); d.kv.delete('admin_hash'); return d; }
+});
+
+await t('/api/login 带跨站 Origin → 403（登录 CSRF）', async () => {
+  const { hashPassword } = await import('../src/crypto.js');
+  const db = makeDb();
+  db.kv.set('admin_hash', await hashPassword('correct-horse-battery'));
+  const post = (origin) => worker.fetch(new Request('https://panel.example/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: origin },
+    body: JSON.stringify({ password: 'correct-horse-battery' }),
+  }), envFor(db), {});
+  const evil = await post('https://evil.example');
+  assert.equal(evil.status, 403, '跨站登录必须被拦');
+  assert.equal(evil.headers.get('Set-Cookie'), null, '拦下来时不能发出会话');
+  const same = await post('https://panel.example');
+  assert.equal(same.status, 200, '同源登录照旧，实际 ' + same.status);
+  // 密码错误时也要先过跨站那道 —— 不然它就是一个人肉的「密码对不对」探测口
+  const evilWrong = await post('https://evil.example');
+  assert.equal(evilWrong.status, 403);
+});
+
+// ---------- 脏输入不许变成 500 ----------
+//
+// 【真实影响】`Cookie: a=%` 就够让 decodeURIComponent 抛 URIError，一路冒到顶层 catch → 500。
+// 未登录就能触发，监控里看就是「面板全线挂了」（实际什么都没坏）。
+await t('畸形 Cookie 头（a=%）不许变成 500：公开接口照常、管理接口老实回 401', async () => {
+  const db = makeDb();
+  const withBadCookie = (path) => worker.fetch(new Request('https://panel.example' + path, {
+    headers: { Cookie: 'sid=%;a=%zz;b=ok' },
+  }), envFor(db), {});
+  const status = await withBadCookie('/api/status');
+  assert.equal(status.status, 200, '/api/status 不该被一个畸形 Cookie 打挂，实际 ' + status.status + ' ' + await status.clone().text());
+  const body = await status.json();
+  assert.equal(body.logged_in, false, '解不开的 sid 不能被当成有效会话（也不该被当成已登录）');
+  const accounts = await withBadCookie('/api/accounts');
+  assert.equal(accounts.status, 401, '管理接口要老实回 401，实际 ' + accounts.status);
+});
+
+await t('交接码里塞一段编码垃圾（/api/handoff/%）→ 400，不是 500', async () => {
+  const db = makeDb();
+  const r = await worker.fetch(new Request('https://panel.example/api/handoff/%', {}), envFor(db), {});
+  assert.equal(r.status, 400, '实际 ' + r.status + ' ' + await r.clone().text());
+  const r2 = await worker.fetch(new Request('https://panel.example/api/handoff/zzzz', {}), envFor(db), {});
+  assert.equal(r2.status, 400, '格式不对的短码也是 400');
+});
+
+// ---------- 改账号：必填项与「换站点别留着旧凭据」 ----------
+await t('PUT 改账号：必填项留空 / 换了站点却不给凭据 → 400（而不是先存进去、等运行时才失败）', async () => {
+  const db = makeDb();
+  await fillCreds(db);
+  db.accounts[0].site = 'wuaipojie';
+  // ① 必填项（wuapoijie 要 cookie）留空
+  const empty = await call(db, 'PUT', '/api/accounts/1', { sid: SID, body: { name: 'x', site: 'wuaipojie', creds: { cookie: '   ' } } });
+  assert.equal(empty.status, 400, '实际 ' + empty.status + ' ' + JSON.stringify(empty.json));
+  assert.match(String(empty.json.error), /必填/);
+  // ② 换了站点但没给 creds：旧站点的 Cookie 不能留给新站点用
+  const switched = await call(db, 'PUT', '/api/accounts/1', { sid: SID, body: { name: 'x', site: 'nodeseek' } });
+  assert.equal(switched.status, 400, '实际 ' + switched.status + ' ' + JSON.stringify(switched.json));
+  assert.match(String(switched.json.error), /重新填写凭据/);
+  // ③ 只改开关（不带 creds、不改站点）照旧能用 —— 面板上那个「启用/停用」就靠它
+  const toggle = await call(db, 'PUT', '/api/accounts/1', { sid: SID, body: { enabled: 0 } });
+  assert.equal(toggle.status, 200, JSON.stringify(toggle.json));
+});
+
+// ---------- 中继：不许拿「用户自己的网络」去打内网 ----------
+//
+// 中继真正执行请求的是**用户浏览器里的扩展**，出口是他的家庭/公司网络。
+// 以前这里只检查「以 http 开头」，于是有 API Key 的人（或一份恶意社区配置）就能让面板
+// 代他去请求 192.168.1.1/admin 或云元数据地址，再把响应正文读走 ——
+// 面板自己那个出站闸门管不到这一段（那是 Worker 发的请求，这是用户浏览器发的）。
+await t('中继：内网/本机地址一律拒绝（域名照旧放行，公司内网域名要能用）', async () => {
+  const db = makeDb();
+  const deny = ['http://127.0.0.1:8080/admin', 'http://192.168.1.1/', 'http://169.254.169.254/latest/meta-data/',
+    'http://localhost./x', 'http://2130706433/', 'http://[::ffff:127.0.0.1]/', 'http://user:pw@127.0.0.1/'];
+  for (const url of deny) {
+    const r = await call(db, 'POST', '/api/external/relay', { key: KEY, body: { url, method: 'GET' } });
+    assert.equal(r.status, 400, url + ' 应该被拒，实际 ' + r.status + ' ' + JSON.stringify(r.json).slice(0, 100));
+  }
+  // 正常公网地址（包括「域名解析到内网」的内网域名）必须照旧能用
+  const ok = await call(db, 'POST', '/api/external/relay', { key: KEY, body: { url: 'https://intranet.example.com/sign', method: 'GET' } });
+  assert.equal(ok.status, 200, '公网域名不能被误伤：' + JSON.stringify(ok.json));
+  assert.ok(ok.json.job_id, '要真的建出中继任务');
+});
+
+await t('中继：库里一行 JSON 坏也不许 500（否则扩展一整轮轮询全废）', async () => {
+  const db = makeDb();
+  const one = await call(db, 'GET', '/api/external/relay/r_1', { key: KEY });
+  assert.equal(one.status, 200, '面板查任务结果不该被坏数据打挂：' + one.status + ' ' + JSON.stringify(one.json).slice(0, 120));
+  assert.equal(one.json.status, 'done');
+  assert.deepEqual(one.json.response.headers, {}, '解不开的 resp_headers 就当没有头，而不是抛出去');
+  const poll = await call(db, 'GET', '/api/external/relay-pending?wait=0', { key: KEY });
+  assert.equal(poll.status, 200, '扩展轮询更不该被打挂（它 500 一次，本地网络就全停了）：' + poll.status);
+  assert.deepEqual(poll.json.jobs[0].headers, {});
+  assert.deepEqual(poll.json.jobs[0].options, {});
+  assert.equal(poll.json.jobs[0].url, 'https://hutue.cn/', '坏字段当空值，任务本身照旧交给扩展');
+});
+
+await t('面板出口连通性：没登录不给测（不能拿它当「免费测速 / 探测」服务）', async () => {
+  const db = makeDb();
+  // 注意：故意**不**把它放进上面那张 ADMIN_ROUTES 冒烟表 ——
+  // 那个循环会带会话把每个接口真调一遍，而这条会真的往外发 6 个请求。
+  const r = await call(db, 'GET', '/api/net-check');
+  assert.equal(r.status, 401, '没登录应该 401，实际 ' + r.status);
+});
+
+await t('推送出站地址：Webhook / Bark 填内网地址一律拒绝（它们是面板自己去 POST 的地址）', async () => {
+  const db = makeDb();
+  const w = await call(db, 'PUT', '/api/settings', { sid: SID, body: { webhook_url: 'http://192.168.1.10:9000/hook' } });
+  assert.equal(w.status, 400, '实际 ' + w.status + ' ' + JSON.stringify(w.json));
+  assert.match(String(w.json.error), /Webhook 地址不可用/);
+  const b = await call(db, 'PUT', '/api/settings', { sid: SID, body: { bark_server: 'http://127.0.0.1:8080' } });
+  assert.equal(b.status, 400, '实际 ' + b.status);
+  // 正常地址、空值（用默认）都要照旧能用
+  const ok = await call(db, 'PUT', '/api/settings', { sid: SID, body: { webhook_url: 'https://api.day.app/abc', bark_server: '' } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.json));
+});
+
+// ---------- 中继回传：写进库的字段要有闸门 ----------
+await t('中继回传：非法 base64 / 越界状态码 / 超大正文都不许落库', async () => {
+  const db = makeDb();
+  const bad = await call(db, 'POST', '/api/external/relay/r_1/result', { key: KEY, body: { status: 200, body_base64: 'not base64 ##' } });
+  assert.equal(bad.status, 400, '不是合法 base64 要当场挡住（否则运行时 atob 只会报一句 Invalid character）：' + JSON.stringify(bad.json));
+  const weird = await call(db, 'POST', '/api/external/relay/r_1/result', { key: KEY, body: { status: 99999, body_base64: '' } });
+  assert.equal(weird.status, 400, '状态码越界要挡住（面板上会出现一个不存在的状态）：' + JSON.stringify(weird.json));
+  const huge = await call(db, 'POST', '/api/external/relay/r_1/result', { key: KEY, body: { status: 200, body_base64: 'A'.repeat(430 * 1024) } });
+  assert.equal(huge.status, 413, '超大正文要挡住，实际 ' + huge.status);
+  const okres = await call(db, 'POST', '/api/external/relay/r_1/result', { key: KEY, body: { status: 200, body_base64: Buffer.from('{"status":"0"}').toString('base64') } });
+  assert.equal(okres.status, 200, '正常回传照旧，实际 ' + JSON.stringify(okres.json));
+});
+
+await t('修改密码：至少 8 位；改完会把其它浏览器上的登录全部踢掉', async () => {
+  const db = makeDb();
+  const { hashPassword } = await import('../src/crypto.js');
+  db.kv.set('admin_hash', await hashPassword('old-password-9'));
+  const short = await call(db, 'POST', '/api/change-password', { sid: SID, body: { old_password: 'old-password-9', new_password: 'abc123' } });
+  assert.equal(short.status, 400, JSON.stringify(short.json));
+  assert.match(String(short.json.error), /8 位/);
+
+  const okr = await call(db, 'POST', '/api/change-password', { sid: SID, body: { old_password: 'old-password-9', new_password: 'new-password-9' } });
+  assert.equal(okr.status, 200, JSON.stringify(okr.json));
+  assert.equal(db.sessions.has(SID), false, '旧会话必须失效（否则「觉得密码泄露了→改密码」根本不起作用）');
+  assert.equal(db.sessions.size, 1, '同时给当前浏览器发了一把新的会话');
 });
 
 await t('定时任务：没有任何账号时也不许崩（心跳照写）', async () => {

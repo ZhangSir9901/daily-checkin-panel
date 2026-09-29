@@ -13,6 +13,36 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // 中继队列超过这个数就先不添乱（扩展单飞执行，堆积 = 集体超时）
 const RELAY_BACKLOG_LIMIT = 3;
 
+// ---------- 账号执行锁 ----------
+// 【为什么必须要】Worker 的一个 isolate 会**同时**处理多个请求，globalThis 是共享的。
+// 而「本地网络」这条路线是靠临时改写 globalThis.fetch 实现的，两个账号同时跑就会：
+//
+//   A：记住「原 fetch」→ 改成中继
+//   B：记住的「原 fetch」其实是 A 的中继版本 → 又改成自己的中继
+//   A 跑完 → 还原成**真原版**（此时 B 还在跑：B 的请求已经不再经过中继了）
+//   B 跑完 → 还原成它记住的那份 = **中继版本**
+//
+// 最后那一步会让改动永久留在 isolate 里：之后任何标着「CF 网络」的账号，
+// 请求都会被静默地借用户的浏览器发出去（直到 isolate 被回收），而面板上一个字都不会显示。
+// 反向的情况同样坏：标着「本地网络」的账号可能实际走的是 CF 直连 ——
+// 用户看到的结论与真实出口相反，是最难查的那类 bug。
+//
+// 所以：**同一时刻只允许一个账号在跑**。这不是为了省资源，而是因为
+//   ① 签到是写操作，本来就不该并发（同一次签到发两遍不是无害的）；
+//   ② 扩展端本来就是**单飞**执行中继任务，并发塞进去只会一起排队超时。
+// 代价：两个手动的「执行」会排队而不是并行 —— 这正是我们想要的。
+let ACCOUNT_LOCK = Promise.resolve();
+function withAccountLock(fn) {
+  const run = ACCOUNT_LOCK.then(fn, fn);
+  // 排队链不能因为某一轮抛错而断掉：吞掉结果，只留顺序
+  ACCOUNT_LOCK = run.then(() => {}, () => {});
+  return run;
+}
+// 仅供测试：等所有排队的执行跑完（生产代码不要用）
+export function accountLockIdle() {
+  return ACCOUNT_LOCK;
+}
+
 // 执行路线的对外名字（面板「网站反馈」里会带上，排障时一眼能看出这次请求从哪个网络出去）
 export const ROUTE_NAME = { server: 'CF 直连', relay: '本地网络' };
 
@@ -234,47 +264,57 @@ export async function runAccount(env, account) {
     }
 
     // 逐条路线尝试：网络层失败才换下一条，站点给出的业务结论一律照实回报。
+    //
+    // 【整段包在账号锁里】不只是「走中继」那一段 —— 直连的那一轮同样要串起来：
+    // 中继是靠改写 globalThis.fetch 实现的，只要它改着，**同一 isolate 里任何**
+    // 直连请求也会一并被劫持（用户看到「CF 网络」，实际走的是他家宽带）。
+    // 顺序、还原、异常路径的细节见文件顶部 withAccountLock 的说明。
     let res = null;
     let lastErr = null;
     let usedRoute = '';
-    for (const st of runnable) {
-      triedRoutes.push(st.route);
-      try {
-        if (st.route === 'relay') {
-          // 中继模式：透明替换 global fetch，站点代码无需修改，HTTP 经扩展走用户本地网络
-          const { relayFetch } = await import('./lib/relay.js');
-          const originalFetch = globalThis.fetch;
-          globalThis.fetch = (url, init) => relayFetch(db, url, init);
-          // 告知站点模块「当前走本地网络」：重定向无法用 manual（opaqueredirect 读不到头），需改用 follow
-          ctx.relayDb = db;
-          try {
+    await withAccountLock(async () => {
+      for (const st of runnable) {
+        triedRoutes.push(st.route);
+        try {
+          if (st.route === 'relay') {
+            // 中继模式：透明替换 global fetch，站点代码无需修改，HTTP 经扩展走用户本地网络
+            const { relayFetch } = await import('./lib/relay.js');
+            // 还原目标是「进这一段之前的那份 fetch」。
+            // 它可能不是真的全局 fetch（测试台架会临时替换它，那是故意为之），
+            // 但**一定不是另一个账号的中继版本** —— 同一时刻只可能有一个账号在跑（上面的锁）。
+            const prevFetch = globalThis.fetch;
+            globalThis.fetch = (url, init) => relayFetch(db, url, init);
+            // 告知站点模块「当前走本地网络」：重定向无法用 manual（opaqueredirect 读不到头），需改用 follow
+            ctx.relayDb = db;
+            try {
+              res = await site.run(creds, ctx);
+            } finally {
+              globalThis.fetch = prevFetch;
+              delete ctx.relayDb;
+            }
+          } else {
             res = await site.run(creds, ctx);
-          } finally {
-            globalThis.fetch = originalFetch;
-            delete ctx.relayDb;
           }
-        } else {
-          res = await site.run(creds, ctx);
+          usedRoute = st.route;
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          const alt = runnable.find((s) => !triedRoutes.includes(s.route));
+          // 「结果未知」例外：请求**已经发出去了**，只是没等到回包 —— 换个出口再发一遍
+          // 可能把同一次签到写两次，而且换条路也问不出「上一条到底送达没有」。
+          // 这种如实记「结果未知」并交给自动补跑复核（站点模块自己会重打同一接口确认），
+          // 比赌一次重发更靠谱。其余网络层失败（被机房 IP 拦、连不上、空响应）才是真该换路。
+          const unknown = (e && e.outcome) === 'relay-unknown';
+          if (alt && isRouteFailure(e) && !unknown) {
+            // 这条网络出口不行，换另一条。记下来写进「网站反馈」，让用户能看出面板做了什么。
+            switchNotes.push(`${ROUTE_NAME[st.route]}失败（${shortReason(e)}）`);
+            continue;
+          }
+          throw e;
         }
-        usedRoute = st.route;
-        lastErr = null;
-        break;
-      } catch (e) {
-        lastErr = e;
-        const alt = runnable.find((s) => !triedRoutes.includes(s.route));
-        // 「结果未知」例外：请求**已经发出去了**，只是没等到回包 —— 换个出口再发一遍
-        // 可能把同一次签到写两次，而且换条路也问不出「上一条到底送达没有」。
-        // 这种如实记「结果未知」并交给自动补跑复核（站点模块自己会重打同一接口确认），
-        // 比赌一次重发更靠谱。其余网络层失败（被机房 IP 拦、连不上、空响应）才是真该换路。
-        const unknown = (e && e.outcome) === 'relay-unknown';
-        if (alt && isRouteFailure(e) && !unknown) {
-          // 这条网络出口不行，换另一条。记下来写进「网站反馈」，让用户能看出面板做了什么。
-          switchNotes.push(`${ROUTE_NAME[st.route]}失败（${shortReason(e)}）`);
-          continue;
-        }
-        throw e;
       }
-    }
+    });
     if (lastErr) throw lastErr;
     // 记住真正走通的路线：下次优先用它，省掉一次注定失败的尝试
     if (usedRoute) meta.exec_route = usedRoute;

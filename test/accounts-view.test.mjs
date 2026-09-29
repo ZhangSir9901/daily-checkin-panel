@@ -9,8 +9,10 @@
 // 另一个易错点：「今天」得按**站点自己的日界**算 —— 糊涂鳄按 UTC 计日，
 // 拿面板时区（Asia/Shanghai）去比，00:00–08:00 之间会把昨天当成今天。
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import worker from '../src/index.js';
 import { dayInTz } from '../src/schedule.js';
+import { encryptJSON, b64encode } from '../src/crypto.js';
 
 let n = 0;
 const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
@@ -52,9 +54,11 @@ function fakeDb(account) {
   };
 }
 
-async function get(account) {
+async function get(account, creds) {
   const db = fakeDb(account);
-  const env = { DB: db };
+  const key = b64encode(crypto.getRandomValues(new Uint8Array(32)));
+  const env = { DB: db, ENCRYPT_KEY: key };
+  if (creds) account.creds = await encryptJSON(env, db, creds);
   const req = new Request('https://panel.test/api/accounts', { headers: { cookie: `sid=${SID}` } });
   const res = await worker.fetch(req, env, { waitUntil() {} });
   return { body: await res.json(), db };
@@ -122,6 +126,47 @@ await t('今天没有成功记录 → 保持原样，不凭空造一个「已签
   assert.equal(a.last_status, 'fail', '没签上就是没签上');
   assert.equal(a.last_msg, FAIL_MSG);
   assert.equal(db.state.accountUpdates.length, 0);
+});
+
+// ---------- 凭据到期时间（鼠标悬浮站点名可见） ----------
+await t('账号列表带上「凭据到期时间」，而密文/明文凭据一个都不下发', async () => {
+  // 悬浮站点名要显示「这份 Cookie 还能撑几天」，而那要解密凭据才能算 ——
+  // 于是列表接口得顺手算好。风险在于：别把解密后的（或加密后的）凭据一起发回浏览器。
+  const cookie = 'PHPSESSID=a; wordpress_logged_in_ab12cd=' + encodeURIComponent('laoguo|1791635708|tok|hmac');
+  const { body } = await get({
+    id: 8, name: '糊涂鳄', site: 'hutue', enabled: 1, meta: '{}',
+    last_status: 'ok', last_msg: OK_MSG, last_detail: OK_DETAIL, last_run_at: Date.now(),
+  }, { cookie, user_agent: 'UA', site_url: 'https://hutue.cn' });
+  const a = body.accounts[0];
+  assert.ok(a.cred_exp, '要带上 cred_exp，否则鼠标移上去没东西可弹');
+  assert.equal(a.cred_exp.sessions.length, 1);
+  assert.equal(a.cred_exp.sessions[0].user, 'laoguo');
+  assert.equal(a.cred_exp.sessions[0].expired, false);
+  assert.ok(!('creds' in a), 'creds 字段必须删掉，绝不下发');
+  const raw = JSON.stringify(body);
+  assert.doesNotMatch(raw, /gcm1\./, '加密后的凭据也不能回传');
+  assert.doesNotMatch(raw, /wordpress_logged_in_ab12cd/, '明文凭据更不能回传');
+  assert.doesNotMatch(raw, /laoguo\|1791635708/, '会话值也不能回传（只要结论）');
+});
+
+await t('凭据里没有自带到期时间 → 不带 cred_exp（界面自己说「没写」）', async () => {
+  const { body } = await get({
+    id: 1, name: 'NodeSeek', site: 'nodeseek', enabled: 1, meta: '{}',
+    last_status: 'ok', last_msg: OK_MSG, last_detail: '', last_run_at: Date.now(),
+  }, { cookie: 'PHPSESSID=abc' });
+  assert.equal(body.accounts[0].cred_exp, undefined, '解不出到期时间就别编一个');
+  assert.ok(!('creds' in body.accounts[0]));
+});
+
+await t('凭据解不开（换过 ENCRYPT_KEY）也不能让整个账号列表挂掉', async () => {
+  const { body } = await get({
+    id: 8, name: '糊涂鳄', site: 'hutue', enabled: 1, meta: '{}', creds: 'gcm1.坏.坏',
+    last_status: 'ok', last_msg: OK_MSG, last_detail: '', last_run_at: Date.now(),
+  });
+  assert.equal(body.accounts.length, 1, '列表照常返回');
+  assert.equal(body.accounts[0].name, '糊涂鳄');
+  assert.equal(body.accounts[0].cred_exp, undefined);
+  assert.ok(!('creds' in body.accounts[0]), '坏数据也不下发');
 });
 
 console.log(`\n${n} 组通过`);

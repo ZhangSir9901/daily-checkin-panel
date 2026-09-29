@@ -21,7 +21,7 @@ const run = (args, label) => {
 };
 
 step('语法检查 src/');
-for (const f of ['index.js', 'runner.js', 'ext-zip.js', 'ext-files.js', 'schedule.js', 'db.js', 'crypto.js', 'notify.js', 'probe.js']) {
+for (const f of ['index.js', 'runner.js', 'ext-zip.js', 'ext-files.js', 'schedule.js', 'db.js', 'crypto.js', 'notify.js', 'probe.js', 'version.js']) {
   run(['--check', join('src', f)], f);
 }
 for (const d of ['src/lib', 'src/sites']) {
@@ -45,9 +45,12 @@ run([join('tools', 'check-ext-files.mjs')], 'ext-files.js');
 step('index.html 内联 JS 语法');
 {
   const html = readFileSync(join(root, 'public', 'index.html'), 'utf8');
-  const m = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
+  // 取 </body> 之前的那一个内联脚本（<head> 里还有一小段主题预设脚本，别把它当主体）
+  const close = html.lastIndexOf('</script>');
+  const open = html.lastIndexOf('<script>', close);
   try {
-    new Function(m[1]);
+    if (open < 0 || close < 0) throw new Error('找不到内联脚本');
+    new Function(html.slice(open + '<script>'.length, close));
     console.log('✅ 内联脚本语法 OK');
   } catch (e) {
     failed++;

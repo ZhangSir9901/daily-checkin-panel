@@ -120,6 +120,29 @@ export function shouldRun(now, timeHHMM, tz, lastKey, opts = {}) {
   return { run: true, key, nowKey };
 }
 
+// 纯“看钟”的判断：今天该账号的签到时刻到了吗（且没超出补跑窗口）。
+//
+// 【为什么单独要这个】shouldRun() 会看执行记录（成功过就不再跑），适合 cron；
+// 而“浏览器签到工单自动下发”那条路只应该关心**时间到了没有**：
+// 它以前只看「今天还没签上」，于是每天 0 点一过就立刻下发 ——
+// 用户把时间设成 08:05，吾爱破解却在半夜就被自动签了，看起来就是
+// 「吾爱不跟随全局时间」。这个函数就是给那种场景用的：只看钟，不看记录。
+export function pastScheduleTime(now, timeHHMM, tz, opts = {}) {
+  const windowMin = Number.isFinite(opts.windowMin) ? opts.windowMin : CATCHUP_WINDOW_MIN;
+  let parts;
+  try {
+    parts = tzParts(now, tz);
+  } catch {
+    parts = tzParts(now, 'Asia/Shanghai');
+  }
+  const { wantHour, wantMin } = parseWant(timeHHMM);
+  const nowMin = Number(parts.hour) * 60 + Number(parts.minute);
+  const wantMinTotal = Number(wantHour) * 60 + Number(wantMin);
+  if (nowMin < wantMinTotal) return false;
+  if (nowMin - wantMinTotal > windowMin) return false;
+  return true;
+}
+
 // 执行后要写回 lastMap 的值：成功记 key；失败/结果未知记 "key@本次时刻"，好让 shouldRun 决定何时补跑。
 export function nextLastKey(key, nowKey, status) {
   return status === 'ok' ? key : `${key}@${nowKey}`;

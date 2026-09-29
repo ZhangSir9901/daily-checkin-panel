@@ -61,6 +61,40 @@ export function validateSiteConfig(raw) {
   if (!Array.isArray(def.fields) || !def.fields.length) {
     warnings.push('没有 fields：用户添加账号时没有任何可填项（如果签到确实不需要任何输入，可以忽略）');
   }
+
+  // ---- fields：账号表单就靠它渲染，逐项校验 ----
+  //
+  // 【为什么 key 必须限字符集】面板把 f.key 拼进 `data-k="…"`（还有一堆 querySelector），
+  // 而配置是**从网上导入的**（别人写的 JSON）。key 里塞一句
+  //   `" onfocus="alert(1)" autofocus x="`
+  // 就是一个在管理员会话里执行的 XSS —— 面板里能拿到会话能拿到的一切。
+  // （前端那一条路也统一走 esc()，两道一起上：这里挡住入库，前端挡住历史遗留的坏数据。）
+  const fields = Array.isArray(def.fields) ? def.fields : [];
+  const seenKeys = new Set();
+  fields.forEach((f, i) => {
+    const label = `fields[${i}]` + (f && asText(f.label) ? `（${asText(f.label).slice(0, 20)}）` : '');
+    if (!f || typeof f !== 'object' || Array.isArray(f)) { errors.push(`${label}：不是对象`); return; }
+    const key = asText(f.key).trim();
+    if (!/^[A-Za-z0-9_]{1,40}$/.test(key)) {
+      errors.push(`${label}：key 只能用字母/数字/下划线（1–40 位），现在是 ${JSON.stringify(asText(f.key))}`);
+    } else if (seenKeys.has(key)) {
+      errors.push(`${label}：key 与前面的字段重复了（${key}）——两个输入框共用一个值`);
+    } else {
+      seenKeys.add(key);
+    }
+    const type = asText(f.type || 'text');
+    if (!['text', 'password', 'textarea', 'select'].includes(type)) {
+      errors.push(`${label}：type 不认识（只支持 text / password / textarea / select）`);
+    }
+    if (type === 'select' && (!Array.isArray(f.options) || !f.options.length)) {
+      errors.push(`${label}：select 必须给 options`);
+    }
+    if (Array.isArray(f.options) && f.options.length > 50) errors.push(`${label}：options 太多（最多 50 项）`);
+    for (const k of ['label', 'placeholder']) {
+      if (asText(f[k]).length > 120) errors.push(`${label}：${k} 太长（最多 120 字）`);
+    }
+  });
+  if (Array.isArray(def.fields) && def.fields.length > 40) errors.push('fields 太多（最多 40 个）');
   if (!Array.isArray(def.steps) || !def.steps.length) {
     errors.push('缺少 steps：至少要有一个请求步骤');
   }
@@ -103,6 +137,10 @@ export function sanitizeSiteConfig(def) {
   // 清掉只对本机有意义的内部字段
   delete out.community;
   delete out.localId;
+  // source 在面板上会被渲染成「来源」链接。esc() 拦不住协议：
+  // `javascript:fetch('/api/ext-key/rotate',{method:'POST'})` 转义后依旧是个能点的链接，
+  // 点一下就在面板的源里执行脚本。所以除了前端只认 http/https，入库前也直接丢掉非法协议。
+  if (out.source && !/^https?:\/\//i.test(String(out.source))) delete out.source;
   // 字段默认值里若有凭据痕迹，一并清掉
   if (Array.isArray(out.fields)) {
     out.fields = out.fields.map((f) => {

@@ -12,11 +12,15 @@
 import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const scriptM = html.match(/<script>([\s\S]*?)<\/script>\s*<\/body>/);
-if (!scriptM) throw new Error('找不到内联脚本');
-const code = scriptM[1];
-const scriptStart = scriptM.index;
-const scriptEnd = scriptStart + scriptM[0].length;
+// 定位「</body> 之前的那个内联 <script>…</script>」。
+// 【不要再用「第一个 <script>」】：页面 <head> 里还有一小段主题预设脚本，
+// 用第一个会把头部脚本当主体脚本来检查（整套检查会对着错误的内容跑）。
+const scriptClose = html.lastIndexOf('</script>');
+const scriptOpen = html.lastIndexOf('<script>', scriptClose);
+if (scriptOpen < 0 || scriptClose < 0) throw new Error('找不到内联脚本');
+const code = html.slice(scriptOpen + '<script>'.length, scriptClose);
+const scriptStart = scriptOpen;
+const scriptEnd = scriptClose + '</script>'.length;
 // <script> 之外的静态 HTML（动态生成的不算）
 const staticHtml = html.slice(0, scriptStart) + html.slice(scriptEnd);
 

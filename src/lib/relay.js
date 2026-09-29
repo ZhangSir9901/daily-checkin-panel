@@ -11,7 +11,8 @@ function b64encode(bytes) {
 }
 
 function b64decode(b64) {
-  const s = atob(b64);
+  // atob 只认标准 base64；扩展端偶尔会带上换行（长串被折行），先把空白清掉
+  const s = atob(String(b64).replace(/\s+/g, ''));
   const arr = new Uint8Array(s.length);
   for (let i = 0; i < s.length; i++) arr[i] = s.charCodeAt(i);
   return arr;
@@ -94,10 +95,23 @@ export async function waitRelayResult(db, jobId, timeoutMs = 90000, pollMs = 300
         err.detail = where + '｜中继回传里没有状态码、也没有正文';
         throw err;
       }
+      // 解码回传的正文：以前这里直接 b64decode（内部是 atob），一串不合法的 base64
+      // 会让 atob 抛「Invalid character」—— 这句会一路冒到面板的「网站反馈」里，
+      // 用户看到的是一个和自己无关的字符串错误，完全不知道是扩展回传坏了。
+      // 接口侧现在会先挡一道，但旧版本扩展 / 库里已有的坏行仍可能落到这里，所以这里也容错。
+      let respBytes = new Uint8Array(0);
+      if (respBody) {
+        try { respBytes = b64decode(respBody); } catch {
+          const err = new Error('本地网络失败：扩展回传的响应体不是合法的 base64（扩展版本与面板可能不匹配，请更新扩展后重试）');
+          err.outcome = 'relay';
+          err.detail = where;
+          throw err;
+        }
+      }
       return {
         status: respStatus,
         headers: respHeaders,
-        body: respBody ? b64decode(respBody) : new Uint8Array(0),
+        body: respBytes,
         url: respUrl,
       };
     }

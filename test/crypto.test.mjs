@@ -93,8 +93,8 @@ await t('ENCRYPT_KEY 必须是 32 字节 base64：写错要给出能看懂的话
 });
 
 await t('管理员密码：正确/错误/损坏的哈希都不出错', async () => {
-  const stored = await hashPassword('Gxp78537904@');
-  assert.equal(await verifyPassword('Gxp78537904@', stored), true);
+  const stored = await hashPassword('Str0ng-Pass-123');
+  assert.equal(await verifyPassword('Str0ng-Pass-123', stored), true);
   assert.equal(await verifyPassword('wrong', stored), false);
   assert.equal(await verifyPassword('x', 'garbage'), false);
   assert.equal(await verifyPassword('x', ''), false);

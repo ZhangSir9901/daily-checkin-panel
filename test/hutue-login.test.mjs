@@ -15,20 +15,20 @@ const t = async (name, fn) => { await fn(); n++; console.log('ok -', name); };
 
 const CN_HASH = 'ec35f1949aa62d7b02e78d74b17cb6b5'; // md5('https://hutue.cn')
 const DJ_HASH = 'ca7674586a167c665930997282100f84'; // md5('http://dj.hutue.cn')
-const CN_EXPIRED = `guo527029137%7C1790651147%7Ctok%7Chmac`; // 2026-09-29 11:05:47 +08（已过期）
-const DJ_VALID = `laoguo%7C1791684908%7Ctok%7Chmac`;         // 2026-10-11 10:15:08 +08
+const CN_EXPIRED = `demo-user%7C1790651147%7Ctok%7Chmac`; // 2026-09-29 11:05:47 +08（已过期）
+const DJ_VALID = `other-user%7C1791684908%7Ctok%7Chmac`;         // 2026-10-11 10:15:08 +08
 const MIXED = `wordpress_logged_in_${DJ_HASH}=${DJ_VALID}; wordpress_logged_in_${CN_HASH}=${CN_EXPIRED}`;
 
 const HOME = '<html><head>'
   + '<script>var caozhuti={"ajaxurl":"https:\\/\\/hutue.cn\\/wp-admin\\/admin-ajax.php"};</script>'
   + '<script src="https://hutue.cn/wp-content/themes/ripro/assets/js/app.js"></script>'
-  + '</head><body><div id="wpadminbar">你好，guo527029137</div>'
+  + '</head><body><div id="wpadminbar">你好，demo-user</div>'
   + '<a class="click-qiandao" href="javascript:;">打卡签到</a>'
   + '<script>jQuery(".click-qiandao").on("click",function(){jQuery.post(caozhuti.ajaxurl,{action:"user_qiandao"},function(a){})});</script>'
   + '</body></html>';
 
 // 登录成功后的首页：带 wpadminbar / 退出登录，是 wpLogin 验证登录成功用的痕迹
-const HOME_LOGGED = '<html><body><div id="wpadminbar">你好，guo527029137</div><a href="/wp-login.php?action=logout">退出登录</a></body></html>';
+const HOME_LOGGED = '<html><body><div id="wpadminbar">你好，demo-user</div><a href="/wp-login.php?action=logout">退出登录</a></body></html>';
 
 function mock(handler) {
   const calls = [];
@@ -56,7 +56,7 @@ function siteHandler({ signin = { status: 1, msg: '签到成功，赠送5晶石'
         status: 302,
         headers: {
           get: (k) => (String(k).toLowerCase() === 'location' ? 'https://hutue.cn/' : null),
-          getSetCookie: () => [`wordpress_logged_in_${CN_HASH}=guo527029137%7C1791859307%7Ctok%7Chmac; Path=/; HttpOnly`],
+          getSetCookie: () => [`wordpress_logged_in_${CN_HASH}=demo-user%7C1791859307%7Ctok%7Chmac; Path=/; HttpOnly`],
         },
         body: '',
       };
@@ -74,7 +74,7 @@ await t('hutue：会话已过期时自动登录一次，再签成功', async () 
   const calls = mock(siteHandler());
   const ctx = { meta: {} };
   const r = await hutue.run(
-    { site_url: 'https://hutue.cn', cookie: MIXED, username: 'guo527029137@qq.com', password: 'pw' },
+    { site_url: 'https://hutue.cn', cookie: MIXED, username: 'demo@example.com', password: 'pw' },
     ctx,
   );
   assert.equal(r.ok, true);
@@ -83,7 +83,7 @@ await t('hutue：会话已过期时自动登录一次，再签成功', async () 
   assert.match(r.detail, /已剔除属于其它域名的旧会话/, '登录时顺手剔掉另一个站的会话，并让人知道');
   const loginCall = calls.find((c) => c.url.includes('/wp-login.php') && c.method === 'POST');
   assert.ok(loginCall, '应该有一次 wp-login.php 的登录 POST');
-  assert.match(loginCall.body, /log=guo527029137%40qq\.com/);
+  assert.match(loginCall.body, /log=demo%40example\.com/);
   assert.match(loginCall.body, /pwd=pw/);
   // 登录在后、签到在后：先登录再打签到接口
   assert.ok(calls.findIndex((c) => c.url.includes('admin-ajax.php')) > calls.indexOf(loginCall));
@@ -99,9 +99,9 @@ await t('hutue：没账号密码时，错误里带「Cookie 体检」（哪段�
   ).catch((e) => e);
   assert.ok(err instanceof Error);
   assert.match(err.message, /登录已失效/);
-  assert.match(err.message, /Cookie 体检：.*属于 hutue\.cn 的会话：guo527029137/);
+  assert.match(err.message, /Cookie 体检：.*属于 hutue\.cn 的会话：demo-user/);
   assert.match(err.message, /已过期/);
-  assert.match(err.message, /laoguo/, '要指出那段仍然有效的其实是另一个站的');
+  assert.match(err.message, /other-user/, '要指出那段仍然有效的其实是另一个站的');
   assert.match(err.message, /没有存账号密码/);
 });
 
@@ -121,7 +121,7 @@ await t('hutue：站点回「请登录后签到」时（会话在运行前刚过
   // 这份 Cookie 里本站那段是「有效」的（exp 设在很远的未来），所以不会触发预登录；
   // 但站点仍然回未登录 —— 这时应当自己登录一次再试。
   const futureHash = CN_HASH;
-  const validOwn = `guo527029137%7C1799999999%7Ctok%7Chmac`;
+  const validOwn = `demo-user%7C1799999999%7Ctok%7Chmac`;
   let firstSignin = true;
   const calls = mock((u, m) => {
     if (u.includes('/wp-login.php') && m === 'POST') return siteHandler().call(null, u, m);
@@ -135,7 +135,7 @@ await t('hutue：站点回「请登录后签到」时（会话在运行前刚过
     return { body: '<html>首页</html>' };
   });
   const r = await hutue.run(
-    { site_url: 'https://hutue.cn', cookie: `wordpress_logged_in_${futureHash}=${validOwn}`, username: 'guo527029137@qq.com', password: 'pw' },
+    { site_url: 'https://hutue.cn', cookie: `wordpress_logged_in_${futureHash}=${validOwn}`, username: 'demo@example.com', password: 'pw' },
     { meta: {} },
   );
   assert.equal(r.ok, true);
@@ -159,7 +159,7 @@ await t('hutue：自动登录失败时，报错里带站点原话', async () => 
 await t('hutue：本站会话有效时，异站会话不发出去且反馈里说清', async () => {
   // 本站那段还没过期 → 不会触发预登录，走的就是「直接用这份 Cookie 签」这条路，
   // 正好验证过滤发生在发请求前。
-  const ownValid = 'guo527029137%7C1799999999%7Ctok%7Chmac';
+  const ownValid = 'demo-user%7C1799999999%7Ctok%7Chmac';
   const jar = `wordpress_logged_in_${DJ_HASH}=${DJ_VALID}; wordpress_logged_in_${CN_HASH}=${ownValid}`;
   const calls = mock(siteHandler());
   const r = await hutue.run(
@@ -168,8 +168,8 @@ await t('hutue：本站会话有效时，异站会话不发出去且反馈里说
   );
   assert.equal(r.ok, true);
   const signin = calls.find((c) => c.url.includes('admin-ajax.php'));
-  assert.doesNotMatch(String(signin.headers.Cookie || ''), /laoguo/, '异站会话不该发出去');
-  assert.match(String(signin.headers.Cookie || ''), /guo527029137/, '本站会话照样发出去');
+  assert.doesNotMatch(String(signin.headers.Cookie || ''), /other-user/, '异站会话不该发出去');
+  assert.match(String(signin.headers.Cookie || ''), /demo-user/, '本站会话照样发出去');
   assert.match(r.detail, /已忽略不属于本站的会话 Cookie/);
 });
 
@@ -192,14 +192,14 @@ await t('hutue：登录拿到新会话后回写加密凭据', async () => {
   assert.ok(credWrite, '应把新会话写回 creds');
   assert.equal(credWrite.args[2], 8);
   assert.ok(String(credWrite.args[0]).length > 20, '写入的应该是密文');
-  assert.doesNotMatch(String(credWrite.args[0]), /guo527029137/, '不能把会话明文写进库');
+  assert.doesNotMatch(String(credWrite.args[0]), /demo-user/, '不能把会话明文写进库');
 });
 
 // ---------- ⑧ 只填账号密码、完全没 Cookie → 直接登录再签 ----------
 await t('hutue：只填账号密码（没有 Cookie）也能一路签下来', async () => {
   const calls = mock(siteHandler());
   const r = await hutue.run(
-    { site_url: 'https://hutue.cn', username: 'guo527029137@qq.com', password: 'pw' },
+    { site_url: 'https://hutue.cn', username: 'demo@example.com', password: 'pw' },
     { meta: {} },
   );
   assert.equal(r.ok, true);

@@ -5,6 +5,8 @@
 // 返回候选列表，由用户在面板中确认后再保存为「自定义 HTTP」账号。
 // 注意：这是尽力而为的启发式探测，不保证命中；命中后仍建议点「执行」验证一次。
 
+import { safePublicFetch } from './lib/net-guard.js';
+
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
@@ -160,8 +162,12 @@ export async function probeSignEndpoints({ url, cookie = '', fetchImpl = fetch, 
   const headers = { 'User-Agent': UA };
   if (cookie && String(cookie).trim()) headers.Cookie = String(cookie).trim();
 
+  // 每一跳都过闸门：探测会顺着页面里的链接去抓同源 JS，
+  // 如果只校验用户填的那一个地址，一个「公网地址 → 302 到内网」的跳转就绕过去了。
   const get = async (u) => {
-    const res = await fetchImpl(u, { headers, signal: AbortSignal.timeout(15000) });
+    const got = await safePublicFetch(u, { headers, signal: AbortSignal.timeout(15000) }, { fetchImpl });
+    if (!got.ok) throw new Error(got.error);
+    const res = got.res;
     if (!res.ok) throw new Error(`抓取失败 HTTP ${res.status}：${u}`);
     const text = await res.text();
     return text.length > 2_000_000 ? text.slice(0, 2_000_000) : text;

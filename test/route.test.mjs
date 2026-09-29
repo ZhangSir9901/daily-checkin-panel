@@ -28,9 +28,16 @@ const HOME = '<!DOCTYPE html><html><head><link rel="stylesheet" href="/wp-conten
 const OK_JSON = JSON.stringify({ status: '1', msg: '签到成功，赠送5晶石' });
 
 // 极简 D1 fake：够 runner + lib/relay.js 跑完一条链路
-function fakeDb({ relayOnline = true, relayBody = OK_JSON, backlog = 0, lastOkRun = null, relayEmpty = false } = {}) {
+//
+// relayPendingFirst：头几轮轮询先回「扩展还在做」。
+// 【为什么需要它】默认（立刻 done）时中继那段是**纯微任务**，一个宏任务就跑完，
+// 事件循环压根不会让出去 —— 于是「两个账号并发」这种用例永远碰不到真正的重叠，
+// 写成通过的也只是自欺。让它先 pending，waitRelayResult 就会 sleep(300ms)，
+// 这个真实的空档才是线上出事的那个窗口（扩展正在跑，别的请求同时进来）。
+function fakeDb({ relayOnline = true, relayBody = OK_JSON, backlog = 0, lastOkRun = null, relayEmpty = false, relayPendingFirst = 0 } = {}) {
   const state = { relayJobs: [], runs: [], accountUpdates: [] };
   const jobs = {};
+  const polls = {};
   return {
     state,
     jobs,
@@ -60,7 +67,12 @@ function fakeDb({ relayOnline = true, relayBody = OK_JSON, backlog = 0, lastOkRu
             if (key === 'schedule_tz') return { value: 'Asia/Shanghai' };
             return null;
           }
-          if (/FROM relay_jobs WHERE id = \?/i.test(sql)) return jobs[stmt._args[0]] || null;
+          if (/FROM relay_jobs WHERE id = \?/i.test(sql)) {
+            const id = stmt._args[0];
+            polls[id] = (polls[id] || 0) + 1;
+            if (relayPendingFirst && polls[id] <= relayPendingFirst) return { status: 'pending', url: 'x', method: 'GET' };
+            return jobs[id] || null;
+          }
           // 今天最近一次成功记录（runner 在「已签过又被补跑失败」时要拿它回填账号行）
           if (/FROM runs/i.test(sql) && /status = 'ok'/i.test(sql)) return lastOkRun;
           return null;
@@ -314,6 +326,66 @@ await t('今天已签上过，之后一次补跑失败不会把账号行改成�
   assert.match(String(row[2] || ''), /user_qiandao/, '网站原文也要回填');
 });
 
+// ---- ⑤.5 并发安全：一个账号走中继时，不能把另一个「CF 网络」的账号也一起劫持 ----
+//
+// 【为什么这是真 bug】走本地网络的实现是临时把 globalThis.fetch 换成中继版本，
+// 而一个 Worker isolate 的 globalThis 是**所有并发请求共享**的。两个账号同时跑时会：
+//   A 记住原 fetch → 改成中继；B 记住的「原 fetch」其实是 A 的中继版本 → 也改成中继；
+//   A 跑完还原；B 跑完还原成它记住的那份 = **中继版本** ——
+//   这把改动就永久留在 isolate 里：之后任何标着「CF 网络」的账号都会被静默地
+//   借用户的浏览器发请求，而面板上一个字都不会说。
+// 修法：同一时刻只允许一个账号在跑（runner.js 的 withAccountLock）。
+await t('两个账号同时跑：走中继的那个不能把直连的账号也带进中继，也不能把中继留在全局', async () => {
+  const dbRelay = fakeDb({ relayOnline: true, relayPendingFirst: 1 }); // 先让中继真的「等一轮」，造出真实的时间窗
+  const relayAcc = await account(dbRelay, 'hutue', { exec_route: 'relay' }, 'https://hutue.cn');
+  const dbDirect = fakeDb({ relayOnline: true });
+  const directAcc = await account(dbDirect, 'hutue', {}, 'https://dj.hutue.cn');
+  const calls = mockServerFetch({});
+  const mockFn = globalThis.fetch;
+  // 【为什么不用 setTimeout 轮询】中继那一段是**纯微任务**：fakeDb 的 run/first 都是 async，
+  // 但没有真 I/O，所以「换成中继 → 发请求 → 还原」整个窗口在一个宏任务里就跑完了，
+  // 定时器根本没有机会插进去 —— 轮询永远看不到「已换掉」那一刻，用例会假失败。
+  // 改成在**赋值发生的那一瞬间**把另一个账号也放出去：这正是要防的真实并发时序
+  // （定时任务 + 手动点「执行」/ 同一行被连点两下）。
+  let patchAssignments = 0;
+  let held = mockFn;
+  let pB = null;
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    get: () => held,
+    set: (v) => {
+      if (v !== mockFn) patchAssignments++; // 只看「被换成非台架版本」，还原不算
+      held = v;
+      if (v !== mockFn && !pB) pB = runAccount(directAcc.env, directAcc.acc);
+    },
+  });
+  try {
+    const rA = await runAccount(relayAcc.env, relayAcc.acc); // 它会在这里面换掉 fetch
+    assert.ok(patchAssignments >= 1, '中继那个账号压根没切进「本地网络」，这条用例就失去意义了');
+    assert.ok(pB, '没能抓住「A 切进本地网络」那一刻，用例失去意义');
+    const rB = await pB;
+    assert.equal(rA.status, 'ok', '中继那个：' + rA.message);
+    assert.equal(rB.status, 'ok', '直连那个：' + rB.message);
+    assert.ok(dbRelay.state.relayJobs.length >= 1, '中继那个应该真的走中继');
+    // 两个队列都要查：漏出去的补丁指向 A 自己那份 db，所以 B 的请求可能落在**任意一边**，
+    // 只看 dbDirect 会漏掉（实测锁定前就是落在 dbRelay 队列里）。
+    const hijacked = [...dbRelay.state.relayJobs, ...dbDirect.state.relayJobs]
+      .filter((j) => /dj\.hutue\.cn/.test(String(j.url)));
+    assert.equal(hijacked.length, 0,
+      '直连那个账号的请求被中继接走了 —— fetch 补丁漏到了另一个账号上：' + JSON.stringify(hijacked));
+    assert.ok(calls.some((c) => c.url === 'https://dj.hutue.cn/'), '直连那个账号应该走真正的直连通路');
+    // 收尾：全局 fetch 必须还是台架那一份。随便打一个地址，应该进 calls，
+    // 而不是被接进中继队列（那是「中继版本被永久留在了全局」的表现）。
+    assert.equal(held, mockFn, '全局 fetch 被留成了中继版本（之后所有直连都会被静默劫持）');
+    const before = calls.length;
+    await globalThis.fetch('https://still-direct.example/');
+    assert.equal(calls.length, before + 1, '全局 fetch 被留成了中继版本（之后所有直连都会被静默劫持）');
+  } finally {
+    delete globalThis.fetch;
+    globalThis.fetch = origFetch;
+  }
+});
+
 // ---- ⑥ 失败分类：哪些才值得换一条网络路线 ----
 await t('isRouteFailure：网络层失败算「值得换路」，业务/验证结论不算', async () => {
   assert.equal(isRouteFailure(new Error('等待本地网络响应超时：扩展没有在 90 秒内回传')), true);
@@ -334,7 +406,7 @@ await t('isRouteFailure：网络层失败算「值得换路」，业务/验证�
   // 「本地网络 / 超时」这些词，也不该换条网络出去重打一遍签到接口。
   // 旧代码把常量写成了 'need-login'，于是这条规则从来没生效过 ——
   // 线上表现就是「面板换条路又打了一次签到接口」（同一个账号白挨两次）。
-  const enriched = new Error('登录已失效，请重新获取 Cookie｜Cookie 体检：属于 hutue.cn 的会话 guo527029137 已过期'
+  const enriched = new Error('登录已失效，请重新获取 Cookie｜Cookie 体检：属于 hutue.cn 的会话 demo-user 已过期'
     + '｜说明：hutue.cn 走「本地网络」时，签到用的是浏览器里的登录态');
   enriched.outcome = OUTCOME.NEED_LOGIN;
   assert.equal(isRouteFailure(enriched), false, 'need_login 必须优先于文案里的关键词');

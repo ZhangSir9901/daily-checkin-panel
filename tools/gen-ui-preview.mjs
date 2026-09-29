@@ -49,10 +49,18 @@ function cardByTitle(title, from = 0, to = html.length) {
   const m = sec.match(re);
   if (!m) throw new Error('找不到卡片：' + title);
   const h2Abs = from + m.index;
-  // 注意：不是 '<div class="card">'——卡上带 style（如 <div class="card" style="padding:18px 20px">）时
-  // 会匹配不到，lastIndexOf 就会往回找到上一张卡，把两张卡搞混。
-  const cardStart = html.lastIndexOf('<div class="card"', h2Abs);
-  if (cardStart < 0) throw new Error('卡片没有 <div class="card"> 外壳：' + title);
+  // 注意：不能写 '<div class="card"'（带结束引号）——卡上带 style 或别的类名时
+  // （`<div class="card" style="…">`、`<div class="card ext-card">`）就匹配不到，
+  // lastIndexOf 会往回找到**上一张卡**，静默抽出错的内容。所以只匹配到 `card` 为止，
+  // 再看下一个字符是引号还是空格，逐个往回找。
+  let cardStart = -1;
+  for (let i = h2Abs; i >= 0;) {
+    i = html.lastIndexOf('<div class="card', i - 1);
+    if (i < 0) break;
+    const next = html[i + '<div class="card'.length];
+    if (next === '"' || next === ' ') { cardStart = i; break; }
+  }
+  if (cardStart < 0) throw new Error('卡片没有 <div class="card…"> 外壳：' + title);
   return balancedDivAt(cardStart);
 }
 
@@ -61,10 +69,15 @@ const accSecEnd = html.indexOf('<section id="tab-logs"');
 if (accSecStart < 0 || accSecEnd <= accSecStart) throw new Error('找不到「签到账号」区块');
 
 const topbar = balancedDivByTag('<div class="topbar">');
-// 「全局签到 + 添加账号 + 扩展下载」现在是同一张两栏卡（左：全局时间/扩展，右：粘贴添加）
+// 账号页现在是三张独立的卡（以前是两栏）：表格 / 全局签到 / 添加更新账号。
+// （浏览器扩展那一张卡已经搬去设置页了，见下面 extCard 那一行。）
 // 注意标题是「全局签到」（以前叫「签到时间」）——改标题时这里要一起改，否则预览直接报错。
 const schedCard = cardByTitle('全局签到', accSecStart, accSecEnd);
-const comCard = cardByTitle('🌍 社区站点', accSecStart, accSecEnd);
+const addCard = cardByTitle('添加 / 更新账号', accSecStart, accSecEnd);
+// 社区站点卡片已经搬到设置页了（不再在账号页）——找它的范围要跟着换
+const setStart = html.indexOf('<section id="tab-settings"');
+const setEnd = html.indexOf('</section>', setStart);
+const comCard = cardByTitle('🌍 社区站点', setStart, setEnd);
 const footStart = html.indexOf('<div class="foot">', accSecStart);
 const foot = footStart < 0 ? '' : balancedDivAt(footStart);
 const extCard = cardByTitle('🔌 浏览器扩展', html.indexOf('<section id="tab-settings"'));
@@ -81,7 +94,7 @@ const js = html.slice(jsStart, jsEnd);
 // 它依赖 public/cookie-tools.js 里的 explainCookieText/describeCookieName，
 // 以及面板全局的 SITES / guessSiteByDomain（预览里给空实现，只看样式）。
 const ckJsStart = html.indexOf('// ---------- Cookie 解析器');
-const ckJsEnd = html.indexOf('// 「填到上面并保存」');
+const ckJsEnd = html.indexOf('// 「填到粘贴区并保存」');
 const ckJs = (ckJsStart >= 0 && ckJsEnd > ckJsStart) ? html.slice(ckJsStart, ckJsEnd) : '';
 const readPublic = (f) => readFileSync(resolve(root, 'public', f), 'utf8');
 const curlJs = readPublic('curl-import.js');
@@ -115,13 +128,16 @@ const page = `<!DOCTYPE html>
   <h2 style="margin-top:22px">签到账号（表格）</h2>
   ${accCard}
 
-  <h2 style="margin-top:22px">全局签到 + 添加账号 + 扩展下载（同一张两栏卡）</h2>
+  <h2 style="margin-top:22px">全局签到（独立一张卡）</h2>
   ${schedCard}
+
+  <h2 style="margin-top:22px">添加 / 更新账号（粘贴区 + Cookie 解析器，同一张卡里的两个标签）</h2>
+  ${addCard}
 
   <h2 style="margin-top:22px">社区站点（开源共享：导入 / 导出同一张卡）</h2>
   ${comCard}
 
-  <h2 style="margin-top:22px">设置页 · 浏览器扩展</h2>
+  <h2 style="margin-top:22px">设置页 · 浏览器扩展（下载 + 安装步骤 + API Key 都在这儿）</h2>
   ${extCard}
 
   <h2 style="margin-top:22px">页脚说明（含开源仓库地址）</h2>
@@ -143,7 +159,7 @@ ${ckJs}
   const ta = $('ck-analyze');
   if (box && ta) {
     box.open = true;
-    ta.value = 'Cookie: PHPSESSID=abc123def456ghi; wordpress_logged_in_a=laoguo%7C1730000000%7Cabcdef0123456789; wzws_cid=0123456789abcdef0123456789abcdef; cf_clearance=xyz123abc-1759000000-1.2.3.4.5; _ga=GA1.2.987654321\\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0 Safari/537.36';
+    ta.value = 'Cookie: PHPSESSID=abc123def456ghi; wordpress_logged_in_a=other-user%7C1730000000%7Cabcdef0123456789; wzws_cid=0123456789abcdef0123456789abcdef; cf_clearance=xyz123abc-1759000000-1.2.3.4.5; _ga=GA1.2.987654321\\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0 Safari/537.36';
     $('btn-ck-analyze').click();
   }
 }

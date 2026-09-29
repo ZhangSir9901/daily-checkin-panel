@@ -1,9 +1,26 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>签到面板</title>
+<!--
+  主题预设（必须放在最前面、在最外层样式之前执行）：
+  先把 data-theme 写上去，页面再开始画 —— 否则会先闪一下深色再跳到浅色。
+  取值：light / dark / auto（auto = 跟随系统设置）。选择记在浏览器本地，不联网。
+-->
+<script>
+(function () {
+  var mode = 'auto';
+  try { mode = localStorage.getItem('panel-theme') || 'auto'; } catch (e) { /* 隐私模式读不到就用默认 */ }
+  var dark = true;
+  try {
+    dark = mode === 'dark' || (mode !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  } catch (e) { /* 忽略 */ }
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme-mode', mode);
+})();
+</script>
 <style>
   /* 时间选择器样式统一放在样式表末尾，确保能覆盖通用 button 规则 */
   :root {
@@ -216,8 +233,9 @@
           cursor:pointer; margin:3px 6px 3px 0; white-space:nowrap; transition:all .15s; font-weight:600; }
   .pill:hover { border-color:var(--accent); color:var(--text); }
   .pill.on { border-color:var(--ok); color:var(--ok); background:var(--ok-dim); }
-  /* 分段选择器（如随机/固定）：与徽章同字号、弧度、高度、宽度 */
-  .seg { display:inline-flex; border-radius:999px; overflow:hidden; margin:0; width:100%; box-sizing:border-box;
+  /* 分段选择器（如随机/固定）：外框尺寸由 `.site-wrap .seg` 那条统一规则给（与网络徽章一模一样）,
+     这里只管它自己的颜色和圆角裁剪。 */
+  .seg { display:inline-flex; border-radius:var(--radius-xs); overflow:hidden; margin:0;
          border:1px solid transparent; background:rgba(91,140,255,.16); }
   .seg-opt { background:transparent; border:0; padding:4px 0; font-size:12px; font-weight:600; flex:1;
              display:inline-flex; align-items:center; justify-content:center;
@@ -239,17 +257,6 @@
   .ck-tab.active { background:var(--accent); color:#fff; border-color:transparent; }
   .ck-panel textarea { width:100%; box-sizing:border-box; margin:4px 0; }
 
-  /* 折叠区（其它取 Cookie 方式 / 扩展安装步骤）：默认收起，保持页面清爽 */
-  .ck-more { margin-top:14px; border:1px solid var(--line); border-radius:var(--radius-sm);
-             background:rgba(255,255,255,.015); overflow:hidden; }
-  .ck-more > summary { cursor:pointer; padding:12px 14px; font-size:13px; color:var(--muted);
-                       list-style:none; user-select:none; transition:color .15s, background .15s; }
-  .ck-more > summary::-webkit-details-marker { display:none; }
-  .ck-more > summary::before { content:"▸ "; color:var(--accent2); }
-  .ck-more[open] > summary { color:var(--text); background:rgba(91,140,255,.06); }
-  .ck-more[open] > summary::before { content:"▾ "; }
-  .ck-more > summary:hover { color:var(--text); }
-  .ck-more-body { padding:2px 14px 14px; border-top:1px solid var(--line); }
   /* Cookie 解析器：每段后面跟一个小标签说明它属于哪一类 */
   .ck-tag { display:inline-block; padding:1px 7px; border-radius:999px; font-size:10.5px; font-weight:600;
             border:1px solid var(--line2); color:var(--muted); background:rgba(255,255,255,.03); }
@@ -260,21 +267,50 @@
   .ck-tag.k-pref { color:var(--muted); }
   .ck-tag.k-other { color:#ff8181; border-color:rgba(255,107,107,.4); background:rgba(255,107,107,.1); }
 
-  /* 全局签到控制条：伸缩/换行规则写在这里，圆角/描边/内边距由上面那条共用规则统一给
-     （.sched-bar / .ext-mini / .paste-box / .ckb 一套度量）。窄屏时整组换行，不会把标题挤歪。 */
-  .sched-bar { margin-top:0; display:flex; flex-wrap:wrap; align-items:flex-end; gap:16px; }
-  /* 两个字段均分这一行（flex:1 1 0）—— 里面的胶囊 width:100%，所以两个胶囊等宽等高，
-     不会出现一个 84px、一个 139px 那种看着像没对齐的情况 */
-  .sched-bar .sched-field { display:flex; flex-direction:column; gap:6px; flex:1 1 0; min-width:0; }
-  .sched-bar .sched-field > label { margin:0; font-size:12px; color:var(--muted2); font-weight:500; }
-  /* 两个胶囊 + 保存按钮统一度量：同高同宽同圆角、文字居中，排成一条像一套控件 */
+  /* 全局签到控制条：圆角/描边/内边距由上面那条共用规则统一给
+     （.sched-bar / .paste-box / .ckb 一套度量）。
+     【一行放下】「每天 08:05 ｜ 时区 中国台湾 · 台北 ｜ 💡 说明」——
+     这两个值看一眼就够，占满两整行会让底下的账号表被推下一屏。
+     窗口窄了会自动折行（flex-wrap），不会把字挤烂。 */
+  .sched-bar { margin-top:0; display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; }
+  /* 「每天 / 时区」只是给胶囊做注脚的小字：占宽度，不占高度 */
+  .sched-bar .sched-k { font-size:12px; color:var(--muted2); font-weight:500; }
+  /* 两个胶囊统一度量：同高同圆角、文字居中，排成一条像一套控件 */
   .sched-bar .tp-chip.lg, .sched-bar .tz-chip {
-    width:100%; height:44px; padding:0 12px; justify-content:center;
-    border-radius:var(--radius-sm); font-size:15px; font-weight:600; }
+    height:38px; padding:0 12px; justify-content:center;
+    border-radius:var(--radius-sm); font-size:14.5px; font-weight:600; }
+  /* 行的直接子项是「包胶囊的那两个 div」（胶囊是孙节点），谁长谁短由它们决定：
+     两个都按内容宽 —— 一行里就这两个值，让它俩各占一小块，
+     比把一个时区名拉成一根 600px 的长条（看着像空输入框）清楚得多。 */
+  .sched-bar > #sched-tp { flex:0 0 auto; }
+  .sched-bar > #sched-tz { display:flex; flex:0 1 auto; min-width:0; }
+  .sched-bar .tp-chip.lg { flex:0 0 auto; min-width:112px; }
+  .sched-bar .tz-chip { flex:0 1 auto; }
   .sched-bar .tp-chip.lg .tp-dot { width:8px; height:8px; }
-  @media (max-width:520px) {
-    .sched-bar .sched-field { flex:1 1 100%; }
-  }
+  /* 说明胶囊就跟着这一行，不推到最右边（推过去会出现一段说不清的空地） */
+  .sched-bar .hint-chip { flex:0 0 auto; }
+  /* 面板出口连通性：填在这行右边的空位里。小圆点 + 站点名，点一下重新测。
+     【尺寸要和时间/时区那两颗胶囊一模一样】同高（就是 --ctl-h 的 38px）、同圆角（--radius-sm）、
+     同描边（1px var(--line)）、同底色（--card2）—— 一行里四个块看起来才是一套控件，
+     而不是“两个胶囊 + 一条小药丸”。它是这一行的最后一个子项，margin-left:auto 贴右边。 */
+  .net-strip { margin-left:auto; display:flex; align-items:center; gap:10px;
+               height:38px; padding:0 14px; border:1px solid var(--line); border-radius:var(--radius-sm);
+               background:var(--card2); cursor:pointer; user-select:none;
+               font-size:12.5px; color:var(--muted); transition:border-color .15s, box-shadow .15s; }
+  /* hover 也和时间/时区胶囊一致：只描边发光，不位移 */
+  .net-strip:hover, .net-strip:focus-visible { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-dim); outline:none; }
+  .net-strip .net-title { color:var(--muted2); font-weight:600; }
+  .net-strip .net-items { display:inline-flex; align-items:center; gap:2px 9px; min-width:0; }
+  .net-strip .net-item { display:inline-flex; align-items:center; gap:5px; white-space:nowrap; }
+  .net-strip .net-item i { width:6px; height:6px; border-radius:50%; background:var(--muted2); flex:none;
+                           transition:background .2s; }
+  .net-strip .net-item.ok { color:var(--text); }
+  .net-strip .net-item.ok i { background:var(--ok); box-shadow:0 0 0 2px var(--ok-dim); }
+  .net-strip .net-item.bad { color:var(--fail); }
+  .net-strip .net-item.bad i { background:var(--fail); box-shadow:0 0 0 2px var(--fail-dim); }
+  /* 正在测的那几个先闪一下，不然「点了没反应」会被当成没生效 */
+  .net-strip.busy .net-item i { animation:pulse 1s infinite; }
+
   /* 时区选择器：和时间胶囊（大号）同风格 */
   /* flex:none：中文时区名比「08:30」长，不能被压得比文字还窄（否则字会溢出胶囊） */
   .tz-chip { display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:8px 16px; border-radius:var(--radius-sm);
@@ -309,14 +345,9 @@
   /* 选中的那个打勾 —— 「点一下即确定」（与时间浮层的「完成」同义） */
   .tz-opt.sel::before { content:"✓"; position:absolute; left:12px; font-size:12px; opacity:.9; }
   .sched-bar button { margin:0; }
-  /* 保存按钮：和时间/时区大号胶囊同一高度与圆角，文字居中 */
-  #btn-save-sched { height:34px; margin:0; border-radius:var(--radius-sm); padding:0 22px; font-size:13px; font-weight:600;
-                    display:inline-flex; align-items:center; justify-content:center;
-                    border:1px solid transparent; box-shadow:0 4px 14px rgba(91,140,255,.3); }
-  .sched-tip { align-self:center; margin-left:auto; font-size:11.5px; color:var(--muted2); }
-  @media (max-width:720px) { .sched-tip { display:none; } }
   /* 账号行里的小提示（站点推荐 / 网站回馈的操作建议） */
-  .row-pills { margin-top:0; display:flex; flex-wrap:wrap; gap:4px; justify-content:flex-end; }
+  /* 站点那一格里的小控件竖着排、居中（宽度都是整格宽，所以「换行」其实就是上下叠） */
+  .row-pills { margin-top:0; display:flex; flex-wrap:wrap; gap:4px; justify-content:center; }
 
   /* 全局悬停提示气泡。用 fixed 单一元素而不是 CSS ::after：
      表格外面套了 overflow:auto，绝对定位的气泡会被裁掉。 */
@@ -333,19 +364,44 @@
   .site-cell { min-width:148px; text-align:center; }
   /* 账号名是这一行的“标题”，比周围其他小字明显一点，扫一列就能对上是哪个号 */
   .site-cell .site-head b { font-size:14px; font-weight:650; letter-spacing:.2px; }
+  /* 站点名可以悬浮：鼠标移上去弹「这份凭据什么时候到期」。
+     点线底线是**唯一的暗示**——没有它，没人会去试「把鼠标放在名字上」；
+     而它又不至于像链接那样抢眼（毕竟点不动，只是看一眼）。 */
+  .site-head b.site-name { cursor:help; border-bottom:1px dotted rgba(91,140,255,.5); }
+  .site-head b.site-name:hover { color:var(--accent2); border-bottom-color:var(--accent); }
+  html[data-theme="light"] .site-head b.site-name { border-bottom-color:rgba(47,107,255,.45); }
+  /* 站点那一格里的小控件（网络徽章 / 随机-固定分段器 / 切换按钮 / 浏览器签到）**外框必须一模一样**：
+     同宽、同高、同圆角、同描边。
+     【实测过的旧值】徽章 22px 高、无描边；分段器 26.7px 高、弧度 999px、带 1px 描边；切换按钮 30px 高。
+     几个叠在同一格里，高低不平 + 弧度不一，看着就是几个尺寸不一的东西凑在一起。
+     现在用一条规则统一给尺寸，各自只管自己的颜色 —— **改大小只改这一处**。 */
+  .site-wrap .badge,
+  .site-wrap .seg,
+  .site-wrap .exec-switch,
+  .site-wrap .pill {
+    height:24px; box-sizing:border-box; padding:0 10px; margin:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    border:1px solid transparent; border-radius:var(--radius-xs);
+    font-size:11.5px; line-height:1; flex-shrink:0; }
+  /* 竖着排的那几个（网络徽章 / 分段器 / 浏览器签到）占满整格宽：左右两边对齐同一根线。
+     切换按钮**不能**在这里 —— 它在「站点名 + 社区徽章 + 切换」那一行里，拉满会把名字挤出去。 */
+  .site-wrap .badge, .site-wrap .seg, .site-wrap .pill { width:100%; }
   /* 站点名、网络徽章、切换按钮整组居中（名字与下面的网络小模块对齐在同一中轴线上） */
   .site-wrap { display:inline-block; text-align:center; width:156px; }
-  .site-wrap .badge { width:100%; box-sizing:border-box; justify-content:center; }
   .site-wrap .site-line { margin-bottom:4px; }
   .site-head { display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:4px; }
   .site-head b { font-size:14px; }
-  /* 切换按钮：边框提亮 */
-  .exec-switch { font-size:11px !important; padding:3px 10px !important; white-space:nowrap; flex-shrink:0;
+  /* 切换按钮：边框提亮（尺寸由上面那条「一竖列小控件同框」的规则统一给，这里只管颜色） */
+  .exec-switch { white-space:nowrap;
                  border-color:rgba(91,140,255,.45) !important; color:var(--accent2) !important; }
   .exec-switch:hover { border-color:var(--accent) !important; background:var(--accent-dim) !important; }
   /* 网络徽章：居中，与站点名同一中轴线；宽度拉满与分段器一致 */
   .site-line { display:flex; align-items:center; justify-content:center; margin-top:0; margin-bottom:4px; }
-  .site-line .badge { flex-shrink:0; width:100%; justify-content:center; box-sizing:border-box; }
+  /* 分段器：两个选项要把整格均匀分到底（父层固定了高/圆角，这里只负责内部排版） */
+  .site-wrap .seg { overflow:hidden; padding:0; background:rgba(91,140,255,.16); }
+  .site-wrap .seg > .seg-opt { padding:0; height:100%; font-size:11.5px; }
+  /* 行内小胶囊（浏览器签到）也跟它们同宽同高，只是上面多 4px 间距 */
+  .site-wrap .pill { margin:4px 0 0; }
   /* 网站反馈占剩下的宽度。
      排版取中间的方案：**默认只显示 2 行主文案 + 1 行网站原文**，行高整齐、一眼能扫完；
      被截断时右下角给一个「展开全文」，点一下就看全文（不用猜“鼠标移上去会不会有内容”）。
@@ -374,20 +430,16 @@
                display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
   td.msg.expanded .msg-route { display:block; -webkit-line-clamp:unset; overflow:visible; }
   /* 建议（说明）固定在「网站反馈」的末尾：主文案 → 网站原文 → 这里。
-     以前这里是「红圆 ! + 红字『怎么办』」：每行失败记录上都盖一个红章，太抢眼也太丑。
-     现在就是一行淡色小字（💡 开头），和次要说明同一个视觉层级 ——
-     默认最多两行，完整内容鼠标移上去看气泡，或者点「展开全文」看全。 */
+     以前这里是「红圆 ! + 红字『怎么办』」，后来改成一行淡色小字（💡 开头、默认两行）。
+     两种都占地儿：一列账号十行建议，表格立刻被撑得又高又花。
+     现在**正文一个字都不显示**，只留一枚小胶囊（💡 建议）——鼠标移上去弹完整内容。
+     （内容本身不丢：气泡里是完整的一句话，而且它本来就是「失败时该怎么办」这种
+       看一遍就懂的东西，没必要常驻在表格里占掉一行高度。） */
   .msg-foot { margin-top:6px; }
-  /* display 必须写成 inline-block：
-     ① 纯行内元素的 max-height / overflow 根本不生效（会变成一段不截断的长文）；
-     ② 用 block 的话整格宽都是悬浮热区（文字右边一大片空白也弹气泡），inline-block 只占文字本身。
-     左边一根淡蓝细线（比「网站原文」那根灰线略亮）：一眼看出这是「建议」，不是网站说的话。 */
-  .hint-tip { display:inline-block; max-width:100%; max-height:3.2em; overflow:hidden; font-size:11.5px; line-height:1.6;
-              color:#8ea3c8; cursor:help; overflow-wrap:anywhere; white-space:pre-line;
-              padding-left:8px; border-left:2px solid rgba(91,140,255,.45); }
-  .hint-tip::before { content:"💡 "; opacity:.9; }
-  .hint-tip:hover { color:#b9c8e8; }
-  td.msg.expanded .hint-tip { max-height:none; overflow:visible; }
+  .hint-chip { display:inline-block; padding:1px 8px; border-radius:999px; font-size:10.5px; line-height:1.6;
+               cursor:help; white-space:nowrap;
+               background:rgba(91,140,255,.1); border:1px solid rgba(91,140,255,.32); color:var(--accent2); }
+  .hint-chip:hover { background:rgba(91,140,255,.2); border-color:var(--accent); }
   /* 上次运行：固定两行（日期 / 时刻），每行都不折行，列宽稳定、不要横向滚动条 */
   /* 站点名字号略收，让「站点」列不再因长名（如“吾爱破解”）推挤后面的列 */
   .site-head b { font-size:13px; }
@@ -444,6 +496,27 @@
   .ckb-v code { background:rgba(255,255,255,.07); padding:1px 5px; border-radius:5px; font-size:11.5px; }
   .ckb-status { margin-top:10px; padding-top:9px; font-size:12.5px; line-height:1.6;
                 border-top:1px dashed rgba(91,140,255,.25); }
+  /* 粘贴后这块会很长（Cookie 段多的时候一段一行），整页被拉得老高、
+     旁边那一栏就成了大片空白 —— 限高 + 内部滚动：内容都在，只是不再撑开页面。 */
+  #ck-preview { margin-top:16px; max-height:min(40vh, 360px); overflow-y:auto; overscroll-behavior:contain;
+                scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  #ck-preview::-webkit-scrollbar { width:8px; }
+  #ck-preview::-webkit-scrollbar-thumb { background:var(--line2); border-radius:8px; }
+  #ck-preview::-webkit-scrollbar-track { background:transparent; }
+  /* Cookie 解析器的结果同理（它默认就是打开的）：限高 + 内部滚动 */
+  #ck-analyze-out { max-height:min(40vh, 360px); overflow-y:auto; overscroll-behavior:contain;
+                    scrollbar-width:thin; scrollbar-color:var(--line2) transparent; }
+  #ck-analyze-out::-webkit-scrollbar { width:8px; }
+  #ck-analyze-out::-webkit-scrollbar-thumb { background:var(--line2); border-radius:8px; }
+  #ck-analyze-out::-webkit-scrollbar-track { background:transparent; }
+  /* 「还有 N 段」的折叠开关（段太多时不再一行一段地铺满整页） */
+  .ckb-more { margin-top:4px; }
+  .ckb-more > summary { cursor:pointer; list-style:none; display:inline-block;
+                        font-size:12px; color:var(--accent2); }
+  .ckb-more > summary::-webkit-details-marker { display:none; }
+  .ckb-more > summary::before { content:"▸ "; }
+  .ckb-more[open] > summary::before { content:"▾ "; }
+  .ckb-more .ckb-rows { margin-top:6px; }
 
   /* 空状态 */
   .empty { text-align:center; padding:40px 20px; color:var(--muted2); }
@@ -516,47 +589,46 @@
   /* 账号列表里的时间单元格 */
   .sched-cell { display:flex; align-items:center; gap:6px; justify-content:center; }
 
-  /* ---------- 账号页：两栏（左：全局签到 + 扩展下载｜右：粘贴添加） ----------
-     用 grid + 一根竖线，而不是 flex:1 的两块 —— 窄屏时自动叠成一列，不会互相挤。
-     align-items:stretch + 每栏一个 flex 列：两栏等高，左栏用 .push-bottom 把扩展块顶到底，
-     于是「标题行 / 第一块内容 / 底边」三处左右都对齐，不会一边空一块。 */
-  .two-col { display:grid; grid-template-columns:minmax(0,1fr) 1px minmax(0,1.06fr); gap:20px; align-items:stretch; }
-  .two-col > .vline { background:linear-gradient(180deg, transparent, var(--line2), transparent); }
-  .two-col > .col { display:flex; flex-direction:column; min-width:0; }
-  /* 两栏的标题行统一高度：左边有「保存」按钮、右边只有一个状态徽章，
-     高度不固定的话下面第一块内容就会错开一截 —— 视觉上“没对齐”多半就来自这里 */
-  .col-head { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:34px; margin:0 0 12px; }
-  .col-head > h2 { margin:0; }
-  /* 说明段统一字号 / 行高 / **固定三行高度**（64px = 12.5px × 1.7 × 3）：
-     两栏的说明段都在标题行下面、高度一样，于是左右两个「第一块内容」（左：时间胶囊，右：粘贴框）
-     会精确落在同一条水平线上 —— 这就是「左右对齐」最显眼的那一处。 */
-  .col-tip { font-size:12.5px; line-height:1.7; color:var(--muted); margin:0 0 12px; min-height:64px; }
-  .col-tip code { background:rgba(255,255,255,.07); border:1px solid var(--line); border-radius:5px;
-                  padding:0 4px; font-size:11.5px; }
-  /* 左栏的扩展块推到最底：两栏底边对齐 */
-  .col > .push-bottom { margin-top:auto; }
-  /* 栏内按钮统一度量：左右两栏的按钮长得一样高、一样圆角（以前一边 34px、一边 44px） */
+  /* ---------- 账号页：单栏整幅（表格 / 全局签到 / 添加更新账号 / 浏览器扩展 四张卡） ----------
+     曾经是两栏（grid + 一根竖线），但「粘贴」和「解析」都是要贴一大串 Cookie 的活，
+     越宽越好用；而且两栏一高一矮就一定会有空白。现在整幅单栏，各自一张卡。 */
+
+  /* 卡片里的说明段（以前是 .col-tip，为了两栏对齐而固定三行高；
+     单栏之后不需要固定高度了，按内容自然排） */
+  .card-tip { font-size:12.5px; line-height:1.7; color:var(--muted); margin:0 0 12px; }
+  .card-tip code { background:rgba(255,255,255,.07); border:1px solid var(--line); border-radius:5px;
+                   padding:0 4px; font-size:11.5px; }
+
+  /* 粘贴区 / Cookie 解析器 的切换标签：同一块地方，两种用法 */
+  .ck-tabs { display:inline-flex; gap:4px; padding:4px; margin:0 0 14px;
+             background:rgba(255,255,255,.03); border:1px solid var(--line);
+             border-radius:var(--radius-sm); }
+  .ck-tabs > button { height:32px; margin:0; padding:0 18px; font-size:13px; font-weight:600;
+                      background:transparent; color:var(--muted); border:0; box-shadow:none;
+                      border-radius:var(--radius-xs); }
+  .ck-tabs > button:hover { background:rgba(91,140,255,.12); color:var(--text);
+                            transform:none; box-shadow:none; }
+  .ck-tabs > button.on { background:var(--accent); color:#fff;
+                         box-shadow:0 3px 10px rgba(91,140,255,.35); }
+  .ck-tabs > button.on:hover { background:var(--accent); color:#fff; }
+
+  /* 按钮行（粘贴框 / 拆解框下面那一排）统一度量 */
   .col-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:10px; }
-  .col-actions > button, .col-head > button { height:34px; padding:0 18px; font-size:13px;
+  .col-actions > button { height:34px; padding:0 18px; font-size:13px;
               display:inline-flex; align-items:center; justify-content:center; }
-  /* 内层小块共用一套度量：.sched-bar / .ext-mini / .paste-box / .ckb 看起来才是一套，而不是四个风格 */
-  .sched-bar, .ext-mini, .paste-box, .ckb {
+  /* 内层小块共用一套度量：.sched-bar / .paste-box / .ckb 看起来才是一套，而不是三个风格 */
+  .sched-bar, .paste-box, .ckb {
     border-radius:var(--radius-sm); border:1px solid var(--line);
     padding:14px 16px; background:rgba(255,255,255,.015); }
-  @media (max-width:860px) {
-    .two-col { grid-template-columns:1fr; gap:16px; }
-    .two-col > .vline { display:none; }
-    .col-tip { min-height:0; }
-  }
+  /* 全局签到那张卡只有一行控件：内边距和卡头间距都收一收，不然一片空
+     （必须写在上面那条共用规则之后 —— 同优先级下靠后的才生效） */
+  .sched-card { padding:14px 18px; }
+  .sched-card .card-head { margin:0 0 10px; }
+  .sched-card .sched-bar { padding:10px 12px; }
 
-  /* 扩展下载（紧凑版）：就放在「全局签到」下面那块空白里（背景与其它内层块统一） */
-  .ext-mini { margin-top:16px; }
-  .ext-mini-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .ext-mini-head b { font-size:13px; }
-  .ext-mini-head .grow { flex:1 1 auto; }
-  .ext-mini-head .bookmarklet { padding:5px 12px; font-size:12px; margin:0; }
-  .ext-mini > p { margin:8px 0 0; font-size:12px; line-height:1.65; color:var(--muted); }
-  .ext-mini .steps { margin-top:6px; }
+  /* 扩展卡：说明 + 折叠的安装步骤 */
+  .ext-card .bookmarklet { padding:5px 12px; font-size:12px; margin:0; }
+  .ext-card .steps { margin-top:6px; }
   /* 安装步骤的折叠开关 */
   .ext-steps { margin-top:10px; }
   .ext-steps > summary { cursor:pointer; list-style:none; display:inline-flex; align-items:center; gap:6px;
@@ -567,9 +639,9 @@
   .ext-steps > summary::after { content:"▾"; font-size:10px; }
   .ext-steps[open] > summary::after { content:"▴"; }
   .ext-steps > summary:hover { background:rgba(91,140,255,.2); }
-  .ext-mini .steps > li { padding:3px 0 3px 26px; font-size:12px; line-height:1.6; }
-  .ext-mini .steps > li::before { width:17px; height:17px; font-size:10.5px; top:4px; }
-  .ext-mini kbd { background:rgba(255,255,255,.08); border:1px solid var(--line); border-radius:5px;
+  .ext-card .steps > li { padding:3px 0 3px 26px; font-size:12px; line-height:1.6; }
+  .ext-card .steps > li::before { width:17px; height:17px; font-size:10.5px; top:4px; }
+  .ext-card kbd { background:rgba(255,255,255,.08); border:1px solid var(--line); border-radius:5px;
                   padding:0 4px; font-size:11px; font-family:inherit; }
 
   /* ---------- 社区站点（开源共享） ---------- */
@@ -653,6 +725,121 @@
     .wrap { padding:16px 12px 52px; }
     .col-actions > button { flex:1; }
   }
+
+  /* 推送设置：每个渠道一个小盒子（标题 + 说明 + 输入 + 测试按钮），一眼看出「这块管什么」 */
+  .notify-box { margin:14px 0; padding:14px 16px; border-radius:var(--radius-sm);
+                border:1px solid var(--line); background:rgba(255,255,255,.015); }
+  .notify-box > h3 { margin:0 0 6px; font-size:13.5px; font-weight:650;
+                     display:flex; align-items:center; gap:6px; }
+  .notify-box > p { margin:0 0 8px; font-size:12px; line-height:1.65; color:var(--muted); }
+  .notify-box .row { gap:8px; }
+  .notify-msg { margin-top:10px; padding:10px 12px; border-radius:10px; font-size:12.5px;
+                line-height:1.7; display:none; }
+  .notify-msg.show { display:block; }
+  .notify-msg.ok { background:var(--ok-dim); border:1px solid rgba(14,143,79,.3); color:var(--ok); }
+  .notify-msg.bad { background:var(--fail-dim); border:1px solid rgba(207,47,34,.3); color:var(--fail); }
+  .notify-msg.warn { background:var(--warn-dim); border:1px solid rgba(163,95,0,.3); color:var(--warn); }
+  .chat-pick { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 10px; }
+
+  /* ==========================================================================
+     亮色主题（浅色）
+     --------------------------------------------------------------------------
+     深色是默认值（写在最上面的 :root 里）。这里只写「亮色时需要改的地方」：
+     先换掉一整套颜色变量，再把那些直接写死的颜色按选择器覆盖一遍。
+     为什么不去改上面那些原始规则：那样每个颜色都要动一遍、容易漏，
+     而这里全部集中在一处，加一个选择器就多覆盖一处，坏了也好回退。
+     切换按钮在右上角（浅色 / 深色 / 跟随系统），选择记在浏览器本地。
+     ========================================================================== */
+  html[data-theme="light"] {
+    color-scheme:light;
+    --bg:#f3f6fb; --bg2:#e9eef7;
+    --card:#ffffff; --card2:#f6f9fd;
+    --line:#dae2f0; --line2:#c3cfe5;
+    --text:#1a2337; --muted:#57657f; --muted2:#7d8aa3;
+    --accent:#2f6bff; --accent2:#1d55d0; --accent-dim:rgba(47,107,255,.10);
+    --ok:#0e8f4f; --ok-dim:rgba(14,143,79,.12);
+    --fail:#cf2f22; --fail-dim:rgba(207,47,34,.10);
+    --warn:#a35f00; --warn-dim:rgba(163,95,0,.12);
+    --shadow:0 10px 30px rgba(22,40,80,.14);
+    --shadow-sm:0 2px 10px rgba(22,40,80,.08);
+  }
+  html[data-theme="light"] body {
+    background:radial-gradient(1200px 600px at 20% -10%, rgba(47,107,255,.07), transparent),
+               radial-gradient(1000px 500px at 90% 0%, rgba(14,143,79,.05), transparent),
+               var(--bg);
+  }
+  /* 【小心】background 是简写属性，它会连 background-clip 一起重置成 border-box。
+     而 h1 的标题文字就是靠 background-clip:text 把渐变「剪」到字上的——
+     只覆盖 background 的话，渐变会铺满整个方块、字反而看不见（实测就是这个样子）。
+     所以这三行必须一起写。 */
+  html[data-theme="light"] h1 {
+    background:linear-gradient(135deg,#1a2337,#3a62c9);
+    -webkit-background-clip:text;
+    background-clip:text;
+    -webkit-text-fill-color:transparent;
+  }
+  html[data-theme="light"] input,
+  html[data-theme="light"] select,
+  html[data-theme="light"] textarea { background:#fff; }
+  html[data-theme="light"] button.ghost { background:rgba(22,40,80,.045); }
+  html[data-theme="light"] .tabs { background:rgba(22,40,80,.04); }
+  html[data-theme="light"] .tabs-row {
+    background:linear-gradient(180deg, var(--bg) 62%, rgba(243,246,251,.86) 100%);
+  }
+  html[data-theme="light"] td { border-bottom-color:rgba(195,207,229,.7); }
+  html[data-theme="light"] #ext-state i { box-shadow:0 0 0 3px rgba(22,40,80,.05); }
+  html[data-theme="light"] #ext-state.off,
+  html[data-theme="light"] .badge.cf,
+  html[data-theme="light"] .badge.off { background:rgba(87,101,127,.12); }
+  html[data-theme="light"] .modal-bg { background:rgba(24,34,56,.42); }
+  html[data-theme="light"] .modal { background:#fff; }
+  html[data-theme="light"] #toast { background:#fff; box-shadow:0 10px 30px rgba(22,40,80,.20); }
+  html[data-theme="light"] #_tip { background:#fff; box-shadow:0 12px 32px rgba(22,40,80,.20); }
+  html[data-theme="light"] .switch { background:#cbd5e6; }
+  html[data-theme="light"] .switch::after { background:#fff; box-shadow:0 1px 3px rgba(22,40,80,.30); }
+  html[data-theme="light"] .tz-pop,
+  html[data-theme="light"] .tpx-pop { background:#fff; }
+  html[data-theme="light"] .tpx-list { background:#f4f7fc; box-shadow:inset 0 0 22px rgba(22,40,80,.07); }
+  html[data-theme="light"] .tpx-preview { background:rgba(47,107,255,.07); }
+  html[data-theme="light"] .tips { color:#33415c; }
+  html[data-theme="light"] .hint-chip { color:#2d55c8; background:rgba(47,107,255,.08); border-color:rgba(47,107,255,.3); }
+  html[data-theme="light"] .hint-chip:hover { background:rgba(47,107,255,.16); }
+  html[data-theme="light"] .pill { background:rgba(22,40,80,.035); }
+  html[data-theme="light"] .seg { background:rgba(47,107,255,.12); }
+  html[data-theme="light"] .seg-opt.on { color:#1d55d0; }
+  html[data-theme="light"] a.bookmarklet:hover { background:rgba(47,107,255,.14); }
+  html[data-theme="light"] .step-card,
+  html[data-theme="light"] .ck-more,
+  html[data-theme="light"] .com-box,
+  html[data-theme="light"] .foot,
+  html[data-theme="light"] .tpx-inline,
+  html[data-theme="light"] .sched-bar,
+  html[data-theme="light"] .paste-box,
+  html[data-theme="light"] .ckb,
+  html[data-theme="light"] .form-check,
+  html[data-theme="light"] .notify-box { background:rgba(22,40,80,.02); }
+  html[data-theme="light"] .ck-tabs { background:rgba(22,40,80,.04); }
+  html[data-theme="light"] .ck-tag { background:rgba(22,40,80,.05); }
+  html[data-theme="light"] .ck-tag.k-login,
+  html[data-theme="light"] .badge.com,
+  html[data-theme="light"] .msg-by,
+  html[data-theme="light"] .paste-live.ok,
+  html[data-theme="light"] .ckb-item.ok > i { color:#0e8f4f; }
+  html[data-theme="light"] .ck-tag.k-other { color:#b3271c; }
+  html[data-theme="light"] .ck-tag.k-csrf { color:#1d55d0; }
+  html[data-theme="light"] .ckb-v code,
+  html[data-theme="light"] .card-tip code,
+  html[data-theme="light"] .steps kbd,
+  html[data-theme="light"] .ext-card kbd { background:rgba(22,40,80,.06); }
+  html[data-theme="light"] .form-check.warn { color:#7d4a00; }
+  html[data-theme="light"] .form-check.bad { color:#9c2318; }
+  html[data-theme="light"] ::-webkit-scrollbar-thumb { background:#c3cfe5; }
+  html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background:#a9b8d4; }
+  html[data-theme="light"] ::selection { background:rgba(47,107,255,.22); }
+  html[data-theme="light"] tbody tr:hover { background:rgba(47,107,255,.05); }
+  @media (max-width:820px) {
+    html[data-theme="light"] tbody tr { background:rgba(22,40,80,.02); }
+  }
 </style>
 </head>
 <body>
@@ -662,7 +849,7 @@
   <div id="view-setup" class="view hidden">
     <div class="card" style="max-width:420px;margin:60px auto;">
       <h1>签到面板</h1>
-      <p class="muted">首次使用，请设置管理密码（至少 6 位）。</p>
+      <p class="muted">首次使用，请设置管理密码（至少 8 位）。</p>
       <label>管理密码</label>
       <input id="setup-pwd" type="password" placeholder="设置管理密码">
       <label>确认密码</label>
@@ -697,6 +884,7 @@
         <div id="ext-state" class="wait" title="点击检测一次扩展是否在线；只有扩展在线，账号才能切到「本地网络」">
           <i></i><span id="ext-state-text">检测扩展状态…</span>
         </div>
+        <button class="ghost sm" id="btn-theme" title="点一下切换主题：跟随系统 → 浅色 → 深色">🖥 跟随系统</button>
         <button class="ghost sm" id="btn-logout">退出</button>
       </div>
     </div>
@@ -711,140 +899,91 @@
           </div>
         </div>
         <div style="overflow-x:visible"><table>
-          <thead><tr><th class="c">站点</th><th class="c">全局签到</th><th class="c">状态</th><th>网站反馈</th><th class="c">上次运行</th><th class="c">启用</th><th class="c">操作</th></tr></thead>
+          <thead><tr><th class="c">站点</th><th class="c">全局签到</th><th class="c">状态</th><th class="c">网站反馈</th><th class="c">上次运行</th><th class="c">启用</th><th class="c">操作</th></tr></thead>
           <tbody id="accounts-body"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
         </table></div>
       </div>
-      <div class="card">
-      <div class="two-col">
-      <div class="col">
-        <div class="col-head">
+      <!-- 全局签到：紧凑到「一行」的卡片。
+           以前是「标签占一行、胶囊再占一整行」×2 + 段三行说明 ≈ 290px 高，
+           而它其实只有两个值要看。现在两个胶囊按内容宽排成一行，
+           原来那段说明收进「💡 说明」的悬浮气泡（内容一字不少，不占了版面）。 -->
+      <div class="card sched-card">
+        <div class="card-head">
           <h2>全局签到</h2>
-          <button id="btn-save-sched">保存</button>
+          <span class="muted" style="font-size:12px">没单独设时间的账号都按它走 · 选好即保存</span>
         </div>
-        <!-- 说明段放在标题行下面，和右栏同一个位置、同一个高度（.col-tip 固定三行）——
-             这样两栏的「第一块内容」（左边的胶囊 / 右边的粘贴框）才会精确对齐 -->
-        <p class="col-tip">💡 <b>这里是全局签到时间</b>：没单独设时间的账号都按它走。点胶囊选时间、选好时区，再点右上角「保存」。想给某个账号错开时间：去上面表格的「全局签到」列点胶囊单设。</p>
         <div class="sched-bar">
-          <div class="sched-field"><label>每天执行时间</label><div id="sched-tp"></div></div>
-          <div class="sched-field"><label>时区（国家或地区 · 城市）</label><div id="sched-tz"></div></div>
-        </div>
-
-        <!-- 扩展下载：放在「全局签到」下面，用 .push-bottom 把自己的底边和右边那栏对齐 -->
-        <div class="ext-mini push-bottom">
-          <div class="ext-mini-head">
-            <b>🧩 浏览器扩展 签到面板助手</b>
-            <span id="ext-box-state" class="badge off">检测中…</span>
-            <span class="grow"></span>
-            <a href="/checkin-helper.zip" class="bookmarklet" download>⬇️ 下载</a>
+          <span class="sched-k">每天</span><div id="sched-tp"></div>
+          <span class="sched-k">时区</span><div id="sched-tz"></div>
+          <span class="hint-chip" data-tip="这里是全局签到时间：没单独设时间的账号都按它走。点胶囊选好时间 / 时区就自动保存（下面会弹一条提示告诉你存进去的是什么），没有「保存」按钮。想给某个账号错开时间：去上面表格的「全局签到」列点胶囊单设。">💡 说明</span>
+          <!-- 版面右边剩下的地方放「面板出口连通性」：小圆点 + 站点名，点一下重新测。
+               测的是**面板所在的 Cloudflare** 能不能连上这些站点（也就是「CF 直连」这条路
+               通不通），不是你的本机网络 —— 气泡里会写清楚，免得看的人误会。 -->
+          <div class="net-strip" id="net-strip" role="button" tabindex="0"
+               title="点一下重新检测（从面板所在的 Cloudflare 出口探测，不是你的本机）">
+            <span class="net-title">出口</span><span id="net-items" class="net-items"><span class="muted" style="font-size:11.5px">检测中…</span></span>
           </div>
-          <p>它干两件事：<b>① 一键取 Cookie</b>（连 HttpOnly 都能读，NodeSeek 这类站也行）；
-            <b>② 当「本地网络中继」</b>，让吾爱破解这些屏蔽机房 IP 的站点也能签。
-            用不着在弹窗里点任何「执行」——面板点一下，它自己接单（旧版那个「立即执行待办签到」按钮已删掉）。</p>
-          <!-- 安装步骤默认收起来：它一展开就把左边拉得比右边高一大截，
-               整页看着“空一块、挤一块”；需要时点开就行（概括句把 4 步说清楚了）。 -->
-          <details class="ext-steps">
-            <summary>安装步骤（4 步，约 1 分钟）</summary>
-            <ol class="steps">
-              <li>点上面的「⬇️ 下载」得到 zip，解压到任意文件夹</li>
-              <li>地址栏输入 <kbd>chrome://extensions/</kbd>（Edge：<kbd>edge://extensions/</kbd>）→ 打开右上角「开发者模式」</li>
-              <li>点「加载已解压的扩展程序」，选中解压出的<b>文件夹</b>（不是 zip 本身）</li>
-              <li>点扩展图标（工具栏上那个蓝色<b>「签」</b>）→ 填「API Key」（在「设置」页复制）→ 点「🔌 面板连接检查」</li>
-            </ol>
-          </details>
         </div>
       </div>
-      <div class="vline"></div>
-      <div class="col">
-        <div class="col-head">
+
+      <!-- 添加 / 更新账号：粘贴区与 Cookie 解析器用**标签**区分，同一块地方。
+           不分两栏了：这两件事都要贴一大串 Cookie 进去，越宽越好用。 -->
+      <div class="card">
+        <div class="card-head">
           <h2>添加 / 更新账号</h2>
           <span id="paste-state" class="badge off">等待粘贴</span>
         </div>
-        <p class="col-tip">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回这里按 <b>Ctrl+V</b>。<b>UA 不用自己找</b>；粘上先体检，没问题才自动保存并试跑。</p>
-        <div class="paste-box">
-          <div class="paste-box-head">
-            <b>① 粘贴区</b>
-            <span class="grow"></span>
-            <button class="ghost sm" id="btn-ck-clear" type="button">清空</button>
-          </div>
-          <textarea id="ck-paste" rows="5" placeholder="在这里粘贴扩展复制的内容：粘上会自动体检 → 没问题就自动识别站点、保存并试跑一次。&#10;也支持 F12 复制的请求头、右键「复制为 cURL」、cookie.txt、光秃秃的 name=value 串。"></textarea>
-          <div id="ck-live" class="paste-live">还没粘贴内容。粘贴后这里会显示读到了什么、有没有问题。</div>
-          <div class="col-actions">
-            <button id="btn-parse-paste" type="button" disabled>✅ 粘贴并保存（含试跑）</button>
-            <button class="ghost sm" id="btn-ck-pick" type="button">手动选站点保存</button>
+
+        <div class="ck-tabs">
+          <button type="button" data-cktab="paste" class="on">📋 粘贴即保存</button>
+          <button type="button" data-cktab="analyze">🔍 Cookie 解析器</button>
+        </div>
+
+        <!-- ① 粘贴即保存 -->
+        <div id="ck-pane-paste">
+          <p class="card-tip">在网站登录好 → 点扩展图标 → 「📋 一键复制全部信息」→ 回这里按 <b>Ctrl+V</b>。<b>UA 不用自己找</b>；粘上先体检，没问题才自动保存并试跑。</p>
+          <div class="paste-box">
+            <div class="paste-box-head">
+              <b>粘贴框</b>
+              <span class="grow"></span>
+              <button class="ghost sm" id="btn-ck-clear" type="button">清空</button>
+            </div>
+            <!-- spellcheck="false"：Cookie 串在拼写检查眼里全是错词，满屏红波浪线很难看 -->
+            <textarea id="ck-paste" rows="5" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="在这里粘贴扩展复制的内容：粘上会自动体检 → 没问题就自动识别站点、保存并试跑一次。&#10;也支持 F12 复制的请求头、右键「复制为 cURL」、cookie.txt、光秃秃的 name=value 串。"></textarea>
+            <div id="ck-live" class="paste-live">还没粘贴内容。粘贴后这里会显示读到了什么、有没有问题。</div>
+            <div class="col-actions">
+              <button id="btn-parse-paste" type="button" disabled>✅ 粘贴并保存（含试跑）</button>
+              <button class="ghost sm" id="btn-ck-pick" type="button">手动选站点保存</button>
+            </div>
           </div>
         </div>
-        <div id="ck-preview" class="hidden"></div>
 
-        <!-- Cookie 解析器：只拆分讲解，不保存（想真用就点「填到上面并保存」） -->
-        <details class="ck-more" id="ck-analyze-box" style="margin-top:12px">
-          <summary>🔍 Cookie 解析器 —— 粘进来逐段拆解（只看不存）</summary>
-          <div class="ck-more-body">
-            <p class="muted" style="font-size:12px;margin:10px 0 6px">支持：扩展「📋 一键复制全部信息」的 JSON、F12 里复制的请求头、右键「复制为 cURL」、cookie.txt、光秃秃的 <code>name=value; name2=value2</code>。
-              解析结果会告诉你每一段是什么、哪些是登录必需、哪些只是统计。</p>
-            <textarea id="ck-analyze" rows="3" placeholder="把 Cookie / 请求头 / cURL / 扩展 JSON 粘到这里…"></textarea>
-            <div class="row" style="margin:8px 0 0;gap:8px">
+        <!-- ② Cookie 解析器：只拆分讲解，**不保存**（想真用就点「填到粘贴区并保存」） -->
+        <div id="ck-pane-analyze" class="hidden">
+          <p class="card-tip">支持：扩展「📋 一键复制全部信息」的 JSON、F12 里复制的请求头、右键「复制为 cURL」、cookie.txt、光秃秃的 <code>name=value; name2=value2</code>。
+            解析结果会告诉你每一段是什么、哪些是登录必需、哪些只是统计；这个框<b>只看不存</b>，要真用就点下面的「填到粘贴区并保存」。</p>
+          <div class="paste-box">
+            <div class="paste-box-head">
+              <b>拆解框</b>
+              <span class="grow"></span>
+              <button class="ghost sm" id="btn-ck-analyze-clear" type="button">清空</button>
+            </div>
+            <textarea id="ck-analyze" rows="5" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="把 Cookie / 请求头 / cURL / 扩展 JSON 粘到这里…"></textarea>
+            <div class="col-actions">
               <button class="ghost sm" id="btn-ck-analyze" type="button">🔍 拆分看看</button>
-              <button class="ghost sm" id="btn-ck-analyze-fill" type="button">↗️ 填到上面并保存</button>
-            </div>
-            <div id="ck-analyze-out"></div>
-          </div>
-        </details>
-
-      </div>
-      </div>
-      </div>
-
-      <!-- ---------- 社区站点（开源共享）：导入 / 导出 ---------- -->
-      <div class="card" id="card-community">
-        <div class="card-head">
-          <h2>🌍 社区站点（开源共享）</h2>
-          <a class="ghost sm bookmarklet" href="https://github.com/guoxpeng/daily-checkin-panel" target="_blank" rel="noreferrer" style="text-decoration:none">⭐ GitHub 仓库</a>
-        </div>
-        <p class="muted">面板内置的站点是写死在代码里的；<b>没有内置的网站，谁都可以贡献一份适配</b>：
-          你用自己的面板把该网站的签到调通（「自定义 HTTP」多步录制，或直接导入别人发的 JSON）
-          → 点「导出为社区配置」拿到一段 JSON → 发到 GitHub 的 Issue / PR 或任意网盘 → 别人粘贴导入就能用。
-          配置里<b>只会带占位符（{{cookie}} 这种），不会带你的 Cookie</b>，可以放心分享。</p>
-
-        <div class="com-grid">
-          <div class="com-box">
-            <h4>📥 导入一份配置</h4>
-            <p>粘贴别人分享的 JSON。也可以只填一条<b>原始链接</b>（GitHub raw / Gist / 自己的网址都行），面板会自己拉取。</p>
-            <textarea id="com-paste" placeholder='把配置 JSON 粘贴到这里：{"schema":"daily-checkin-site/1","id":"bbs_example_com", ...}'></textarea>
-            <div class="row" style="margin:0 0 8px">
-              <input id="com-url" type="text" placeholder="或：配置的原始链接 https://raw.githubusercontent.com/..." style="flex:1;margin:0">
-            </div>
-            <div class="row" style="margin:0">
-              <button class="ghost sm" id="btn-com-check" type="button">🔎 校验预览</button>
-              <button id="btn-com-import" type="button">⬇️ 导入</button>
-            </div>
-            <div id="com-msg"></div>
-          </div>
-
-          <div class="com-box">
-            <h4>📤 导出我的配置</h4>
-            <p>选一个你已经调通的账号（「自定义 HTTP」录了多步的账号最合适），导出成可分享的 JSON。
-              凭据会自动换成占位符。</p>
-            <label style="margin-top:0">选择账号</label>
-            <select id="com-export-account"></select>
-            <label>署名（开源署名，会写进导出的配置里）</label>
-            <input id="com-author" type="text" placeholder="你的 GitHub ID 或昵称">
-            <div class="row" style="margin:0">
-              <button class="ghost sm" id="btn-com-export" type="button">📤 导出为社区配置</button>
-              <button class="ghost sm" id="btn-com-copy" type="button" style="display:none">📋 复制</button>
-              <button class="ghost sm" id="btn-com-download" type="button" style="display:none">💾 存为 .json</button>
+              <button class="ghost sm" id="btn-ck-analyze-fill" type="button">↗️ 填到粘贴区并保存</button>
             </div>
           </div>
+          <div id="ck-analyze-out"></div>
         </div>
 
-        <div id="com-msg2"></div>
-        <textarea id="com-out" class="json-box hidden" readonly spellcheck="false"></textarea>
-
-        <div style="margin-top:14px">
-          <b style="font-size:13px">已导入的社区站点</b>
-          <div id="com-list" class="com-list"><div class="com-empty">加载中…</div></div>
-        </div>
+        <!-- 粘贴内容分解：有内容才出现（限高 + 内部滚动，不把页面拉开） -->
+        <div id="ck-preview" class="hidden"></div>
       </div>
+
+      <!-- 浏览器扩展从这里搬走了：下载、安装步骤、API Key 都在「设置」页那一张卡里。
+           账号页只干「签到」这件事 —— 扩展是**一次性的安装动作**，装完就再也不用了，
+           常年占着账号页最底下一大块（还要读它的在线状态），不如集中到设置里。 -->
 
       <div class="foot">
         <b>签到面板</b> · 跑在 Cloudflare Workers 上（免费额度就够）
@@ -885,48 +1024,148 @@
     <section id="tab-settings" class="hidden">
       <div class="card">
         <h2>推送通知</h2>
-        <p class="muted">每次定时/手动任务结束后推送汇总。留空则不启用该通道。</p>
+        <p class="muted">每天定时签到跑完后推送一份汇总。下面三个渠道挑一个填就行，填完勾上「启用推送」再保存。不确定能不能用，就先点那个渠道的「发送测试消息」。</p>
         <div class="checkline"><input type="checkbox" id="set-enabled"><label for="set-enabled" style="color:var(--text)">启用推送</label></div>
-        <label>Telegram Bot Token <span id="tg-set" class="muted"></span></label>
-        <input id="set-tg-token" type="password" placeholder="留空表示不修改">
-        <label>Telegram Chat ID</label>
-        <input id="set-tg-chat" type="text" placeholder="数字 ID">
-        <label>Bark Key <span id="bark-set" class="muted"></span></label>
-        <input id="set-bark" type="password" placeholder="留空表示不修改">
-        <label>Bark 服务器（可选）</label>
-        <input id="set-bark-server" type="text" placeholder="https://api.day.app">
-        <label>Webhook URL <span id="wh-set" class="muted"></span></label>
-        <input id="set-webhook" type="password" placeholder="留空表示不修改（POST JSON: {title, body}）">
+
+        <!-- ---------- Telegram ---------- -->
+        <div class="notify-box">
+          <h3>📨 Telegram（推荐，免费、及时）</h3>
+          <p>
+            ① 在 Telegram 里搜索 <b>@BotFather</b> → 发 <code>/newbot</code> → 按提示走完，它会给你一串 <b>Bot Token</b>（形如 <code>123456789:AAE...</code>）。<br>
+            ② 把 Token 填到下面，再<b>用你自己的号给这个新 Bot 发一句「hi」</b>（群的话先把 Bot 拉进群）。<br>
+            ③ 点 <b>🔍 自动获取 Chat ID</b>，选一下就行（不点也行，自己填那串数字）。<br>
+            ④ 点 <b>📨 发送测试消息</b>，手机上收到就成功了。
+          </p>
+          <label>Bot Token <span id="tg-set" class="muted"></span></label>
+          <input id="set-tg-token" type="password" placeholder="留空表示不修改（已设置过就不用再填）">
+          <label>Chat ID</label>
+          <div class="row">
+            <input id="set-tg-chat" type="text" placeholder="一串数字（群/频道是负数），或 @频道名" style="flex:1">
+            <button class="ghost sm" id="btn-tg-chats" type="button" style="white-space:nowrap">🔍 自动获取</button>
+          </div>
+          <div id="tg-chats" class="chat-pick hidden"></div>
+          <div class="row">
+            <button class="ghost sm" id="btn-tg-test" type="button">📨 发送测试消息</button>
+            <button class="ghost sm" id="btn-tg-clear" type="button">🗑 清除 Token</button>
+          </div>
+          <div id="tg-test-msg" class="notify-msg"></div>
+        </div>
+
+        <!-- ---------- Bark ---------- -->
+        <div class="notify-box">
+          <h3>🍎 Bark（iPhone）</h3>
+          <p>在 iPhone 上装 Bark App，把 App 里那串地址的最后一节（Key）复制过来就行。不想用就整块空着。</p>
+          <label>Bark Key <span id="bark-set" class="muted"></span></label>
+          <input id="set-bark" type="password" placeholder="留空表示不修改">
+          <label>Bark 服务器（一般不用改）</label>
+          <input id="set-bark-server" type="text" placeholder="https://api.day.app">
+        </div>
+
+        <!-- ---------- Webhook ---------- -->
+        <div class="notify-box">
+          <h3>🔗 通用 Webhook</h3>
+          <p>给一个能收 POST 的网址，面板会发一段 JSON：<code>{"title":"...","body":"..."}</code>。不想用就整块空着。</p>
+          <label>Webhook URL <span id="wh-set" class="muted"></span></label>
+          <input id="set-webhook" type="password" placeholder="留空表示不修改">
+        </div>
+
+        <div id="notify-msg" class="notify-msg"></div>
         <button id="btn-save-settings">保存推送设置</button>
       </div>
       <div class="card">
         <h2>修改管理密码</h2>
         <label>原密码</label><input id="pwd-old" type="password">
-        <label>新密码（至少 6 位）</label><input id="pwd-new" type="password">
+        <label>新密码（至少 8 位）</label><input id="pwd-new" type="password">
         <button id="btn-change-pwd">修改密码</button>
       </div>
-      <div class="card">
-        <h2>🔌 浏览器扩展</h2>
-        <p class="muted">安装「签到面板助手」扩展后，它就是面板的<b>本地网络中继</b>：面板点「执行」时请求由扩展在您的浏览器里发出（用您的本机 IP 和登录态），因此能绕过 CF 网络的 IP 封禁与人机验证。扩展会自动挂长轮询接单，响应通常在 1 秒内。扩展需要下面的 API Key 才能连接面板。</p>
+      <div class="card ext-card">
+        <h2>🔌 浏览器扩展（签到面板助手）</h2>
+        <p class="muted">扩展干两件事：
+          <b>① 一键取 Cookie</b>（连 HttpOnly 都能读，NodeSeek 这类站也行）；
+          <b>② 当「本地网络中继」</b> —— 面板点「执行」时请求由扩展在您的浏览器里发出（用您的本机 IP 和登录态），
+          所以能绕过 CF 网络的 IP 封禁与人机验证，吾爱破解这类屏蔽机房 IP 的站点也能签。
+          扩展会自动挂长轮询接单，响应通常在 1 秒内。
+          <b>用不着在弹窗里点任何「执行」</b>——面板点一下，它自己接单（旧版那个「立即执行待办签到」按钮已删掉）。
+          扩展需要下面的 API Key 才能连接面板。</p>
         <p class="muted">中继状态：<span id="relay-status" class="badge off">检测中…</span> <span class="muted" style="font-size:12px">扩展在线时，标记为「🌐 本地网络」的账号会经您的本机网络执行</span></p>
         <div class="row" style="margin:12px 0 4px">
           <a href="/checkin-helper.zip" class="bookmarklet" download>⬇️ 下载 签到面板助手</a>
-          <button class="ghost sm" id="btn-ext-help" type="button">📖 安装步骤</button>
         </div>
-        <div id="ext-help" class="tips hidden" style="margin-top:8px">
-          1️⃣ 解压上面下载的 zip（得到一个文件夹）<br>
-          2️⃣ 打开 <b>chrome://extensions/</b>（Edge 用 <b>edge://extensions/</b>）→ 打开右上角「开发者模式」<br>
-          3️⃣ 点「加载已解压的扩展程序」→ 选中解压出来的那个<b>文件夹</b><br>
-          4️⃣ 点扩展图标，把下面生成的 API Key 填进去 → 点「🔌 面板连接检查」
-        </div>
-        <label>API Key（扩展用）</label>
+        <details class="ext-steps">
+          <summary>安装步骤（4 步，约 1 分钟）</summary>
+          <ol class="steps">
+            <li>点上面的「⬇️ 下载 签到面板助手」得到 zip，解压到任意文件夹</li>
+            <li>地址栏输入 <kbd>chrome://extensions/</kbd>（Edge：<kbd>edge://extensions/</kbd>）→ 打开右上角「开发者模式」</li>
+            <li>点「加载已解压的扩展程序」，选中解压出的<b>文件夹</b>（不是 zip 本身）</li>
+            <li>点扩展图标（工具栏上那个蓝色<b>「签」</b>）→ 把下面这把 API Key 填进去 → 点「🔌 面板连接检查」</li>
+          </ol>
+        </details>
+        <label>API Key（扩展用）<span id="ext-key-state" class="muted"></span></label>
         <div style="display:flex;gap:8px">
-          <input id="ext-api-key" type="text" readonly placeholder="点击生成" style="flex:1">
-          <button id="btn-gen-key" style="white-space:nowrap">🎲 生成</button>
-          <button id="btn-copy-key" style="white-space:nowrap">📋 复制</button>
+          <input id="ext-api-key" type="text" readonly placeholder="点下面的按钮生成">
+          <button id="btn-copy-key" type="button" style="white-space:nowrap" disabled>📋 复制</button>
         </div>
-        <p class="muted" style="margin-top:8px">把 Key 填到扩展弹窗的「API Key」输入框并保存，扩展就会开始工作。Key 泄露时点「生成」换一个新的。</p>
-        <button id="btn-save-key">保存 API Key</button>
+        <div id="ext-key-msg" class="notify-msg"></div>
+        <p class="muted" style="margin-top:8px">
+          这串 Key <b>只在生成的那一刻显示一次</b>，之后只显示头尾几位（面板不提供「查看」）。
+          生成后立刻复制到扩展弹窗的「API Key」输入框并保存。忘了或者想换，就点下面的按钮重新生成一把 ——
+          <b>旧 Key 会立刻失效</b>，扩展要填入新的才能连上。
+        </p>
+        <button id="btn-gen-key" type="button">🎲 重新生成 API Key</button>
+      </div>
+
+      <!-- ---------- 社区站点（开源共享）：导入 / 导出 ---------- -->
+      <div class="card" id="card-community">
+        <div class="card-head">
+          <h2>🌍 社区站点（开源共享）</h2>
+          <a class="ghost sm bookmarklet" href="https://github.com/guoxpeng/daily-checkin-panel" target="_blank" rel="noreferrer" style="text-decoration:none">⭐ GitHub 仓库</a>
+        </div>
+        <p class="muted">面板内置的站点是写死在代码里的；<b>没有内置的网站，谁都可以贡献一份适配</b>：
+          你用自己的面板把该网站的签到调通（「自定义 HTTP」多步录制，或直接导入别人发的 JSON）
+          → 点「导出为社区配置」拿到一段 JSON → 发到 GitHub 的 Issue / PR 或任意网盘 → 别人粘贴导入就能用。
+          配置里<b>只会带占位符（{{cookie}} 这种），不会带你的 Cookie</b>，可以放心分享。</p>
+
+        <div class="com-grid">
+          <div class="com-box">
+            <h4>📥 导入一份配置</h4>
+            <p>粘贴别人分享的 JSON。也可以只填一条<b>原始链接</b>（GitHub raw / Gist / 自己的网址都行），面板会自己拉取。</p>
+            <textarea id="com-paste" placeholder='把配置 JSON 粘贴到这里：{"schema":"daily-checkin-site/1","id":"bbs_example_com", ...}'></textarea>
+            <div class="row" style="margin:0 0 8px">
+              <input id="com-url" type="text" placeholder="或：配置的原始链接 https://raw.githubusercontent.com/..." style="flex:1;margin:0">
+            </div>
+            <div class="row" style="margin:0">
+              <button class="ghost sm" id="btn-com-check" type="button">🔎 校验预览</button>
+              <button id="btn-com-import" type="button">⬇️ 导入</button>
+            </div>
+            <div id="com-msg"></div>
+          </div>
+
+          <div class="com-box">
+            <h4>📤 导出我的配置</h4>
+            <p>选一个你已经调通签到的<b>网站</b>，导出成可分享的 JSON。
+              你的 Cookie / 密码会自动换成占位符，<b>不会带出去</b>。</p>
+            <label style="margin-top:0">选择签到网站</label>
+            <select id="com-export-site"></select>
+            <p class="muted" id="com-export-hint" style="font-size:12px"></p>
+            <label>署名（开源署名，会写进导出的配置里）</label>
+            <input id="com-author" type="text" placeholder="你的 GitHub ID 或昵称">
+            <div class="row" style="margin:0">
+              <button class="ghost sm" id="btn-com-export" type="button">📤 导出为社区配置</button>
+              <button class="ghost sm" id="btn-com-copy" type="button" style="display:none">📋 复制</button>
+              <button class="ghost sm" id="btn-com-download" type="button" style="display:none">💾 存为 .json</button>
+            </div>
+            <div id="com-out-wrap" class="hidden" style="margin-top:10px">
+              <textarea id="com-out" class="json-box" readonly spellcheck="false" style="max-height:220px"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div id="com-msg2"></div>
+
+        <div style="margin-top:14px">
+          <b style="font-size:13px">已导入的社区站点</b>
+          <div id="com-list" class="com-list"><div class="com-empty">加载中…</div></div>
+        </div>
       </div>
     </section>
   </div>
@@ -1120,7 +1359,7 @@ async function boot() {
 
 $('btn-setup').onclick = async () => {
   const a = $('setup-pwd').value, b = $('setup-pwd2').value;
-  if (a.length < 6) return toast('密码至少 6 位');
+  if (a.length < 8) return toast('密码至少 8 位');
   if (a !== b) return toast('两次输入不一致');
   try { await api('/api/setup', 'POST', { password: a }); show('view-main'); await initMain(); }
   catch (e) { toast(e.message); }
@@ -1384,6 +1623,8 @@ function renderTzPicker(container, initial) {
         _tzValue = b.dataset.z;
         paint();
         pop.classList.add('hidden');
+        // 和 tp-change 一套：选完就通知外面（全局签到卡拿它做「选好即保存」）
+        container.dispatchEvent(new CustomEvent('tz-change', { bubbles: true }));
       };
     });
     const r = btn.getBoundingClientRect();
@@ -1490,11 +1731,60 @@ async function loadSchedule() {
     else schedPicker.set(displayTime);
     if (!tzPicker) tzPicker = renderTzPicker($('sched-tz'), s.tz);
     else tzPicker.set(s.tz);
+    // 记下「服务端现在是什么」：选好即保存那套靠它判断“是不是真的改了”
+    SCHED_SAVED.time = displayTime;
+    SCHED_SAVED.tz = SCHED_TZ;
   } catch (e) { $('sched-line').textContent = '全局签到时间加载失败'; }
 }
 function paintSchedLine(s, displayTime) {
   $('sched-line').textContent = `全局签到 ${displayTime}（${tzLabel(s.tz)}）· 到点自动执行，也能手动点「执行」· ${schedBeatText(s)}`;
 }
+
+// ---------- 面板出口连通性（全局签到卡右边那排小圆点）----------
+//
+// 【口径要在面板上写清楚】测的是**面板自己**（Cloudflare 那台机器）能不能连上这些站点，
+// 也就是「CF 直连」这条路线通不通 —— 签到因「机房 IP 被拦 / 连不上」失败时，这里是第一手线索。
+// 它**不是**在测你的本机网络：你打不开谷歌、不代表面板连不上；面板连得上 Telegram、
+// 也不代表你手机连得上。所以气泡里的第一行就把这句话写明白。
+function netItemHTML(t) {
+  const ok = !!t.ok;
+  const detail = ok
+    ? `${t.name}：通（HTTP ${t.status || '-'} · ${t.ms}ms）`
+    : `${t.name}：不通 —— ${t.error || '未知原因'}（等了 ${Math.round((t.ms || 0) / 1000)} 秒）`;
+  return `<span class="net-item ${ok ? 'ok' : 'bad'}" data-tip="面板出口 → ${esc(detail)}
+（测的是面板所在的 Cloudflare，不是你的本机）">`
+    + `<i></i>${esc(t.name)}</span>`;
+}
+function renderNetStrip(data) {
+  const box = $('net-strip');
+  const items = $('net-items');
+  if (!box || !items) return;
+  box.classList.remove('busy');
+  if (!data || !data.targets || !data.targets.length) {
+    items.innerHTML = '<span class="muted" style="font-size:11.5px">测不了，点一下重试</span>';
+    return;
+  }
+  const when = new Date(data.checked_at || Date.now()).toLocaleTimeString('zh-CN', { hour12: false });
+  const bad = data.targets.filter((t) => !t.ok).length;
+  box.title = `点一下重新检测：面板所在的 Cloudflare 出口到这些站点的连通性（不是你的本机）`
+    + `\n上次检测 ${when}：${data.targets.length - bad} 通 / ${bad} 不通`;
+  items.innerHTML = data.targets.map(netItemHTML).join('');
+}
+async function loadNetStatus() {
+  const box = $('net-strip');
+  if (!box) return;
+  box.classList.add('busy');
+  try {
+    renderNetStrip(await api('/api/net-check', 'GET', undefined, { timeoutMs: 12000 }));
+  } catch (e) {
+    renderNetStrip(null);
+  }
+}
+$('net-strip').onclick = loadNetStatus;
+$('net-strip').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); loadNetStatus(); } };
+// 进主界面时测一次（在 initMain 里调），之后每 5 分钟自己刷一次 ——
+// 六个目标并发、一共几百毫秒，对 Worker 的请求量可以忽略。
+setInterval(() => { if (!$('view-main').classList.contains('hidden')) loadNetStatus(); }, 5 * 60 * 1000);
 // 只刷新顶部那行心跳，不动时间/时区选择器。
 // （必须分开：整块重渲染会在用户正点开浮层时把浮层关掉 —— 那就是「刚点开就没了」。）
 setInterval(async () => {
@@ -1505,19 +1795,42 @@ setInterval(async () => {
   } catch { /* 离线时不打扰用户 */ }
 }, 60000);
 
-$('btn-save-sched').onclick = async () => {
+// ---------- 全局签到：选好即保存（没有「保存」按钮） ----------
+//
+// 【为什么要去掉那个按钮】这两个控件本来都是「点一下就确定」的：时间胶囊选完即生效、
+// 时区浮层点中某一项就收起。再要求去右上角点一次「保存」，就必然出现两种情况：
+//   ① 用户以为已经生效了（浮层都关了），实际没写库，下次进来还是旧时间；
+//   ② 想改两处（时间 + 时区）的人要么忘了保存、要么每改一次都要跑一趟右上角。
+// 按钮和控件离得很远、也不在同一张卡的视觉组里 —— 干脆去掉，改完全动保存。
+//
+// 【防抖】时间胶囊滚轮每滚一格都会派发 tp-change。不防抖的话，
+// 从 08:00 滚到 09:00 就是 60 次 PUT（还会互相抢着写）。拖 400ms 再发，
+// 用户停下来那一刻才真正写一次。
+let schedSaveTimer = null;
+let schedSaving = false;
+const SCHED_SAVED = { time: '', tz: '' }; // 上一次真正写进库里的值（用来判断「其实没变」）
+async function saveSchedule() {
+  if (schedSaving) return;
+  const v = schedPicker ? schedPicker.get() : '08:00';
+  const tz = tzPicker ? tzPicker.get() : 'Asia/Shanghai';
+  if (v === SCHED_SAVED.time && tz === SCHED_SAVED.tz) return; // 没真的变（比如点开又原样关掉），不白写一次
+  schedSaving = true;
   try {
-    const v = schedPicker ? schedPicker.get() : '08:00';
-    const tz = tzPicker ? tzPicker.get() : 'Asia/Shanghai';
     await api('/api/schedule', 'PUT', { time: v, tz });
     // 必须先 await loadSchedule()：它把新的全局时间写进 GLOBAL_HOUR。
     // 以前两个都不 await，loadAccounts() 往往先跑完，
     // 于是「跟随全局」的账号仍然显示旧时间 —— 看着就像“改了全局时间，账号时间没跟着变”。
     await loadSchedule();
     await loadAccounts();
-    toast('已保存：全局签到 ' + v + '，跟随全局的账号已同步');
-  } catch (e) { toast(e.message); }
-};
+    toast('已保存：全局签到 ' + v + '（' + tzLabel(tz) + '），跟随全局的账号已同步');
+  } catch (e) {
+    toast('保存失败：' + e.message + '（改回上一个能用的值）');
+    await loadSchedule(); // 写失败就刷回服务端的值，别让界面停在「以为改了」的状态
+  } finally { schedSaving = false; }
+}
+const queueSaveSchedule = () => { clearTimeout(schedSaveTimer); schedSaveTimer = setTimeout(saveSchedule, 400); };
+if ($('sched-tp')) $('sched-tp').addEventListener('tp-change', queueSaveSchedule);
+if ($('sched-tz')) $('sched-tz').addEventListener('tz-change', queueSaveSchedule);
 
 // ---------- 一键取 Cookie（小书签） ----------
 // 按站点生成小书签：解决"添加账号要 Cookie，取 Cookie 又要先有账号"的死循环。
@@ -1661,7 +1974,7 @@ function renderCookieAnalysis(info) {
   const head = [
     ['识别为', esc(info.format || '未知格式')],
     ['Web 站点', info.domain ? esc(info.domain) : '（这段内容里没带域名）'],
-    ['对应面板站点', site ? '<b>' + esc(site.name) + '</b>' : '未识别（可用「↗️ 填到上面并保存」后手动选）'],
+    ['对应面板站点', site ? '<b>' + esc(site.name) + '</b>' : '未识别（可用「↗️ 填到粘贴区并保存」后手动选）'],
     ['总体', esc(info.summary)],
     ['User-Agent', info.userAgent ? esc(String(info.userAgent).slice(0, 80)) + '…' : '（没带，面板会自动用当前浏览器 UA 兜底）'],
   ].map(([k, v]) => '<div class="ckb-row"><span class="ckb-k">' + esc(k) + '</span><span class="ckb-v">' + v + '</span></div>').join('');
@@ -1673,8 +1986,27 @@ function renderCookieAnalysis(info) {
     : '';
   out.innerHTML = '<div class="ckb"><div class="ckb-title">🔍 拆好了：每一段是什么</div><div class="ckb-rows">' + head + extra + '</div>'
     + '<div class="ckb-rows" style="margin-top:6px">' + parts + '</div>'
-    + '<div class="ckb-status">只拆分说明，<b>没有保存</b>任何东西；要真用就点上面的「↗️ 填到上面并保存」。</div></div>';
+    + '<div class="ckb-status">只拆分说明，<b>没有保存</b>任何东西；要真用就点下面的「↗️ 填到粘贴区并保存」。</div></div>';
 }
+
+// 粘贴区 / Cookie 解析器 两个标签：切换的只是同一张卡里的两块内容。
+// 默认停在「粘贴即保存」—— 绝大多数人只需要这一个。
+function ckShowTab(name) {
+  const want = name === 'analyze' ? 'analyze' : 'paste';
+  const tabs = document.querySelectorAll('.ck-tabs > button');
+  tabs.forEach((b) => b.classList.toggle('on', b.dataset.cktab === want));
+  const p1 = $('ck-pane-paste');
+  const p2 = $('ck-pane-analyze');
+  if (p1) p1.classList.toggle('hidden', want !== 'paste');
+  if (p2) p2.classList.toggle('hidden', want !== 'analyze');
+  if (want === 'analyze') { const el = $('ck-analyze'); if (el) el.focus(); }
+}
+document.querySelectorAll('.ck-tabs > button').forEach((b) => { b.onclick = () => ckShowTab(b.dataset.cktab); });
+$('btn-ck-analyze-clear').onclick = () => {
+  $('ck-analyze').value = '';
+  const out = $('ck-analyze-out');
+  if (out) out.innerHTML = '';
+};
 
 $('btn-ck-analyze').onclick = () => {
   try {
@@ -1686,13 +2018,15 @@ $('btn-ck-analyze').onclick = () => {
   }
 };
 
-// 「填到上面并保存」：解析结果直接进主粘贴框，然后走原来的自动建号流程
+// 「填到粘贴区并保存」：解析结果直接进主粘贴框，然后走原来的自动建号流程。
+// 要先切回粘贴那个标签，否则用户看不到接下来发生了什么（试跑结果都显示在那一边）。
 $('btn-ck-analyze-fill').onclick = () => {
   try {
     const raw = $('ck-analyze').value.trim();
     if (!raw) return toast('请先把内容粘到解析框里');
     // 直接调 applyPaste，不走 .click()：按钮在框为空时是 disabled 的，
     // 而 disabled 按钮的 click() 在浏览器里根本不会触发（以前就是这么静默失效的）
+    ckShowTab('paste');
     $('ck-paste').value = raw;
     autoGrowPaste();
     refreshPasteState();
@@ -1716,22 +2050,33 @@ function renderPasteBreakdown(info, status, check) {
   const uaFrom = info.userAgent
     ? (info.uaAutoFilled ? '当前浏览器（扩展没带，面板自动兜底）' : '抓 Cookie 那台浏览器（扩展带的）')
     : '不需要';
+  // 段多的时候（Cronet / 论坛一次能带十几段）不把每一段都铺出来：
+  // 那样这个框会变成一屏长文，把整页拉得老高、左边那栏就成了大片空白。
+  // 先铺前 12 段（结论够用了），剩下的折起来，想看再点开。
+  const MAX_PART_ROWS = 12;
+  const partRows = parts.map((p, i) => ['第 ' + (i + 1) + ' 段', '<code>' + esc(p.name) + '</code> — ' + esc(p.note)]);
+  const extraParts = partRows.slice(MAX_PART_ROWS);
   const rows = [
     ['识别格式', esc(info.format || '未知') + '（面板自动判断，你不用选）'],
     ['来自网站', (site ? '<b>' + esc(site.name) + '</b>' : '<b>未识别</b>') + (info.domain ? '，域名 ' + esc(info.domain) : '')],
     ['Cookie 段', '共 <b>' + parts.length + '</b> 段' + (parts.length ? '：' : '')],
-    ...parts.map((p, i) => ['第 ' + (i + 1) + ' 段', '<code>' + esc(p.name) + '</code> — ' + esc(p.note)]),
-    ['User-Agent', uaFrom + (info.userAgent ? '<br><span class="muted" style="font-size:11px">' + esc(String(info.userAgent).slice(0, 90)) + '…</span>' : '')],
+    ...partRows.slice(0, MAX_PART_ROWS),
   ];
   if (info.localStorage && Object.keys(info.localStorage).length) {
     rows.push(['localStorage', Object.keys(info.localStorage).length + ' 项（部分站点把登录 token 放这里）']);
   }
+  rows.push(['User-Agent', uaFrom + (info.userAgent ? '<br><span class="muted" style="font-size:11px">' + esc(String(info.userAgent).slice(0, 90)) + '…</span>' : '')]);
+  const rowHTML = (list) => list.map(([k, v]) => `<div class="ckb-row"><span class="ckb-k">${esc(k)}</span><span class="ckb-v">${v}</span></div>`).join('');
+  const moreHTML = extraParts.length
+    ? `<details class="ckb-more"><summary>还有 ${extraParts.length} 段（点开看完整清单）</summary><div class="ckb-rows">${rowHTML(extraParts)}</div></details>`
+    : '';
   el.innerHTML = '<div class="ckb">'
     + '<div class="ckb-title">🔍 粘贴内容分解</div>'
     + checkHTML
     + '<div class="ckb-rows">'
-    + rows.map(([k, v]) => `<div class="ckb-row"><span class="ckb-k">${esc(k)}</span><span class="ckb-v">${v}</span></div>`).join('')
+    + rowHTML(rows)
     + '</div>'
+    + moreHTML
     + (status ? `<div class="ckb-status">${status}</div>` : '')
     + '</div>'
     + (site ? '' : '<div class="row" style="margin-top:8px"><button class="sm" id="btn-ck-apply" type="button">我来选站点…</button></div>');
@@ -1851,9 +2196,13 @@ function renderCkNewFields(bg, s, extra) {
     // token 类字段：从 localStorage 自动取（有就覆盖掉空值）
     const fromLs = valueFromStorage(f.key, ls);
     if (fromLs) pre = fromLs;
-    if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${f.key}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
-    if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${esc(pre)}</textarea>`;
-    return `<label>${esc(f.label)}${req}</label><input data-k="${f.key}" placeholder="${esc(f.placeholder || '')}" value="${esc(pre)}">`;
+    // data-k 也要 esc()：f.key 来自**导入的社区配置**（别人写的 JSON）。
+    // 服务端已限字符集，但库里/浏览器缓存里可能还有旧版本导入的坏配置 ——
+    // 属性里没转义的话，一句 `" onfocus="…" autofocus x="` 就能在面板里执行脚本。
+    const k = esc(f.key);
+    if (f.type === 'select') return `<label>${esc(f.label)}${req}</label><select data-k="${k}">${(f.options || []).map((o) => `<option>${esc(o)}</option>`).join('')}</select>`;
+    if (f.type === 'textarea') return `<label>${esc(f.label)}${req}</label><textarea data-k="${k}" placeholder="${esc(f.placeholder || '')}">${esc(pre)}</textarea>`;
+    return `<label>${esc(f.label)}${req}</label><input data-k="${k}" placeholder="${esc(f.placeholder || '')}" value="${esc(pre)}">`;
   }).join('');
 }
 
@@ -2216,6 +2565,8 @@ async function initMain() {
   await refreshExtState(); // 扩展在线状态：首页右上角展示，并决定能否切「本地网络」
   await loadAccounts();
   await loadCommunity(); // 社区站点：列表 + 导出下拉（失败也不影响主流程）
+  // 出口连通性：登录进主界面才测（登录页上没这一块，跟着跑只会白发请求 + 报 401）
+  loadNetStatus();
   checkCookieHash();
 }
 
@@ -2247,6 +2598,41 @@ const SITE_MODE_HINT = {
 
 // 执行模式单元格（徽章 + 切换按钮 + 站点推荐 + 站点开关胶囊）。
 // 单独抽出来是为了「切换模式」时可以只更新这一格，不用整表重绘。
+// ---------- 凭据到期时间（鼠标悬浮站点名时弹出来的那段话） ----------
+// 数据来自 /api/accounts 的 cred_exp（服务端解密凭据后解出来的、**凭据自带**的到期时间）：
+//   sessions —— WordPress 登录会话（到期时间就写在 cookie 值里，站点认的就是它）
+//   tokens   —— JWT 型 token（如 Akile 的 akile-token，exp 一到就作废）
+// 两种都报出来，用户就不用猜「我这份 Cookie 还能撑几天」。
+// 其它站点（Discuz、机场面板…）的会话有效期只在服务器那边知道 —— 这里**如实说「凭据里没写」**，
+// 不编一个时间出来：他看这句话是为了决定「要不要现在去重新登录」，猜错比不说更坏。
+function credExpTip(exp) {
+  const fmt = (ms) => new Date(ms).toLocaleString('zh-CN',
+    { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const left = (ms) => {
+    const d = ms - Date.now();
+    if (d <= 0) return '早已过期';
+    const h = d / 3600000;
+    if (h < 1) return '还剩不到 1 小时';
+    if (h < 48) return '还剩 ' + Math.round(h) + ' 小时';
+    return '还剩 ' + Math.round(d / 86400000) + ' 天';
+  };
+  const s = (exp && exp.sessions) || [];
+  const t = (exp && exp.tokens) || [];
+  const live = s.filter((x) => !x.expired);
+  const dead = s.filter((x) => x.expired);
+  // 标题跟着内容走：有 Cookie 会话就叫「Cookie 有效期」（用户就是这么问的），
+  // 只有 token / 什么都解不出来时叫「凭据到期时间」——比硬套一个「Cookie 有效期」诚实。
+  const lines = [s.length ? 'Cookie 有效期' : '凭据到期时间'];
+  for (const x of live) lines.push('能用的登录会话：' + (x.user || '（未署名）') + ' · ' + fmt(x.exp) + '（' + left(x.exp) + '）');
+  for (const x of dead) lines.push('已过期的登录会话：' + (x.user || '（未署名）') + ' · ' + fmt(x.exp) + ' 已过期');
+  for (const x of t) lines.push(x.field + '：' + fmt(x.exp) + (x.expired ? ' 已过期' : '（' + left(x.exp) + '）'));
+  if (lines.length === 1) {
+    lines.push('这份 Cookie / 凭据里没有写到期时间 —— 只有网站自己知道它还算不算登录。');
+    lines.push('真失效了面板会报「需要重新登录」，也能用「Cookie 解析器」当场体检。');
+  }
+  return lines.join('\n');
+}
+
 function execCellHTML(a, execOverride) {
   const site = SITES.find((s) => s.id === a.site);
   const siteExec = site ? (site.execution || 'server') : 'server';
@@ -2291,7 +2677,7 @@ function execCellHTML(a, execOverride) {
   return {
     isLocalExec,
     siteHint: hint,
-    html: `<div class="site-wrap"><div class="site-head"><b>${esc(a.name)}</b>${comBadge}`
+    html: `<div class="site-wrap"><div class="site-head"><b class="site-name" data-tip="${esc(credExpTip(a.cred_exp))}">${esc(a.name)}</b>${comBadge}`
       + `<button class="ghost sm exec-switch" data-exec="${a.id}" title="${esc(execTitle)}">切换</button>`
       + `</div><div class="site-line">${execBadge}</div>${bsign}${pills}</div>`,
   };
@@ -2477,9 +2863,9 @@ async function loadAccounts() {
     // 站点级推荐（如糊涂鳄建议切本地网络）也统一放到网站反馈后面
     let hintText = feedbackHint((bySite ? msg + '\n' : '') + msgShow + '\n' + rawText, a.site, isLocalExec);
     if (siteHint) hintText = (hintText ? hintText + '\n' : '') + '推荐：' + siteHint;
-    // 页面上显示时去掉「建议：/说明：」前缀（前面的 💡 已经说明它是提示了），
-    // 顺手去掉 markdown 强调符 —— 完整原文仍然留在悬浮气泡里。
-    const hintShow = String(hintText).replace(/^(?:建议|说明)：/, '').replace(/\*\*/g, '').trim();
+    // 建议正文**不在表格里显示**，只留一枚「💡 建议」胶囊，鼠标移上去弹完整内容
+    //（去掉「建议：/说明：」前缀 —— 胶囊上的 💡 已经说明它是提示了；顺手去掉 markdown 强调符）。
+    hintText = String(hintText).replace(/^(?:建议|说明)：/, '').replace(/\*\*/g, '').trim();
     // data-label 是给窄屏用的：小屏上表格会变成一张张卡片（每格前面带列名），
     // 手机上不用再左右拖表了。
     // 【踩坑】这两行注释以前写在 `return \`` 的下一行 —— 那就成了模板字符串的**内容**，
@@ -2490,7 +2876,7 @@ async function loadAccounts() {
       <td class="site-cell" data-label="站点" data-exec-cell="${a.id}">${execCell}</td>
       <td class="c" data-label="全局签到"><div class="sched-cell"><div data-tp-acc="${a.id}" title="点一下给这个账号单独设时间；不点就一直跟全局（当前全局签到 ${GLOBAL_HOUR}）"></div></div></td>
       <td class="c" data-label="状态">${statusBadge}</td>
-      <td class="msg" data-label="网站反馈"><div class="msg-main"${rawTip}>${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${routeShow ? `<div class="msg-route" data-tip="${esc(routeShow)}">${esc(routeShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-tip" data-tip="${esc(hintText)}">${esc(hintShow)}</span></div>` : ''}</td>
+      <td class="msg" data-label="网站反馈"><div class="msg-main"${rawTip}>${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${routeShow ? `<div class="msg-route" data-tip="${esc(routeShow)}">${esc(routeShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-chip" data-tip="${esc(hintText)}">💡 建议</span></div>` : ''}</td>
       <td class="muted c mono" data-label="上次运行">${fmtTime(a.last_run_at)}</td>
 
       <td class="c" data-label="启用"><button class="switch ${a.enabled ? 'on' : ''}" data-toggle="${a.id}" title="启用/停用"></button></td>
@@ -2505,13 +2891,12 @@ async function loadAccounts() {
   // 反馈默认只显示 2 行主文案 + 1 行原文（行高整齐）；真的被截断了才给「展开全文」。
   // 用 scrollHeight/clientHeight 判断，比“字符串长度阈值”准：同样的字数，宽屏放得下就不多这个按钮。
   tb.querySelectorAll('td.msg').forEach((cell) => {
-    const parts = [...cell.querySelectorAll('.msg-main, .msg-raw, .msg-route, .hint-tip')];
+    // 建议（💡 胶囊）已经不进这个列表了 —— 它的正文只在气泡里，表格里没有可展开的东西。
+    const parts = [...cell.querySelectorAll('.msg-main, .msg-raw, .msg-route')];
     const main = cell.querySelector('.msg-main');
-    const hint = cell.querySelector('.hint-tip');
-    // 主文案或建议那两行被截断时给按钮：原文那行已经有悬浮看全文的提示，
+    // 主文案被截断时才给按钮：原文那行已经有悬浮看全文的提示，
     // 每行都挂一个「展开全文」反而又是一片按钮（整洁优先）。
-    const clipped = (!!main && main.scrollHeight - main.clientHeight > 2
-      || !!hint && hint.scrollHeight - hint.clientHeight > 2) && parts.length > 0;
+    const clipped = !!main && main.scrollHeight - main.clientHeight > 2 && parts.length > 0;
     if (!clipped) return;
     const more = document.createElement('button');
     more.type = 'button';
@@ -2727,15 +3112,17 @@ $('btn-run-all').onclick = async () => {
 function fieldInput(f, val = '') {
   const v = esc(val);
   const label = `<label>${esc(f.label)}${f.required ? ' *' : ''}</label>`;
-  if (f.type === 'textarea') return `${label}<textarea data-k="${f.key}" placeholder="${esc(f.placeholder || '')}">${v}</textarea>`;
+  // 同上：key 来自导入的配置，进属性前必须转义
+  const k = esc(f.key);
+  if (f.type === 'textarea') return `${label}<textarea data-k="${k}" placeholder="${esc(f.placeholder || '')}">${v}</textarea>`;
   if (f.type === 'select') {
     const opts = (f.options || []).map((o) => `<option ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('');
-    return `${label}<select data-k="${f.key}">${opts}</select>`;
+    return `${label}<select data-k="${k}">${opts}</select>`;
   }
   if (f.type === 'password') {
-    return `${label}<div style="position:relative"><input data-k="${f.key}" type="password" value="${v}" placeholder="${esc(f.placeholder || '')}" style="width:100%;padding-right:38px;box-sizing:border-box" autocomplete="new-password"><button type="button" class="pw-toggle" title="显示/隐藏密码" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;cursor:pointer;font-size:16px">👁</button></div>`;
+    return `${label}<div style="position:relative"><input data-k="${k}" type="password" value="${v}" placeholder="${esc(f.placeholder || '')}" style="width:100%;padding-right:38px;box-sizing:border-box" autocomplete="new-password"><button type="button" class="pw-toggle" title="显示/隐藏密码" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;cursor:pointer;font-size:16px">👁</button></div>`;
   }
-  return `${label}<input data-k="${f.key}" type="text" value="${v}" placeholder="${esc(f.placeholder || '')}">`;
+  return `${label}<input data-k="${k}" type="text" value="${v}" placeholder="${esc(f.placeholder || '')}">`;
 }
 
 // 密码显示/隐藏切换（事件委托）
@@ -2901,12 +3288,20 @@ async function testSteps() {
   }
 }
 
+// 按 key 找字段输入框。
+// key 可能来自**导入的社区配置**：直接拼进选择器，里面一个引号就会把选择器弄断
+// （querySelector 到抛错为止，整个弹窗卡住没人知道为什么）。先做一道 CSS 转义。
+function fieldEl(key) {
+  const k = String(key == null ? '' : key);
+  const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(k) : k.replace(/["\\]/g, '\\$&');
+  return document.querySelector('#f-fields [data-k="' + safe + '"]');
+}
 function setField(key, val) {
-  const el = document.querySelector('#f-fields [data-k="' + key + '"]');
+  const el = fieldEl(key);
   if (el) el.value = val;
 }
 function getField(key) {
-  const el = document.querySelector('#f-fields [data-k="' + key + '"]');
+  const el = fieldEl(key);
   return el ? el.value : '';
 }
 
@@ -3021,7 +3416,7 @@ function checkAccountForm() {
     });
   } else {
     (site.fields || []).forEach((f) => {
-      const el = document.querySelector('#f-fields [data-k="' + f.key + '"]');
+      const el = fieldEl(f.key);
       const raw = el ? String(el.value) : '';
       const val = el && el.type === 'password' ? raw : raw.trim();
       const lname = '「' + (f.label || f.key) + '」';
@@ -3059,7 +3454,7 @@ function renderFormCheck(st) {
     + (i.detail ? '<br><span class="fc-detail">' + esc(i.detail) + '</span>' : '') + '</span></div>').join('');
   st.bad.forEach((b) => {
     if (!b.key) return;
-    const el = document.querySelector('#f-fields [data-k="' + b.key + '"]');
+    const el = fieldEl(b.key);
     if (el) el.classList.add('field-bad');
   });
   return st;
@@ -3089,7 +3484,7 @@ $('btn-save').onclick = async () => {
     const firstBad = st.items.find((i) => i.level === 'bad') || {};
     toast('还差 ' + st.bad.length + ' 项：' + (firstBad.title || ''));
     const key = st.bad[0] && st.bad[0].key;
-    const el = key ? document.querySelector('#f-fields [data-k="' + key + '"]') : null;
+    const el = key ? fieldEl(key) : null;
     if (el) { el.focus(); el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
     return;
   }
@@ -3143,6 +3538,17 @@ function communitySummary(cfg) {
   </table>`;
 }
 
+// 把一段「来自配置/接口的地址」变成可安全放进 href 的字符串。
+//
+// 【为什么 esc() 不够】esc 只管引号尖括号，管不了协议 ——
+// `<a href="javascript:fetch('/api/ext-key/rotate',{method:'POST'})">来源</a>`
+// 转义之后依然是个能点的链接，点一下就在**面板的源**（带着管理员会话）里执行脚本。
+// 社区配置里的 source 是别人写的，所以这里只认 http/https，其余一律不给链接。
+function safeHref(u) {
+  const s = String(u == null ? '' : u).trim();
+  return /^https?:\/\//i.test(s) ? esc(s) : '';
+}
+
 function communityMsg(el, cls, html) {
   el.innerHTML = html ? `<div class="com-msg ${cls}">${html}</div>` : '';
 }
@@ -3167,7 +3573,7 @@ async function loadCommunity() {
     return `<div class="com-item" data-com="${esc(s.id)}">
       <span class="badge com">社区</span>
       <div class="grow"><b>${esc(s.name)}</b>
-        <div class="meta">${s.def && s.def.domain ? esc(s.def.domain) + ' · ' : ''}${esc(s.author || '匿名')}${s.version ? ' · v' + esc(s.version) : ''} · ${steps} 步请求${s.source ? ` · <a href="${esc(s.source)}" target="_blank" rel="noreferrer" style="color:var(--accent2)">来源</a>` : ''}</div>
+        <div class="meta">${s.def && s.def.domain ? esc(s.def.domain) + ' · ' : ''}${esc(s.author || '匿名')}${s.version ? ' · v' + esc(s.version) : ''} · ${steps} 步请求${safeHref(s.source) ? ` · <a href="${safeHref(s.source)}" target="_blank" rel="noreferrer" style="color:var(--accent2)">来源</a>` : (s.source ? ' · <span class="muted">来源（地址不是 http/https，不给链接）</span>' : '')}</div>
       </div>
       <button class="ghost sm" data-cact="view" type="button">查看</button>
       <button class="ghost sm" data-cact="copy" type="button">复制 JSON</button>
@@ -3192,9 +3598,7 @@ async function communityAct(act, id) {
   } catch (e) { return toast(e.message); }
   const text = JSON.stringify(cfg, null, 2);
   out.value = text;
-  out.classList.remove('hidden');
-  $('btn-com-copy').style.display = '';
-  $('btn-com-download').style.display = '';
+  showComOut();
   $('btn-com-download').dataset.name = cfg.id;
   communityMsg($('com-msg2'), 'ok', `<b>${esc(cfg.name)}</b> 的配置（可以直接复制去分享）：${communitySummary(cfg)}`);
   if (act === 'copy') copyCommunityOut();
@@ -3216,16 +3620,41 @@ async function reloadSites() {
   renderModalSites();
 }
 
-// 「导出我的配置」下拉：列出可以导出的账号（自定义 HTTP / 已导入的社区站点）
+// 「导出我的配置」：先选**签到网站**，再选该网站下的账号。
+// 为什么改成按网站选：要分享出去的是「这个网站怎么签到」，而不是「我哪个号」——
+// 以前按账号选，同名账号一多就得先猜哪个是调通过的那个，而且列表里全是账号名，
+// 看不出到底会导出什么站。
+// 某个网站只有一个账号时，第二个下拉不出现（没什么可选的）。
+function exportableAccounts() {
+  return ACCTS.filter((a) => a.site === 'http' || (SITES.find((s) => s.id === a.site) || {}).community);
+}
 function refreshExportAccounts() {
-  const sel = $('com-export-account');
-  if (!sel) return;
-  const cur = sel.value;
-  const ok = ACCTS.filter((a) => a.site === 'http' || (SITES.find((s) => s.id === a.site) || {}).community);
-  sel.innerHTML = ok.length
-    ? ok.map((a) => `<option value="${a.id}">${esc(a.name)}（${esc(siteName(a.site))}）</option>`).join('')
-    : '<option value="">（还没有可导出的账号：先用「自定义 HTTP」录一个）</option>';
-  if (ok.some((a) => String(a.id) === cur)) sel.value = cur;
+  const siteSel = $('com-export-site');
+  if (!siteSel) return;
+  const ok = exportableAccounts();
+  const curSite = siteSel.value;
+  // 同一个网站只出一项（即使下面挂了很多账号）
+  const ids = [];
+  for (const a of ok) if (!ids.includes(a.site)) ids.push(a.site);
+  siteSel.innerHTML = ids.length
+    ? ids.map((sid) => `<option value="${esc(sid)}">${esc(siteName(sid))}</option>`).join('')
+    : '<option value="">（还没有可导出的网站：先用「自定义 HTTP」录一个）</option>';
+  if (ids.includes(curSite)) siteSel.value = curSite;
+  refreshExportSiteHint(siteSel.value);
+}
+function refreshExportSiteHint(site) {
+  const hint = $('com-export-hint');
+  if (!hint) return;
+  const list = exportableAccounts().filter((a) => a.site === site);
+  // 没有可导出的网站时不必再重复一句 —— 上面那个下拉里已经写着原因了
+  hint.textContent = list.length ? `这个网站下有 ${list.length} 个账号，挑哪个都行（导出的配置是一样的）。` : '';
+}
+
+// 把导出的结果摊开（复制 / 存文件两个按钮一起露出来）
+function showComOut() {
+  $('com-out-wrap').classList.remove('hidden');
+  $('btn-com-copy').style.display = '';
+  $('btn-com-download').style.display = '';
 }
 
 // 站点下拉里把社区站点标出来，并保留当前选中项
@@ -3287,36 +3716,47 @@ $('btn-com-import').onclick = async (e) => {
   }
 };
 
+$('com-export-site').onchange = () => refreshExportSiteHint($('com-export-site').value);
+
+// 导出：只选「网站」，账号由面板自己挑。
+// 一个站下面挂了多个账号时，导出的配置是一模一样的（导出的是「这个站怎么签」），
+// 但有的账号可能还没录过任务、导不出东西 —— 所以按顺序挨个试，谁先成功就用谁。
 $('btn-com-export').onclick = async (e) => {
-  const sel = $('com-export-account');
-  const id = sel && sel.value;
+  const site = $('com-export-site').value;
   const msg = $('com-msg2');
   const out = $('com-out');
-  if (!id) return toast('先在「自定义 HTTP」里录一个账号，再回来导出');
+  const picks = exportableAccounts().filter((a) => a.site === site);
+  if (!site || !picks.length) return toast('先在「自定义 HTTP」里录一个账号，再回来导出');
   const btn = e.target;
   btn.disabled = true; btn.textContent = '导出中…';
   try {
     const author = $('com-author').value.trim();
     if (author) await api('/api/sites/community/author', 'PUT', { author }).catch(() => {});
     const q = new URLSearchParams();
-    // 先按账号名签一个默认 id/name，用户导入的人看到的就是这个
-    const acc = ACCTS.find((a) => String(a.id) === String(id));
-    if (acc) q.set('name', acc.name);
-    const r = await api('/api/accounts/' + id + '/export-config?' + q.toString());
+    // 默认名字用**网站名**而不是账号备注名：导出的是一份「这个网站怎么签」的配置，
+    // 别人导入后看到的应该是网站名（账号名是我自己的，对别人没有意义）。
+    q.set('name', siteName(site));
+    let r = null, why = '';
+    for (const a of picks) {
+      let one;
+      try { one = await api('/api/accounts/' + a.id + '/export-config?' + q.toString()); }
+      catch (err) { why = err.message; continue; }
+      r = one;
+      // 这份配置自己就有毛病（比如还没录任务）——换这个站的下一个账号再试
+      if (one.ok === false && (one.errors || []).length) { why = (one.errors || []).join('；'); continue; }
+      break;
+    }
+    if (!r) throw new Error(why || '这个网站下没有可导出的账号');
     if (r.ok === false && (r.errors || []).length) {
       // 导出的配置自己没通过校验（作者必填项没写全之类）——把原因摊开，不假装成功
       communityMsg(msg, 'warn', '<b>导出了，但配置还有问题，先改好再分享：</b><br>' + (r.errors || []).map(esc).join('<br>'));
       out.value = JSON.stringify(r.config, null, 2);
-      out.classList.remove('hidden');
-      $('btn-com-copy').style.display = '';
-      $('btn-com-download').style.display = '';
+      showComOut();
       $('btn-com-download').dataset.name = r.config.id;
       return;
     }
     out.value = JSON.stringify(r.config, null, 2);
-    out.classList.remove('hidden');
-    $('btn-com-copy').style.display = '';
-    $('btn-com-download').style.display = '';
+    showComOut();
     $('btn-com-download').dataset.name = r.config.id;
     const warn = (r.warnings || []).length ? `<div style="margin-top:6px">⚠️ ${(r.warnings || []).map(esc).join('<br>⚠️ ')}</div>` : '';
     communityMsg(msg, 'ok', '<b>导出成功，底部就是可分享的配置</b>：复制或存成 .json，发到仓库的 Issue / PR 即可。'
@@ -3391,19 +3831,129 @@ $('btn-clear-logs').onclick = async () => {
 };
 ['log-filter-account', 'log-filter-status', 'log-filter-limit'].forEach((id) => { $(id).onchange = loadLogs; });
 
+// ---------- 主题（浅色 / 深色 / 跟随系统） ----------
+// 按钮在右上角，点一下循环切换；选择记在浏览器本地。
+// 页面刚开始加载时由 <head> 里那段小脚本先把 data-theme 写上（避免先闪一下深色）。
+const THEME_MODES = [['auto', '🖥 跟随系统'], ['light', '☀️ 浅色'], ['dark', '🌙 深色']];
+function themeModeNow() {
+  try {
+    const v = localStorage.getItem('panel-theme') || 'auto';
+    return THEME_MODES.some((t) => t[0] === v) ? v : 'auto';
+  } catch { return 'auto'; }
+}
+function applyTheme(mode) {
+  const m = THEME_MODES.some((t) => t[0] === mode) ? mode : 'auto';
+  let sysDark = true;
+  try { sysDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); } catch { /* 忽略 */ }
+  const dark = m === 'dark' || (m === 'auto' && sysDark);
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-theme-mode', m);
+  const btn = $('btn-theme');
+  if (btn) {
+    const label = (THEME_MODES.find((t) => t[0] === m) || THEME_MODES[0])[1];
+    btn.textContent = label;
+    btn.title = '当前主题：' + label.slice(label.indexOf(' ') + 1) + '（点一下切换）';
+  }
+}
+$('btn-theme').onclick = () => {
+  const i = THEME_MODES.findIndex((t) => t[0] === themeModeNow());
+  const next = THEME_MODES[(i + 1) % THEME_MODES.length][0];
+  try { localStorage.setItem('panel-theme', next); } catch { /* 隐私模式存不了就算了 */ }
+  applyTheme(next);
+  toast('主题：' + THEME_MODES.find((t) => t[0] === next)[1].slice(2));
+};
+// 「跟随系统」时，系统换了主题页得跟着变
+try {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  if (mq && mq.addEventListener) mq.addEventListener('change', () => { if (themeModeNow() === 'auto') applyTheme('auto'); });
+} catch { /* 忽略 */ }
+applyTheme(themeModeNow());
+
 // ---------- 设置 ----------
 async function loadSettings() {
   const { settings: s } = await api('/api/settings');
   $('set-enabled').checked = s.enabled === '1';
   $('set-tg-chat').value = s.telegram_chat_id || '';
   $('set-bark-server').value = s.bark_server || '';
-  $('tg-set').textContent = s.telegram_bot_token_set ? '（已设置）' : '';
-  $('bark-set').textContent = s.bark_key_set ? '（已设置）' : '';
-  $('wh-set').textContent = s.webhook_url_set ? '（已设置）' : '';
+  $('tg-set').textContent = s.telegram_bot_token_set ? '（已设置，留空即不修改）' : '';
+  $('bark-set').textContent = s.bark_key_set ? '（已设置，留空即不修改）' : '';
+  $('wh-set').textContent = s.webhook_url_set ? '（已设置，留空即不修改）' : '';
+  // 哪几个渠道已经能用了，直接写在保存按钮上面
+  const chans = Array.isArray(s.channels) ? s.channels : [];
+  notifyMsg('notify-msg', chans.length
+    ? '当前已配置的渠道：' + chans.join(' · ') + '（' + (s.enabled === '1' ? '推送已启用' : '但还没勾「启用推送」') + '）'
+    : '还没有配置任何推送渠道。至少填一个（推荐 Telegram）并勾上「启用推送」。',
+  chans.length ? (s.enabled === '1' ? 'ok' : 'warn') : '');
   loadSchedule();
   // 扩展 API Key
   loadExtKey();
 }
+
+// 推送设置的小提示条：kind = '' / 'ok' / 'warn' / 'bad'
+function notifyMsg(id, text, kind) {
+  const el = $(id);
+  if (!el) return;
+  el.className = 'notify-msg' + (text ? ' show' : '') + (kind ? ' ' + kind : '');
+  el.textContent = text || '';
+}
+
+// Telegram：自动获取 Chat ID
+// 办法：读这个 Bot 最近收到的消息，把里面的会话列出来让你选。
+// （Telegram 的规矩：Bot 没收到过你的消息，就不知道你的 Chat ID）
+$('btn-tg-chats').onclick = async () => {
+  const box = $('tg-chats');
+  box.classList.add('hidden');
+  box.innerHTML = '';
+  notifyMsg('tg-test-msg', '正在读取这个 Bot 收到的消息…');
+  try {
+    const r = await api('/api/notify-telegram-chats', 'POST', {
+      telegram_bot_token: $('set-tg-token').value.trim(),
+    });
+    const chats = Array.isArray(r.chats) ? r.chats : [];
+    if (!chats.length) {
+      notifyMsg('tg-test-msg', r.hint || '没找到会话。请在 Telegram 里给这个 Bot 发一句「hi」，再点一次。', 'warn');
+      return;
+    }
+    notifyMsg('tg-test-msg', '找到 ' + chats.length + ' 个会话，点一个就填到上面：', 'ok');
+    box.classList.remove('hidden');
+    box.innerHTML = chats.map((c) =>
+      `<button type="button" class="ghost sm" data-cid="${esc(String(c.id))}">${esc(c.title || c.id)}（${esc(String(c.id))}）</button>`
+    ).join('');
+    box.querySelectorAll('button[data-cid]').forEach((b) => {
+      b.onclick = () => {
+        $('set-tg-chat').value = b.getAttribute('data-cid');
+        notifyMsg('tg-test-msg', '已填入 Chat ID：' + b.getAttribute('data-cid') + '。别忘了点「保存推送设置」。', 'ok');
+      };
+    });
+  } catch (e) {
+    notifyMsg('tg-test-msg', e.message, 'bad');
+  }
+};
+
+// Telegram：发一条测试消息
+$('btn-tg-test').onclick = async () => {
+  notifyMsg('tg-test-msg', '正在发送…');
+  try {
+    await api('/api/notify-test', 'POST', {
+      telegram_bot_token: $('set-tg-token').value.trim(),
+      telegram_chat_id: $('set-tg-chat').value.trim(),
+    });
+    notifyMsg('tg-test-msg', '已发送 ✅ 去看看 Telegram 收到没有。收到了说明配置没问题（没用刚填的值就说明还没保存，记得点「保存推送设置」）。', 'ok');
+  } catch (e) {
+    notifyMsg('tg-test-msg', e.message, 'bad');
+  }
+};
+
+// Telegram：清除已保存的 Token（换了 Bot 或不想再收消息时用）
+$('btn-tg-clear').onclick = async () => {
+  if (!confirm('确定清除已保存的 Telegram Bot Token 吗？清除后就收不到这个渠道的推送了。')) return;
+  try {
+    await api('/api/settings', 'PUT', { clear: ['telegram_bot_token'] });
+    $('set-tg-token').value = '';
+    notifyMsg('tg-test-msg', 'Token 已清除。', 'ok');
+    loadSettings();
+  } catch (e) { notifyMsg('tg-test-msg', e.message, 'bad'); }
+};
 
 // ---------- 扩展 API Key ----------
 // 扩展（本地网络中继）在线状态：首页右上角与设置页显示同一个值。
@@ -3413,7 +3963,6 @@ let RELAY_VERSION = '';
 let RELAY_BACKLOG = 0; // 中继队列里还没做完的请求数（扩展单飞执行，堆积时签到会排队超时）
 async function refreshExtState() {
   const home = $('ext-state');
-  const boxState = $('ext-box-state');
   try {
     const s = await api('/api/relay-status', 'GET');
     RELAY_ONLINE = !!s.online;
@@ -3437,10 +3986,6 @@ async function refreshExtState() {
         : `🟢 扩展在线（自动中继已启用）${RELAY_VERSION ? ' · v' + RELAY_VERSION : ''}`)
       : '⚪ 扩展离线（走 CF 网络）';
   }
-  if (boxState) {
-    boxState.className = RELAY_ONLINE ? 'badge ok' : 'badge off';
-    boxState.textContent = RELAY_ONLINE ? '已安装 · 在线' : '未安装 / 未开启';
-  }
   return RELAY_ONLINE;
 }
 
@@ -3452,30 +3997,84 @@ $('ext-state').onclick = async () => {
 // 每 30 秒自动检测一次（扩展断线时天也不会显示错）
 setInterval(() => { if (!$('view-main').classList.contains('hidden')) refreshExtState(); }, 30000);
 
+// ---------- 扩展 API Key：只显示一次 ----------
+// 面板里存的 Key 不提供「查看」：GET 只回掩码，想换只能重新生成。
+// 生成的明文只活在**本次页面打开期间**（内存里），刷新/重进设置页就只剩掩码 ——
+// 这样即使有人偷看一眼你的屏幕或翻你的浏览器，也拿不到那把钥匙。
+let EXT_KEY_PLAIN = '';   // 刚生成、还没离开页面时的那串明文
+let EXT_KEY_MASK = '';    // 掩码（如 abcd…wxyz）
+let EXT_KEY_HAS = false;
+let EXT_KEY_FROM_SECRET = false;
+
+function paintExtKey() {
+  const input = $('ext-api-key');
+  const btnCopy = $('btn-copy-key');
+  if (!input) return;
+  if (EXT_KEY_PLAIN) {
+    input.value = EXT_KEY_PLAIN;
+    btnCopy.disabled = false;
+  } else {
+    input.value = EXT_KEY_HAS ? EXT_KEY_MASK : '';
+    input.placeholder = EXT_KEY_HAS ? '' : '还没有生成，点下面的按钮';
+    btnCopy.disabled = true;
+  }
+  const st = $('ext-key-state');
+  if (st) {
+    st.textContent = EXT_KEY_FROM_SECRET
+      ? '（由环境变量固定，面板里生成不生效）'
+      : (EXT_KEY_HAS ? '（已设置，只能重新生成）' : '（还没有设置）');
+  }
+  const gen = $('btn-gen-key');
+  if (gen) {
+    gen.disabled = EXT_KEY_FROM_SECRET;
+    gen.title = EXT_KEY_FROM_SECRET
+      ? '当前 Key 来自 Worker Secret EXTERNAL_API_KEY，请到 Cloudflare 控制台删掉它再用面板生成'
+      : '生成新的一把；旧 Key 会立刻失效';
+  }
+}
+
 async function loadExtKey() {
   try {
     const d = await api('/api/ext-key', 'GET');
-    if (d.key) $('ext-api-key').value = d.key;
+    EXT_KEY_MASK = d.masked || '';
+    EXT_KEY_HAS = !!d.has_key;
+    EXT_KEY_FROM_SECRET = !!d.from_secret;
+    // 重进设置页不再显示明文（要的就是「只显示一次」）
+    EXT_KEY_PLAIN = '';
   } catch (e) { /* 忽略 */ }
+  paintExtKey();
   await refreshExtState();
 }
-$('btn-ext-help').onclick = () => $('ext-help').classList.toggle('hidden');
-$('btn-gen-key').onclick = () => {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  $('ext-api-key').value = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+$('btn-gen-key').onclick = async () => {
+  if (EXT_KEY_FROM_SECRET) {
+    return notifyMsg('ext-key-msg', '当前 Key 来自 Worker Secret（EXTERNAL_API_KEY），面板里生成不会生效。请到 Cloudflare 控制台删除该 Secret。', 'bad');
+  }
+  if (!confirm('生成新的一把 API Key？\n\n'
+    + '· 新的这串**只会显示这一次**，关掉页面就看不到了，请立刻复制到扩展里\n'
+    + '· 旧 Key 会**立刻失效**：在你把新 Key 填回扩展之前，扩展会连不上面板')) return;
+  $('btn-gen-key').disabled = true;
+  try {
+    const r = await api('/api/ext-key/rotate', 'POST', {});
+    EXT_KEY_PLAIN = r.key || '';
+    EXT_KEY_HAS = !!EXT_KEY_PLAIN;
+    EXT_KEY_MASK = EXT_KEY_PLAIN ? EXT_KEY_PLAIN.slice(0, 4) + '…' + EXT_KEY_PLAIN.slice(-4) : '';
+    paintExtKey();
+    let copied = false;
+    try { await navigator.clipboard.writeText(EXT_KEY_PLAIN); copied = true; } catch { copied = false; }
+    notifyMsg('ext-key-msg', copied
+      ? '已生成并复制到剪贴板 ✅ 现在去扩展弹窗里粘贴，再点「🔌 面板连接检查」。' + (r.note || '')
+      : '已生成（自动复制没成功，请手动选中上面那串复制）—— 关掉页面后就看不到了。' + (r.note || ''), 'ok');
+  } catch (e) {
+    notifyMsg('ext-key-msg', e.message, 'bad');
+  } finally {
+    $('btn-gen-key').disabled = EXT_KEY_FROM_SECRET;
+  }
 };
 $('btn-copy-key').onclick = async () => {
   const v = $('ext-api-key').value;
-  if (!v) return toast('还没有 Key，先点生成');
+  if (!v) return toast('当前没有可复制的明文 Key（它只在生成时显示一次）');
   try { await navigator.clipboard.writeText(v); toast('API Key 已复制'); }
-  catch { toast('复制失败，请手动复制'); }
-};
-$('btn-save-key').onclick = async () => {
-  try {
-    await api('/api/ext-key', 'PUT', { key: $('ext-api-key').value });
-    toast('API Key 已保存，填到扩展里即可使用');
-  } catch (e) { toast(e.message); }
+  catch { toast('复制失败，请手动选中复制'); }
 };
 
 $('btn-save-settings').onclick = async () => {
@@ -3488,15 +4087,20 @@ $('btn-save-settings').onclick = async () => {
       bark_server: $('set-bark-server').value.trim(),
       webhook_url: $('set-webhook').value.trim(),
     });
-    toast('推送设置已保存'); loadSettings();
-  } catch (e) { toast(e.message); }
+    // 保存后把输入框里的新密钥清空（它已经进库了，留在页面上没好处）
+    $('set-tg-token').value = '';
+    $('set-bark').value = '';
+    $('set-webhook').value = '';
+    toast('推送设置已保存');
+    loadSettings();
+  } catch (e) { toast(e.message); notifyMsg('notify-msg', e.message, 'bad'); }
 };
 
 $('btn-change-pwd').onclick = async () => {
   try {
     await api('/api/change-password', 'POST', { old_password: $('pwd-old').value, new_password: $('pwd-new').value });
     $('pwd-old').value = ''; $('pwd-new').value = '';
-    toast('密码已修改');
+    toast('密码已修改（其它浏览器上的登录状态已全部退出）');
   } catch (e) { toast(e.message); }
 };
 

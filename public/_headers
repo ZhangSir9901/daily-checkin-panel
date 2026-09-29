@@ -1,0 +1,30 @@
+# 静态资源响应头（Cloudflare Workers 会自动读取本文件，它本身不会被当成页面提供）
+#
+# 这些头是给「浏览器打开面板页面」时加的安全保险：
+#   X-Content-Type-Options  不许浏览器把返回内容猜成别的类型（挡「把上传内容当脚本跑」）
+#   X-Frame-Options / frame-ancestors  不许别的网站把面板套进 iframe（挡点击劫持）
+#   Referrer-Policy         跳转到别的网站时不把面板地址带过去
+#   Permissions-Policy      面板用不到摄像头/麦克风/定位，直接关掉
+#   Content-Security-Policy 只允许加载本面板自己的资源（面板用的是内联样式和脚本，所以保留 'unsafe-inline'）
+#
+# 注意：改这里不需要改代码，重新部署即可生效。
+
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+
+# 下载扩展的 zip：不许被浏览器嗅探、也不缓存（保证每次都是当前面板地址）
+/checkin-helper.zip
+  X-Content-Type-Options: nosniff
+  Cache-Control: no-store
+
+/cookie-helper-extension.zip
+  X-Content-Type-Options: nosniff
+  Cache-Control: no-store
+
+/cookie-plugin-2.2.zip
+  X-Content-Type-Options: nosniff
+  Cache-Control: no-store

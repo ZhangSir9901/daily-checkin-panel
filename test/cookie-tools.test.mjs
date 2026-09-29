@@ -142,7 +142,7 @@ t('识别：不认识的内容要报错，不能默默当成 Cookie', () => {
 });
 
 t('explainCookieText：每一段都给出类型 + 中文说明 + 值形态', () => {
-  const raw = 'Cookie: PHPSESSID=abc123; wordpress_logged_in_a=laoguo%7C1730000000%7Cabcdef; wzws_cid=0123456789abcdef0123456789abcdef; _ga=GA1.2.99';
+  const raw = 'Cookie: PHPSESSID=abc123; wordpress_logged_in_a=other-user%7C1730000000%7Cabcdef; wzws_cid=0123456789abcdef0123456789abcdef; _ga=GA1.2.99';
   const info = explainCookieText(raw);
   assert.equal(info.parts.length, 4);
   const byName = Object.fromEntries(info.parts.map((p) => [p.name, p]));
@@ -168,7 +168,7 @@ t('explainCookieText：每一段都给出类型 + 中文说明 + 值形态', () 
 t('体检：一份正常的扩展 JSON → 通过，并说清每一段是什么', () => {
   const info = parsePasteText(JSON.stringify({
     domain: 'dj.hutue.cn',
-    cookies: 'wordpress_logged_in_a=laoguo%7C1; _ga=GA1.2.3',
+    cookies: 'wordpress_logged_in_a=other-user%7C1; _ga=GA1.2.3',
     userAgent: 'UA',
   }));
   const r = globalThis.checkPastedCreds(info);
@@ -214,7 +214,7 @@ t('粘贴没复制全的 JSON：要说“像没复制全”，而不是只报 JS
 t('体检：登录会话已过期 → 提醒（不再硬拦），并给出两条出路', () => {
   const past = Math.floor(Date.now() / 1000) - 3600;
   const r = globalThis.checkPastedCreds({
-    cookie: `wordpress_logged_in_ec35f1949aa62d7b02e78d74b17cb6b5=guo527029137%7C${past}%7Ct%7Ch`,
+    cookie: `wordpress_logged_in_ec35f1949aa62d7b02e78d74b17cb6b5=demo-user%7C${past}%7Ct%7Ch`,
     format: '扩展「一键复制全部信息」', domain: 'hutue.cn',
   });
   assert.equal(r.level, 'warn', '不再判 bad：填了账号密码的站点能自动重新登录，不该把保存按钮封死');

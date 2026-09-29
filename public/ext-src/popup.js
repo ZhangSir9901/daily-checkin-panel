@@ -1,5 +1,5 @@
 // 签到面板 Cookie 助手 - popup.js
-// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 https://daily-checkin-panel.guo527029137.workers.dev 占位符），
+// DEFAULT_PANEL_URL 由面板在用户下载时动态注入（替换 https://your-panel.your-name.workers.dev 占位符），
 // 扩展首次打开时自动带出，用户仍可手动修改。
 const DEFAULT_PANEL_URL = '__PANEL_URL__';
 // API Key 不从下载包里注入：由用户在面板「设置」页复制后手动填入，避免 Key 随文件传播、也方便随时更换。

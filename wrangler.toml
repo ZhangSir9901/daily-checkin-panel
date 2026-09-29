@@ -20,6 +20,11 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "daily-checkin-panel"
-# 由 Cloudflare 仪表盘 / wrangler d1 create 创建的 D1 数据库，填入其 database_id。
-# 下面的值是原作者的库，你自己部署时**必须换成你自己的 database_id**，否则会连不上。
-database_id = "23a3455d-69d7-49ec-a71f-4440dff9957c"
+# 这里要填「你自己」的 D1 数据库 id（一串形如 8-4-4-4-12 的字符）。
+# 怎么拿到：部署前执行下面这条命令，它会把 id 打印出来，复制过来替换这一行即可。
+#
+#   npx wrangler@latest d1 create daily-checkin-panel
+#
+# 懒得手动做也行：直接运行仓库根目录的一键部署脚本 `node deploy.mjs`，
+# 它会自动建库、自动把 id 填到这一行、再自动部署。
+database_id = "REPLACE_ME_WITH_YOUR_OWN_D1_ID"

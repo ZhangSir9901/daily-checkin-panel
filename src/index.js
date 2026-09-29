@@ -2,16 +2,19 @@
 // 认证：单管理员密码（PBKDF2 存 D1），会话为服务端 session + HttpOnly Cookie。
 
 import { ensureSchema, getSetting, setSetting } from './db.js';
-import { hashPassword, verifyPassword, encryptJSON, decryptJSON, randomHex } from './crypto.js';
+import { hashPassword, verifyPassword, encryptJSON, decryptJSON, decryptJSONWith, accountKey, randomHex } from './crypto.js';
 import { handleExtZip } from './ext-zip.js';
 import { runAll, runAccount } from './runner.js';
 import { getSite, siteMeta, getBrowserScript } from './sites/index.js';
 import { listCommunitySites, importSiteConfig, deleteCommunitySite, validateSiteConfig, makeCommunitySite, exportAccountConfig } from './community.js';
-import { getNotifyConfig, setNotifyConfig, sendNotify } from './notify.js';
+import { getNotifyConfig, setNotifyConfig, sendNotify, sendTelegram, telegramChats, validTelegramToken, validTelegramChatId, readNotifyRaw } from './notify.js';
+import { checkPublicHttpUrl, safePublicFetch, isPrivateHost } from './lib/net-guard.js';
+import { credentialExpiry } from './lib/cookie-info.js';
 import { probeSignEndpoints } from './probe.js';
-import { shouldRun, nextLastKey, validHour, validTime, validTz, accountHour, dayInTz, dayStartInTz } from './schedule.js';
+import { shouldRun, nextLastKey, validHour, validTime, validTz, accountHour, dayInTz, dayStartInTz, pastScheduleTime } from './schedule.js';
 import { runHttpSteps } from './sites/http.js';
 import { verifyExternalRequest } from './lib/ext-auth.js';
+import { PANEL_VERSION } from './version.js';
 
 // 外部请求鉴权已迁移到 src/lib/ext-auth.js（API Key + HMAC 签名 + 防重放）。
 
@@ -26,8 +29,24 @@ async function scheduleTz(db) {
 function json(data, status = 200, extra = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', ...extra },
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      // 接口响应一律不缓存；声明不许嗅探类型，避免被当成脚本/HTML 解释
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      ...extra,
+    },
   });
+}
+
+// 解析 Cookie 头。
+//
+// 【必须容错】decodeURIComponent 遇到一个孤零零的 `%`（`Cookie: a=%` 就够了）会抛 URIError。
+// 解析失败会一路冒到入口的 catch → 500 —— 也就是说**任何人不登录、只发一个畸形 Cookie 头
+// 就能让每个接口都回 500**（监控里看就是「面板全线挂掉」，实际什么都没坏）。
+// 解不开的那一段按原文留着：这个值后面要拿去比对会话 id，留着原文不会误判成「已登录」。
+function safeDecode(s) {
+  try { return decodeURIComponent(s); } catch { return s; }
 }
 
 function parseCookies(req) {
@@ -35,9 +54,21 @@ function parseCookies(req) {
   const out = {};
   for (const p of h.split(';')) {
     const i = p.indexOf('=');
-    if (i > 0) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+    if (i > 0) out[p.slice(0, i).trim()] = safeDecode(p.slice(i + 1).trim());
   }
   return out;
+}
+
+// 库里那些「本来就该是 JSON」的列（headers / options / resp_headers）一律宽容解析。
+// 一行坏数据（旧版本写的、手改的、写一半被打断的）不该让整条中继链路瘫掉：
+// 扩展轮询一次 500，面板上看到的就是「本地网络全部失败」，而真正的原因却藏在一行 JSON 里。
+function safeJson(text, fallback = {}) {
+  try {
+    const v = JSON.parse(text);
+    return v == null ? fallback : v;
+  } catch {
+    return fallback;
+  }
 }
 
 function sessionCookie(sid, maxAgeSec) {
@@ -59,21 +90,109 @@ async function authed(env, req) {
 // 请求体只能读一次（流不可重放），这里缓存原始文本：
 // 既供 JSON 解析，又供扩展请求的签名校验（签名要覆盖 body）。
 const RAW_BODY = new WeakMap();
+// 单次请求体上限。面板所有接口最大的输入也就是「多步录制的 JSON」或一整包 Cookie，
+// 512KB 绰绰有余；不设上限的话，一个几百 MB 的 body 就能把 Worker 的内存/CPU 吃掉。
+const MAX_BODY_BYTES = 512 * 1024;
+// 中继回传的响应体上限（base64 字符数，约 300KB 原始字节）。
+// 签到接口的响应都是几十字节的 JSON，这个上限只用来挡住「扩展把整个网页回传回来」那类意外。
+const RELAY_BODY_LIMIT = 400 * 1024;
+// 请求体被截断过的标记（见 readBody）
+const BODY_TRUNCATED = new WeakSet();
+
 async function readBodyRaw(req) {
   if (RAW_BODY.has(req)) return RAW_BODY.get(req);
   let text = '';
   try { text = await req.text(); } catch { text = ''; }
+  if (text.length > MAX_BODY_BYTES) {
+    text = text.slice(0, MAX_BODY_BYTES);
+    BODY_TRUNCATED.add(req);
+  }
   RAW_BODY.set(req, text);
   return text;
 }
 
 async function readBody(req) {
   const text = await readBodyRaw(req);
+  // 【截断的 JSON 不等于「空对象」】带 Content-Length 的超大请求体在上面已经早退（413），
+  // 但**分块传输（chunked）没有这个头**：于是 text 被悄悄切掉一半 → JSON.parse 失败 →
+  // 以前返回 `{}`，调用方拿着空对象照常往下走 —— PUT /api/settings 就是「把你所有通知设置写空」，
+  // 而接口还回 200 OK。现在直接抛错，由入口转成 413，宁可报错也不默默清库。
+  if (BODY_TRUNCATED.has(req)) {
+    const e = new Error('请求体过大（上限 512KB）');
+    e.code = 'BODY_TOO_LARGE';
+    throw e;
+  }
   try {
     return JSON.parse(text);
   } catch {
     return {};
   }
+}
+
+// ---------- 登录限速（防「拿脚本一直猜管理密码」） ----------
+// 面板只有一道管理密码，没有第二因素。所以必须限制试错频率：
+// 同一个来源 15 分钟内错满 8 次，就锁 15 分钟。
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_FAILS = 8;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+
+function clientIp(req) {
+  const raw = String(req.headers.get('CF-Connecting-IP') || req.headers.get('X-Forwarded-For') || 'unknown');
+  return (raw.split(',')[0].trim() || 'unknown').slice(0, 64);
+}
+
+async function loginLockInfo(env, req) {
+  const ip = clientIp(req);
+  try {
+    const row = await env.DB.prepare('SELECT fails, first_at, locked_until FROM login_limits WHERE ip = ?').bind(ip).first();
+    if (!row) return { ip, locked: false, remainMs: 0 };
+    const now = Date.now();
+    if (Number(row.locked_until) > now) return { ip, locked: true, remainMs: Number(row.locked_until) - now };
+    if (now - Number(row.first_at) > LOGIN_WINDOW_MS) return { ip, locked: false, remainMs: 0 };
+    return { ip, locked: false, remainMs: 0, fails: Number(row.fails) || 0 };
+  } catch {
+    // 表还不存在/数据库暂时不可用时不要把人锁在门外
+    return { ip, locked: false, remainMs: 0 };
+  }
+}
+
+async function recordLoginFail(env, req) {
+  const ip = clientIp(req);
+  const now = Date.now();
+  try {
+    const row = await env.DB.prepare('SELECT fails, first_at FROM login_limits WHERE ip = ?').bind(ip).first();
+    let fails = 1;
+    let first = now;
+    if (row && now - Number(row.first_at) <= LOGIN_WINDOW_MS) {
+      fails = (Number(row.fails) || 0) + 1;
+      first = Number(row.first_at);
+    }
+    const lockedUntil = fails >= LOGIN_MAX_FAILS ? now + LOGIN_LOCK_MS : 0;
+    await env.DB.prepare(
+      'INSERT INTO login_limits(ip, fails, first_at, locked_until, updated_at) VALUES(?,?,?,?,?) '
+      + 'ON CONFLICT(ip) DO UPDATE SET fails=excluded.fails, first_at=excluded.first_at, locked_until=excluded.locked_until, updated_at=excluded.updated_at'
+    ).bind(ip, fails, first, lockedUntil, now).run();
+    // 顺手清理过期记录（不需要每次都清）
+    if (Math.random() < 0.1) {
+      await env.DB.prepare('DELETE FROM login_limits WHERE updated_at < ?').bind(now - 86400000).run().catch(() => {});
+    }
+    return { fails, locked: lockedUntil > 0 };
+  } catch {
+    return { fails: 1, locked: false };
+  }
+}
+
+async function clearLoginFail(env, req) {
+  try { await env.DB.prepare('DELETE FROM login_limits WHERE ip = ?').bind(clientIp(req)).run(); } catch { /* 忽略 */ }
+}
+
+// 跨站请求兜底校验。会话 Cookie 是 SameSite=Lax（跨站表单 POST 本来就不带它），
+// 这里再加一道：浏览器带来的 Origin 必须和面板同源。
+// 注意：只有在夹带了会话 Cookie 时才校验 —— 扩展的 API Key 请求是另外一个体系。
+function sameOrigin(req, url) {
+  const origin = req.headers.get('Origin');
+  if (!origin) return true;
+  try { return new URL(origin).host === url.host; } catch { return false; }
 }
 
 async function createSession(env) {
@@ -99,6 +218,26 @@ async function handleApi(req, env, url) {
   const path = url.pathname;
   const method = req.method.toUpperCase();
 
+  // 请求体上限：先看 Content-Length，明显超了就早退（不让后面的代码去读一个超大 body）
+  const contentLength = Number(req.headers.get('Content-Length') || '0') || 0;
+  if (contentLength > MAX_BODY_BYTES) return json({ error: '请求体过大（上限 512KB）' }, 413);
+
+  // 跨站写操作兜底：带了会话 Cookie 的浏览器请求，Origin 必须是本面板
+  if (method !== 'GET' && method !== 'HEAD' && parseCookies(req).sid && !sameOrigin(req, url)) {
+    return json({ error: '跨站请求被拒绝（Origin 与面板不一致）' }, 403);
+  }
+
+  // ---- 首次设置 / 登录：这两步**没有会话 Cookie**，上面那条「带 Cookie 才校验」的兜底正好盖不到 ----
+  //   ├─ /api/setup：全新实例还没有管理密码。任何人诱使面板主人的浏览器打开一个恶意页面，
+  //   │   就能用他的浏览器替你**设一个密码**（你没有做过的初始化）→ 真正的部署者被锁在门外。
+  //   └─ /api/login：登录 CSRF。页面把你的浏览器登成攻击者的账号后，你接下来的所有操作
+  //       都落在别人的账号上（而你自己完全看不出）。
+  // 所以这两条一律要求「浏览器带来的 Origin 与面板同源」。非浏览器客户端（curl / 脚本 / 扩展）
+  // 根本不带 Origin，sameOrigin 会放行 —— 命令行初始化照旧可用。
+  if ((path === '/api/setup' || path === '/api/login') && !sameOrigin(req, url)) {
+    return json({ error: '跨站请求被拒绝（Origin 与面板不一致）' }, 403);
+  }
+
   // 扩展/外部请求鉴权：API Key +（可选）HMAC 签名与防重放。
   // 通过后顺手记下扩展活跃时间，用于面板展示「扩展在线」状态。
   // 返回 null 表示放行；否则返回应直接发回的 401 Response。
@@ -123,7 +262,7 @@ async function handleApi(req, env, url) {
   if (path === '/api/setup' && method === 'POST') {
     if (await getSetting(env.DB, 'admin_hash')) return json({ error: '已经初始化过了' }, 400);
     const { password } = await readBody(req);
-    if (!password || String(password).length < 6) return json({ error: '密码至少 6 位' }, 400);
+    if (!password || String(password).length < 8) return json({ error: '密码至少 8 位' }, 400);
     await setSetting(env.DB, 'admin_hash', await hashPassword(String(password)));
     const sid = await createSession(env);
     return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
@@ -132,8 +271,17 @@ async function handleApi(req, env, url) {
   if (path === '/api/login' && method === 'POST') {
     const hash = await getSetting(env.DB, 'admin_hash');
     if (!hash) return json({ error: '尚未初始化，请先设置管理密码' }, 400);
+    const lock = await loginLockInfo(env, req);
+    if (lock.locked) {
+      return json({ error: `密码尝试次数太多，请在 ${Math.max(1, Math.ceil(lock.remainMs / 60000))} 分钟后再试` }, 429);
+    }
     const { password } = await readBody(req);
-    if (!(await verifyPassword(String(password || ''), hash))) return json({ error: '密码错误' }, 401);
+    if (!(await verifyPassword(String(password || ''), hash))) {
+      const r = await recordLoginFail(env, req);
+      if (r.locked) return json({ error: '密码错误次数过多，已临时锁定 15 分钟' }, 429);
+      return json({ error: `密码错误（还可以再试 ${Math.max(0, LOGIN_MAX_FAILS - r.fails)} 次）` }, 401);
+    }
+    await clearLoginFail(env, req);
     const sid = await createSession(env);
     return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
   }
@@ -147,9 +295,13 @@ async function handleApi(req, env, url) {
     if (!acc) return json({ error: '账号不存在' }, 404);
     // 校验 status 只允许 ok/fail/skip，防止非法值写入
     const validStatus = ['ok', 'fail', 'skip'].includes(status) ? status : 'fail';
+    // 文本字段一律截断：上报通道只能用 API Key 调，但也不该让它往库里灌任意长度的内容
+    const msgText = String(message || '').slice(0, 2000);
+    const detailText = String(detail || '').slice(0, 8000);
+    const dur = Math.max(0, Math.min(Number(duration_ms) || 0, 3600000));
     await env.DB.prepare(
       'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
-    ).bind(acc.id, acc.site, acc.name, validStatus, message || '', detail || '', duration_ms || 0, Date.now()).run();
+    ).bind(acc.id, acc.site, acc.name, validStatus, msgText, detailText, dur, Date.now()).run();
     await env.DB.prepare('DELETE FROM runs WHERE id NOT IN (SELECT id FROM runs ORDER BY id DESC LIMIT 500)').run();
     // 同步更新账号的上次结果；成功时记录今日已签到日期
     const fullAcc = await env.DB.prepare('SELECT meta FROM accounts WHERE id = ?').bind(acc.id).first();
@@ -283,8 +435,17 @@ async function handleApi(req, env, url) {
       if (j) { jobs.push(j); queued.add(acc.id); }
     }
 
-    // ② 自动工单：声明了浏览器签到的站点（如吾爱破解），当天还没签上就交给扩展去导航签到。
+    // ② 自动工单：声明了浏览器签到的站点（如吾爱破解），**到了它自己的签到时间**、
+    //    当天又还没签上，才交给扩展去导航签到。
     //    节流：同一账号至少隔 60 分钟才自动下发一次，避免反复开标签页。
+    //
+    //    【必须按时间放行】以前这里只看「今天还没签上」，于是当地 0 点一过就立刻下发：
+    //    用户把时间设成 08:05，吾爱破解却在半夜就被自动签了（反馈里写着
+    //    「已交给浏览器执行」）—— 看上去就是「吾爱不跟随全局时间」。
+    //    定时任务（cron）本来就只在该跑的时候才跑，这条自动下发也得遵守同一套时间。
+    //    注意：面板上手动点的「浏览器签到」走的是上面 ① 手动队列，不受这里限制。
+    const globalTime = (await getSetting(env.DB, 'schedule_time')) || '08';
+    const panelTz = await scheduleTz(env.DB);
     const { results: autos } = await env.DB.prepare(
       'SELECT * FROM accounts WHERE enabled = 1 ORDER BY id'
     ).all();
@@ -295,6 +456,8 @@ async function handleApi(req, env, url) {
       let m = {};
       try { m = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
       if (m.last_signin_date === today) continue; // 今天已签上，不用再打扰
+      // 还没到它自己的签到时间（或已经超出当天的补跑窗口）→ 不下发
+      if (!pastScheduleTime(new Date(), accountHour(acc.meta, globalTime), panelTz)) continue;
       if (m.browser_job_at && now - m.browser_job_at < 60 * 60 * 1000) continue;
       const j = await jobFor(acc, site);
       if (!j) continue;
@@ -310,9 +473,14 @@ async function handleApi(req, env, url) {
   // 面板页面用短码取回。好处是登录凭据不再进入浏览器地址栏 / 历史记录。
   if (path === '/api/external/handoff' && method === 'POST') {
     const deny = await extGuard();
-    if (deny) return deny;
-    const { domain, cookies, cookieList, userAgent, localStorage, stats } = await readBody(req);
+    if (deny) return deny;      const { domain, cookies, cookieList, userAgent, localStorage, stats } = await readBody(req);
     if (!cookies || !String(cookies).trim()) return json({ error: '没有可交接的 Cookie' }, 400);
+    // 交接内容会整包塞进 D1 的一行里（SQLite 行的理论上限远小于此，超了就是写入报错 500）。
+    // 入口那条 512KB 上限管的是「整个请求体」，这里再给实际要落库的 Cookie 串单独卡一道，
+    // 免得一个超大页面把整个交接搞成「服务异常」。
+    if (String(cookies).length > 200 * 1024) {
+      return json({ error: 'Cookie 内容过大（超过 200KB），请只交接目标站点的 Cookie' }, 413);
+    }
     const code = randomHex(16);
     const now = Date.now();
     await env.DB.prepare('INSERT INTO handoffs(code, payload, created_at, expires_at, used) VALUES(?,?,?,?,0)')
@@ -331,7 +499,9 @@ async function handleApi(req, env, url) {
 
   // 面板页面凭短码取回交接内容：一次性 + 5 分钟过期 + 取完即作废
   if (path.startsWith('/api/handoff/') && method === 'GET') {
-    const code = decodeURIComponent(path.slice('/api/handoff/'.length));
+    // 同样要先容错再校验：`/api/handoff/%` 以前会让 decodeURIComponent 抛错 → 500
+    // （未登录也能触发，监控里只会看到一条「服务异常」）。格式不对的一律按 400 回。
+    const code = safeDecode(path.slice('/api/handoff/'.length));
     if (!/^[A-Za-z0-9]{16,64}$/.test(code)) return json({ error: '交接码格式不正确' }, 400);
     const row = await env.DB.prepare('SELECT code, payload, expires_at, used FROM handoffs WHERE code = ?').bind(code).first();
     if (!row) return json({ error: '交接码不存在或已被使用，请在扩展里重新发送' }, 404);
@@ -355,7 +525,8 @@ async function handleApi(req, env, url) {
       last_seen: Date.now(),
     };
     await setSetting(env.DB, 'ext_status', JSON.stringify(info));
-    return json({ ok: true, server_version: '2.3' });
+    // 版本号统一从 src/version.js 取（以前这里是写死的 '2.3'，和 package.json 对不上）
+    return json({ ok: true, server_version: PANEL_VERSION });
   }
 
   // ---- 扩展领取面板下发的指令（登录协助等）----
@@ -434,6 +605,23 @@ async function handleApi(req, env, url) {
     if (!url || !/^https?:\/\//i.test(String(url))) {
       return json({ error: 'url 非法' }, 400);
     }
+    // 【别让中继变成「用别人家里的网络扫内网」的工具】
+    //
+    // 中继这段代码是在**用户的浏览器里**执行的（扩展），出口就是他的家庭/公司网络。
+    // 以前这里只检查「以 http 开头」，于是拿到 API Key 的人（或者一份恶意社区配置里
+    // 写死的内网地址）就能让面板代它去请求 192.168.1.1/admin、路由器的管理页，
+    // 甚至 169.254.169.254（如果浏览器跑在云主机上）—— 然后把响应正文从
+    // GET /api/external/relay/:id 里原样读走。面板自己那个出站闸门管不到这一段。
+    //
+    // 只拦「字面上的内网/本机地址」，域名照旧放行（公司内网域名要能用）。
+    // 注意：这里也不允许 user:pass@host 这种带凭据的地址 —— 没这个需求，且容易藏东西。
+    let relayUrl = null;
+    try { relayUrl = new URL(String(url)); } catch { relayUrl = null; }
+    if (!relayUrl) return json({ error: 'url 非法' }, 400);
+    if (relayUrl.username || relayUrl.password) return json({ error: '中继地址里不许带用户名/密码' }, 400);
+    if (isPrivateHost(relayUrl.hostname)) {
+      return json({ error: '拒绝中继到内网/本机地址（' + relayUrl.hostname + '）：中继是用你自己的网络发请求，面板不会让它去打内网' }, 400);
+    }
     const id = 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     const now = Date.now();
     await env.DB.prepare(
@@ -472,7 +660,7 @@ async function handleApi(req, env, url) {
       status: 'done',
       response: {
         status: job.resp_status,
-        headers: JSON.parse(job.resp_headers || '{}'),
+        headers: safeJson(job.resp_headers, {}),
         body_base64: job.resp_body || '',
       },
     });
@@ -513,9 +701,9 @@ async function handleApi(req, env, url) {
         id: j.id,
         url: j.url,
         method: j.method,
-        headers: JSON.parse(j.headers || '{}'),
+        headers: safeJson(j.headers, {}),
         body_base64: j.body || null,
-        options: JSON.parse(j.options || '{}'),
+        options: safeJson(j.options, {}),
       }));
     };
     // 记录扩展最后轮询时间，用于判断扩展是否在线（自动中继）；
@@ -550,11 +738,27 @@ async function handleApi(req, env, url) {
       await env.DB.prepare("UPDATE relay_jobs SET status='failed', error=?, updated_at=? WHERE id=? AND status IN ('pending','running')")
         .bind(String(error).slice(0, 500), now, mRelayResult[1]).run();
     } else {
+      // 回传的字段全部要过一道闸：这是唯一会写进 relay_jobs 的入口，
+      // 一行写进去的东西之后会被 waitRelayResult 拼成「网站的响应」交给站点模块判断。
+      // 以前三者都是原样落库：
+      //   ├─ body_base64 可以塞几百 KB（同步写库 + 之后每次解码）；
+      //   ├─ 不是合法 base64 的串会让运行时的 atob 直接抛错，报出来的是「Invalid character」；
+      //   └─ status 可以写 99999，面板上就显示一个不存在的状态码。
+      const rawBody = body_base64 ? String(body_base64) : '';
+      if (rawBody.length > RELAY_BODY_LIMIT) {
+        return json({ error: '回传的响应体过大（上限 300KB），请只回传签到接口的响应' }, 413);
+      }
+      if (rawBody && !/^[A-Za-z0-9+/=\s]+$/.test(rawBody)) {
+        return json({ error: '响应体不是合法的 base64' }, 400);
+      }
+      const st = Number(status) || 0;
+      if (st < 0 || st > 599) return json({ error: '状态码不合法' }, 400);
+      const hdr = JSON.stringify(headers && typeof headers === 'object' ? headers : {});
       await env.DB.prepare("UPDATE relay_jobs SET status='done', resp_status=?, resp_headers=?, resp_body=?, updated_at=? WHERE id=? AND status IN ('pending','running')")
         .bind(
-          Number(status) || 0,
-          JSON.stringify(headers || {}),
-          body_base64 ? String(body_base64) : '',
+          st,
+          hdr.slice(0, 8 * 1024),
+          rawBody,
           now,
           mRelayResult[1]
         ).run();
@@ -587,15 +791,18 @@ async function handleApi(req, env, url) {
     const { author } = await readBody(req);
     await setSetting(env.DB, 'community_author', String(author || '').slice(0, 60));
     return json({ ok: true });
-  }
-  if (path === '/api/sites/community' && method === 'POST') {
+  }    if (path === '/api/sites/community' && method === 'POST') {
     const body = await readBody(req);
     let raw = body.config;
     const url = String(body.url || '').trim();
     if (!raw && url) {
-      if (!/^https?:\/\//i.test(url)) return json({ error: '链接必须是 http(s) 开头' }, 400);
+      // 只允许抓公网 http(s) 地址：不能让这个接口变成「探内网」的工具。
+      // 注意要用 safePublicFetch 而不是裸 fetch —— 裸 fetch 会自动跟随重定向，
+      // 一个公网短链回一句 Location: http://169.254.169.254/… 就绕过了这里的校验。
+      const got = await safePublicFetch(url, { headers: { Accept: 'application/json,text/plain,*/*' } });
+      if (!got.ok) return json({ error: got.error }, 400);
       try {
-        const r = await fetch(url, { headers: { Accept: 'application/json,text/plain,*/*' } });
+        const r = got.res;
         if (!r.ok) return json({ error: `拉取配置失败：HTTP ${r.status}` }, 502);
         raw = (await r.text()).slice(0, 200000);
       } catch (e) {
@@ -664,8 +871,12 @@ async function handleApi(req, env, url) {
 
   // 账号列表（不含凭据，含 meta 以便前端渲染站点独立开关）
   if (path === '/api/accounts' && method === 'GET') {
+    // 【creds 也要一并取出来，但绝不回传给前端】——
+    // 「鼠标悬浮站点名看凭据到期时间」需要解密凭据才能算（WordPress 会话把到期时间写在
+    // cookie 值里、Akile 的 JWT 写在 exp 里），所以顺手在这一趟里算好、只回结论，
+    // 算完立刻 delete acc.creds（见下面第二趟循环）。
     const { results } = await env.DB.prepare(
-      'SELECT id, name, site, enabled, meta, last_status, last_msg, last_detail, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
+      'SELECT id, name, site, enabled, creds, meta, last_status, last_msg, last_detail, last_run_at, created_at, updated_at FROM accounts ORDER BY id'
     ).all();
     const accounts = results || [];
     // ---- 账号行的「状态 + 反馈」自洽性修复（读列表顺手做，不需要用户点任何按钮）----
@@ -706,6 +917,20 @@ async function handleApi(req, env, url) {
       }
       await env.DB.prepare('UPDATE accounts SET meta=?, last_msg=?, last_status=?, last_detail=?, updated_at=? WHERE id=?')
         .bind(acc.meta, acc.last_msg, acc.last_status, acc.last_detail || '', Date.now(), acc.id).run();
+    }
+    // ---- 凭据到期时间（鼠标悬浮站点名时的那句话）----
+    // 单独一趟：上面那一趟里有 `continue`（今天已经签上的账号会提前跳过），
+    // 把这件事混进去会让**已经签到的账号反而看不到有效期** —— 而它恰恰是最该看到的（说明还能撐多久）。
+    let encKey = null;
+    for (const acc of accounts) {
+      const enc = acc.creds;
+      delete acc.creds; // 密文（以及任何明文）都不发回前端
+      if (!enc) continue;
+      try {
+        if (!encKey) encKey = await accountKey(env, env.DB);
+        const exp = credentialExpiry(await decryptJSONWith(encKey, enc));
+        if (exp.sessions.length || exp.tokens.length) acc.cred_exp = exp;
+      } catch { /* 凭据解不开（例如换过 ENCRYPT_KEY）不该让整个账号列表挂掉 */ }
     }
     return json({ accounts });
   }
@@ -758,6 +983,21 @@ async function handleApi(req, env, url) {
       const { name, site, creds, enabled } = await readBody(req);
       const s = getSite(site || acc.site, await loadCustomSites(env));
       if (!s) return json({ error: '未知站点' }, 400);
+      // 【换了站点就别再留着上一个站点的凭据】以前 site 能改、creds 不传，
+      // 于是库里会出现「站点是 A、凭据是 B 的」这种账号：面板上一点异常都看不出来，
+      // 但每次执行必然失败（拿着 B 的 Cookie 去打 A 的接口），用户只会觉得「莫名其妙签不上」。
+      if (site && String(site) !== String(acc.site) && !creds) {
+        return json({ error: '更换站点后要重新填写凭据（旧站点的 Cookie 不能给新站点用）' }, 400);
+      }
+      // 【必填项校验】POST 那条路一直有，PUT 漏了：于是「改账号时把一个必填项留空」能存进库，
+      // 之后每次执行都失败，而面板要到执行那一刻才报错。用和新增完全一样的规则挡在保存前。
+      if (creds) {
+        for (const f of s.fields) {
+          if (f.required && !String((creds && creds[f.key]) ?? '').trim()) {
+            return json({ error: `缺少必填项：${f.label}` }, 400);
+          }
+        }
+      }
       const enc = creds ? await encryptJSON(env, env.DB, creds) : acc.creds;
       await env.DB.prepare('UPDATE accounts SET name=?, site=?, creds=?, enabled=?, updated_at=? WHERE id=?')
         .bind(
@@ -918,13 +1158,25 @@ async function handleApi(req, env, url) {
   }
 
   // 签到接口自动探测：输入网站首页，自动寻找候选签到接口
+  // 面板出口连通性：从 Cloudflare 打几个常见站点（账号页「全局签到」卡右边那排小圆点）
+  if (path === '/api/net-check' && method === 'GET') {
+    const { checkNet } = await import('./lib/net-check.js');
+    try {
+      return json(await checkNet());
+    } catch (e) {
+      return json({ error: '检测失败：' + String((e && e.message) || e) }, 502);
+    }
+  }
+
   if (path === '/api/probe' && method === 'POST') {
     const { url, cookie } = await readBody(req);
     if (!url || !/^https?:\/\//i.test(String(url).trim())) {
       return json({ error: '请填写 http(s) 开头的网站地址' }, 400);
     }
+    const chk = checkPublicHttpUrl(String(url).trim());
+    if (!chk.ok) return json({ error: chk.error }, 400);
     try {
-      const r = await probeSignEndpoints({ url: String(url).trim(), cookie: String(cookie || '') });
+      const r = await probeSignEndpoints({ url: chk.url.href, cookie: String(cookie || '') });
       return json({ ok: true, ...r });
     } catch (e) {
       return json({ error: '探测失败：' + String((e && e.message) || e) }, 502);
@@ -955,11 +1207,59 @@ async function handleApi(req, env, url) {
 
   // 通知设置
   if (path === '/api/settings' && method === 'GET') {
-    return json({ settings: await getNotifyConfig(env.DB) });
+    return json({ settings: await getNotifyConfig(env, env.DB) });
   }
   if (path === '/api/settings' && method === 'PUT') {
-    await setNotifyConfig(env.DB, await readBody(req));
+    const b = await readBody(req);
+    // 保存前先把明显填错的挡下来：与其等哪天日报发不出去，不如现在就告诉你是哪一格
+    const token = String(b.telegram_bot_token || '').trim();
+    if (token && !validTelegramToken(token)) {
+      return json({ error: 'Telegram Bot Token 格式不对。找 @BotFather 复制完整的一串，形如 123456789:AAE...' }, 400);
+    }
+    const chat = b.telegram_chat_id !== undefined ? String(b.telegram_chat_id || '').trim() : '';
+    if (chat && !validTelegramChatId(chat)) {
+      return json({ error: 'Chat ID 应该是一串数字（群/频道是负数），或 @频道名。不确定就点「自动获取」' }, 400);
+    }
+    // 出站地址（Webhook / Bark 服务器）也要过闸门。
+    // 这两格以前只查了「以 http(s):// 开头」，而它们是**面板自己会去 POST 的地址**：
+    // 填一个内网地址，每次签到日报就变成一次对内网的探测（而且会把签到结果发过去）。
+    // 反正 Worker 根本连不上内网，与其等到「推送失败」再排查，不如保存时就说清楚。
+    for (const [field, label] of [['webhook_url', 'Webhook 地址'], ['bark_server', 'Bark 服务器']]) {
+      const v = String(b[field] || '').trim();
+      if (!v) continue; // 空 = 用默认值，不拦
+      const chk = checkPublicHttpUrl(v);
+      if (!chk.ok) return json({ error: `${label}不可用：${chk.error}` }, 400);
+    }
+    await setNotifyConfig(env, env.DB, b);
+    return json({ ok: true, settings: await getNotifyConfig(env, env.DB) });
+  }
+
+  // ---- 推送：发一条测试消息（只发 Telegram，不打扰其它渠道） ----
+  if (path === '/api/notify-test' && method === 'POST') {
+    const b = await readBody(req);
+    const raw = await readNotifyRaw(env, env.DB);
+    // 允许「直接用页面上刚填、还没保存」的值来测试，省一步
+    const token = String(b.telegram_bot_token || '').trim() || raw.telegram_bot_token;
+    const chat = b.telegram_chat_id !== undefined ? String(b.telegram_chat_id || '').trim() : raw.telegram_chat_id;
+    if (!token) return json({ error: '请先填写 Telegram Bot Token' }, 400);
+    if (!chat) return json({ error: '请先填写 Chat ID（不确定就点「自动获取」）' }, 400);
+    const now = new Date(Date.now() + 8 * 3600 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+    const r = await sendTelegram(token, chat, '签到面板 · 测试消息', '收到这条消息就说明推送配置成功了 ✅\n发送时间（北京时间）：' + now);
+    if (!r.ok) return json({ error: r.error }, 502);
     return json({ ok: true });
+  }
+
+  // ---- 推送：自动获取 Telegram Chat ID ----
+  // 读取这个 Bot 最近收到过消息的会话。这也是最快搞清楚「Chat ID 填什么」的办法。
+  if (path === '/api/notify-telegram-chats' && method === 'POST') {
+    const b = await readBody(req);
+    const raw = await readNotifyRaw(env, env.DB);
+    const token = String(b.telegram_bot_token || '').trim() || raw.telegram_bot_token;
+    if (!token) return json({ error: '请先填写 Telegram Bot Token' }, 400);
+    if (!validTelegramToken(token)) return json({ error: 'Bot Token 格式不对，形如 123456789:AAE...' }, 400);
+    const r = await telegramChats(token);
+    if (!r.ok) return json({ error: r.error || '读取失败', chats: [] }, 502);
+    return json({ ok: true, chats: r.chats, hint: r.chats.length ? '' : (r.error || '') });
   }
 
   // NodeSeek 模式（前端设置用）
@@ -974,18 +1274,37 @@ async function handleApi(req, env, url) {
     return json({ ok: true });
   }
 
-  // 扩展用 API Key（前端设置页管理，需登录）
+  // ---- 扩展用 API Key ----
+  // 【只显示一次】Key 在生成的那一刻回一次明文，之后任何时候都只能看到掩码。
+  // 以前 GET 直接把完整 Key 回给浏览器：任何一次 XSS / 恶意扩展 / 共享屏幕
+  // 都能把那串钥匙拿走（它能指挥用户的浏览器用他的登录态发请求）。
+  // 而且它**只能重新生成**，不提供「查看」。
   if (path === '/api/ext-key' && method === 'GET') {
     const key = (await getSetting(env.DB, 'external_api_key')) || '';
-    // 只返回掩码版本，前端显示时可选择查看完整（已登录用户可信）
-    return json({ key, masked: key ? key.slice(0, 4) + '****' + key.slice(-4) : '' });
+    // 用环境变量固定下来的 Key（来自 Worker Secret）：面板里生成不会生效，必须如实告诉用户
+    const fromSecret = !!(env.EXTERNAL_API_KEY);
+    return json({
+      has_key: !!key || fromSecret,
+      masked: fromSecret ? '（由环境变量 EXTERNAL_API_KEY 固定）' : (key ? key.slice(0, 4) + '…' + key.slice(-4) : ''),
+      from_secret: fromSecret,
+      created_at: Number((await getSetting(env.DB, 'external_api_key_at')) || 0) || null,
+      // 老前端会读 key 这个字段：故意回空串，不再把明文交出去
+      key: '',
+    });
   }
-  if (path === '/api/ext-key' && method === 'PUT') {
-    const { key } = await readBody(req);
-    const k = String(key || '').trim();
-    if (!k || k.length < 16) return json({ error: 'Key 至少 16 位' }, 400);
-    await setSetting(env.DB, 'external_api_key', k);
-    return json({ ok: true });
+  if (path === '/api/ext-key/rotate' && method === 'POST') {
+    if (env.EXTERNAL_API_KEY) {
+      return json({ error: '这个面板把 API Key 固定成了环境变量（EXTERNAL_API_KEY），面板里生成不会生效。请到 Cloudflare 控制台删掉这个 Secret 后再试。' }, 400);
+    }
+    const key = randomHex(24); // 48 位十六进制，够随机也好复制
+    await setSetting(env.DB, 'external_api_key', key);
+    await setSetting(env.DB, 'external_api_key_at', String(Date.now()));
+    // 明文只在这一刻回一次
+    return json({
+      ok: true,
+      key,
+      note: '这串 Key 只显示这一次，关掉页面后就看不到了。请立刻复制到扩展弹窗里保存。',
+    });
   }
 
   // 中继状态（扩展是否在线 + 队列里堆了多少）：前端展示用
@@ -1007,9 +1326,14 @@ async function handleApi(req, env, url) {
     if (!(await verifyPassword(String(old_password || ''), hash || ''))) {
       return json({ error: '原密码错误' }, 401);
     }
-    if (!new_password || String(new_password).length < 6) return json({ error: '新密码至少 6 位' }, 400);
-    await setSetting(env.DB, 'admin_hash', await hashPassword(String(new_password)));
-    return json({ ok: true });
+    const np = String(new_password || '');
+    if (np.length < 8) return json({ error: '新密码至少 8 位' }, 400);
+    await setSetting(env.DB, 'admin_hash', await hashPassword(np));
+    // 【重要】改密码 = 把以前所有登录过的浏览器踢下线。
+    // 否则「觉得密码泄露了、于是改密码」这件事根本不起作用 —— 偷到的那份会话还能用 7 天。
+    await env.DB.prepare('DELETE FROM sessions').run().catch(() => {});
+    const sid = await createSession(env);
+    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
   }
 
   // ---- 扩展连接状态（面板展示用）----
@@ -1082,6 +1406,11 @@ async function handleApi(req, env, url) {
     const login = meta.login || {};
     const loginUrl = login.url || (meta.domain ? 'https://' + meta.domain + '/' : '');
     if (!loginUrl) return json({ error: '该站点没有登记登录地址，请手动在浏览器打开站点登录后再用扩展抓取' }, 400);
+    // 登录地址来自站点元数据（社区站点的话就是「别人的 JSON」）。
+    // 不能让一份恶意配置把扩展导航到 http://127.0.0.1:xxxx/ 这类地方 ——
+    // 那个页面是攻击者控制的，而扩展会在上面执行抓取 Cookie 的脚本。
+    const loginChk = checkPublicHttpUrl(loginUrl);
+    if (!loginChk.ok) return json({ error: '这个站点登记的登录地址不能用：' + loginChk.error }, 400);
     const cid = 'c_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
     const now = Date.now();
     await env.DB.prepare('INSERT INTO ext_commands(id, kind, account_id, domain, login_url, payload, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
@@ -1094,6 +1423,21 @@ async function handleApi(req, env, url) {
   return json({ error: '未知接口' }, 404);
 }
 
+// 由 Worker 自己生成的那些响应（zip 下载、404 等）也补上安全头。
+// 静态页面（public/）的头由同目录的 _headers 文件负责，两边保持一致。
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'DENY',
+  'Permissions-Policy': 'geolocation=(), microphone=(), camera=(), payment=(), usb=(), interest-cohort=()',
+};
+function harden(res) {
+  if (!res || !res.headers) return res;
+  const h = new Headers(res.headers);
+  for (const k of Object.keys(SECURITY_HEADERS)) if (!h.has(k)) h.set(k, SECURITY_HEADERS[k]);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
 export default {
   async fetch(req, env, ctx) {
     try {
@@ -1101,18 +1445,22 @@ export default {
       await ensureSchema(env.DB);
       if (url.pathname.startsWith('/api/')) return await handleApi(req, env, url);
       // 扩展下载：动态生成 zip，把当前面板地址注入进去（扩展自动带出面板地址；API Key 仍需手动填）
-      if (url.pathname === '/cookie-helper-extension.zip') return await handleExtZip(req, env);
+      if (url.pathname === '/cookie-helper-extension.zip') return harden(await handleExtZip(req, env));
       // 旧地址保留（老书签/老文档照旧能下）；新地址不再带版本号
-      if (url.pathname === '/checkin-helper.zip') return await handleExtZip(req, env);
-      if (url.pathname === '/cookie-plugin-2.2.zip') return await handleExtZip(req, env);
+      if (url.pathname === '/checkin-helper.zip') return harden(await handleExtZip(req, env));
+      if (url.pathname === '/cookie-plugin-2.2.zip') return harden(await handleExtZip(req, env));
       // 非 API 请求交给静态资源（public 目录）
       if (env.ASSETS) {
         const res = await env.ASSETS.fetch(req);
         // 静态资源存在则直接返回；不存在才回退到 index.html（SPA）
+        // 注意这里**故意不包 harden()**：静态资源的头由 public/_headers 管，
+        // 在 Worker 里再包一层会把那些规则盖掉（官方文档明确说 _headers 不作用于 Worker 生成的响应）。
         if (res.status !== 404) return res;
       }
-      return new Response('Not Found', { status: 404 });
+      return harden(new Response('Not Found', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } }));
     } catch (e) {
+      // 请求体超限（分块传输绕过了 Content-Length 早退）也要报 413，而不是含混的 500
+      if (e && e.code === 'BODY_TOO_LARGE') return json({ error: '请求体过大（上限 512KB）' }, 413);
       return json({ error: '服务异常：' + String((e && e.message) || e) }, 500);
     }
   },
