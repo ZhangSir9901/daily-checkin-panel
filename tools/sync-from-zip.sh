@@ -1,7 +1,8 @@
 #!/bin/bash
 # 从用户上传的 zip 同步代码到仓库，并推送到 GitHub。
-# 关键保护：用户的 zip 里 wrangler.toml 是开源模板版（database_id 为占位符），
-# 同步后必须恢复真正的 D1 database_id，否则 Cloudflare 自动部署会失败。
+# 开源后：wrangler.toml 里保持占位符 REPLACE_ME_WITH_YOUR_OWN_D1_ID（不提交真 ID）。
+# 用户自己的线上部署靠 Cloudflare 仪表盘里配好的 D1 绑定（会覆盖 wrangler.toml），
+# 所以这里不再恢复真 ID。仪表盘绑定配好之前不要推送，否则自动部署会失败。
 #
 # 用法：bash tools/sync-from-zip.sh <zip路径> ["<commit信息>"]
 set -e
@@ -14,10 +15,6 @@ if [ -z "$ZIP" ] || [ ! -f "$ZIP" ]; then
   exit 1
 fi
 
-# 真正的 D1 database_id（Cloudflare 仪表盘创建的 daily-checkin-panel 库）。
-# 注意：绝不能提交占位符 REPLACE_ME_WITH_YOUR_OWN_D1_ID，否则线上部署失败。
-REAL_DB_ID="23a3455d-69d7-49ec-a71f-4440dff9957c"
-
 TMPDIR=$(mktemp -d)
 trap "rm -rf '$TMPDIR'" EXIT
 unzip -q "$ZIP" -d "$TMPDIR/unzipped"
@@ -28,13 +25,10 @@ unzip -q "$ZIP" -d "$TMPDIR/unzipped"
 rsync -a --delete \
   --exclude='.git' --exclude='node_modules' --exclude='.wrangler' \
   --exclude='tools/sync-from-zip.sh' --exclude='.github/' \
+  --exclude='wrangler.toml' \
   "$TMPDIR/unzipped/" ./
 
-# 恢复真正的 database_id（zip 里的是模板占位符）
-if grep -q 'REPLACE_ME_WITH_YOUR_OWN_D1_ID' wrangler.toml 2>/dev/null; then
-  sed -i "s/database_id = \"REPLACE_ME_WITH_YOUR_OWN_D1_ID\"/database_id = \"$REAL_DB_ID\"/" wrangler.toml
-  echo "已恢复 wrangler.toml 中的真正 D1 database_id"
-fi
+# wrangler.toml 已排除：开源仓库里永远保持占位符，不碰。
 
 # 重新生成扩展静态文件
 node tools/gen-ext-files.mjs

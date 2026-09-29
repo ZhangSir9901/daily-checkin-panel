@@ -51,6 +51,12 @@ npx wrangler@latest d1 list
 - 免费额度：5GB 存储、每天 500 万次读 / 10 万次写 —— 签到面板这点量用不到 1%。
 - 想换库：把 `database_id` 换成新库的 id 重新部署即可（旧数据不会自动搬过去）。
 
+> **用 Git 自动部署的人注意**：仓库里的 `wrangler.toml` 是占位符，开源后不会再提交真实 ID。
+> 推送前先去 Cloudflare 仪表盘配一次 D1 绑定（只配一次，以后推送都不用管）：
+> Worker 详情 → **设置 → 绑定 → 添加绑定** → 类型选 **D1 数据库** → 变量名填 `DB` →
+> 数据库选你自己的 `daily-checkin-panel` → 保存。仪表盘的绑定会覆盖 `wrangler.toml` 里的占位符，
+> 配好后再推送就不会报 `binding DB of type d1 must have a valid database_id`。
+
 ---
 
 ## 3. 变量与密钥（到底要加哪些）
