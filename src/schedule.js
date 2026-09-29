@@ -22,7 +22,12 @@ export function tzParts(date, tz) {
   });
   const p = {};
   for (const x of fmt.formatToParts(date)) p[x.type] = x.value;
-  return { day: `${p.year}-${p.month}-${p.day}`, hour: p.hour, minute: p.minute };
+  // 兼容旧版 ICU：hourCycle 'h23' 在午夜 00 点可能返回 hour "24"（Node 20 实测，
+  // 此时 day 仍是当天），直接归一化为 "00" 即为正确墙上时间。
+  // 不修的话，每天 00:00–00:59 的签到时刻判断会整体错位 1440 分钟
+  // （nowMin 被算成 24*60+min），导致该时段的定时签到被静默跳过。
+  const hour = p.hour === '24' ? '00' : p.hour;
+  return { day: `${p.year}-${p.month}-${p.day}`, hour, minute: p.minute };
 }
 
 // 当前（指定时区，默认 Asia/Shanghai）的日期 "YYYY-MM-DD"。

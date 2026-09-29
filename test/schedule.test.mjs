@@ -76,6 +76,15 @@ t('UTC 时区换算', () => {
   assert.equal(r.run, true);
 });
 
+t('tzParts：午夜小时兼容（旧版 ICU 返回 "24" 要归一化为 "00"）', () => {
+  // 回归测试：在 Node 20 这类旧 ICU 上，tzParts(midnight, 'UTC').hour 会是 "24"，
+  // 不归一化会导致 shouldRun 把 00:30 算成 24:30（见「UTC 时区换算」）。
+  const p = tzParts(new Date('2026-09-27T00:00:00Z'), 'UTC');
+  assert.equal(p.day, '2026-09-27');
+  assert.equal(p.hour, '00');
+  assert.equal(p.minute, '00');
+});
+
 t('非法时区回退上海', () => {
   const r = shouldRun(D0830, '08:30', 'Invalid/TZ', null);
   assert.equal(r.run, true);
