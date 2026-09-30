@@ -54,6 +54,25 @@ node deploy.mjs
 
 ---
 
+## Docker 部署（家里 NAS / 软路由 / 常开主机）
+
+什么时候选它：想用 **Telegram 签到**（只有 Docker 版能跑），或想走**家里宽带的 IPv6**（NodeSeek 这类站点在 Cloudflare 机房网络下不稳定）。
+
+```bash
+cp .env.example .env   # 可选：填 ENCRYPT_KEY（openssl rand -base64 32 生成；不填面板自动生成）
+docker compose up -d
+```
+
+打开 `http://你的IP:8787`，首次设置管理密码，之后用法和 Cloudflare 版完全一样。数据全在 `./data/checkin.sqlite` 一个文件里，备份拷走就行。
+
+- 镜像：`nameguoguo/daily-checkin-panel`（amd64+arm64，NAS/树莓派能用），每次 push 代码后 CI 自动构建推送；
+- 更新：`docker compose pull && docker compose up -d`；
+- 默认 host 网络模式（直接拿主机 IPv6，给 NodeSeek 直连用），Mac/Windows 的 Docker Desktop 请用 Linux 主机。
+
+完整说明（Telegram 签到步骤、反向代理、常见问题）→ [docker/README.md](docker/README.md)。
+
+---
+
 ## 部署完还要做 4 件事
 
 **1. 打开面板设置管理密码**（至少 8 位）。⚠️ 记到密码管理器里，忘了没法找回。
@@ -156,6 +175,7 @@ node deploy.mjs
 | 文件 | 内容 |
 |---|---|
 | [docs/Cloudflare部署清单.md](docs/Cloudflare部署清单.md) | 部署要填什么：D1 名字、绑定名、`database_id`、各变量 |
+| [docker/README.md](docker/README.md) | Docker 部署完整说明：快速开始、配置、更新、host 网络、Telegram 签到、反向代理、FAQ |
 | [docs/详细手册.md](docs/详细手册.md) | 手动部署、执行模式、内置站点、社区适配、FAQ、备份与结构 |
 | [SECURITY.md](SECURITY.md) / [CONTRIBUTING.md](CONTRIBUTING.md) | 安全说明 / 怎么贡献一个站点适配 |
 | [CHANGELOG.md](CHANGELOG.md) | 每一版改了什么 |
