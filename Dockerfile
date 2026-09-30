@@ -9,10 +9,11 @@ WORKDIR /app
 
 # telegram（gramjs）是 Telegram 签到（MTProto 用户身份）要用的；
 # 其他站点零依赖，node:sqlite 是 Node 24 内置模块。
-# --omit=optional：跳过 ws 的 bufferutil 等可选原生包（纯 JS 回退即可用，
-# 避免 slim 镜像里没有 Python 导致 node-gyp 编译失败）。
+# --ignore-scripts：telegram 把 bufferutil 列为普通依赖，slim 镜像里没有 Python，
+#   装它会触发 node-gyp 编译失败；跳过安装脚本后 bufferutil/utf-8-validate
+#   会自动用纯 JS 回退（fallback.js），功能不受影响。
 COPY package.json ./
-RUN npm install --omit=dev --omit=optional --no-audit --no-fund
+RUN npm install --omit=dev --omit=optional --ignore-scripts --no-audit --no-fund
 COPY src/ ./src/
 COPY public/ ./public/
 COPY docker/ ./docker/
