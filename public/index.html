@@ -1364,16 +1364,26 @@ async function boot() {
   else { show('view-main'); await initMain(); }
 }
 
+// 登录/初始化接口返回 200 不等于浏览器真的存下了 Cookie
+// （比如经 http 访问时服务端误发 Secure Cookie，浏览器会直接拒收）。
+// 进主界面前先确认一次，存不上就明说，不让页面卡在"加载中..."。
+async function ensureSession() {
+  const s = await api('/api/status');
+  if (s.logged_in) return true;
+  toast('登录没生效：浏览器没存下登录 Cookie。请确认直接用 http(s) 打开面板（不要嵌在别的页面里），或换个浏览器试试');
+  return false;
+}
+
 $('btn-setup').onclick = async () => {
   const a = $('setup-pwd').value, b = $('setup-pwd2').value;
   if (a.length < 8) return toast('密码至少 8 位');
   if (a !== b) return toast('两次输入不一致');
-  try { await api('/api/setup', 'POST', { password: a }); show('view-main'); await initMain(); }
+  try { await api('/api/setup', 'POST', { password: a }); if (await ensureSession()) { show('view-main'); await initMain(); } }
   catch (e) { toast(e.message); }
 };
 
 $('btn-login').onclick = async () => {
-  try { await api('/api/login', 'POST', { password: $('login-pwd').value }); show('view-main'); await initMain(); }
+  try { await api('/api/login', 'POST', { password: $('login-pwd').value }); if (await ensureSession()) { show('view-main'); await initMain(); } }
   catch (e) { toast(e.message); }
 };
 $('login-pwd').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-login').click(); });

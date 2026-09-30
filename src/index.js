@@ -72,8 +72,16 @@ function safeJson(text, fallback = {}) {
   }
 }
 
-function sessionCookie(sid, maxAgeSec) {
-  return `sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${maxAgeSec}`;
+// Secure 只在真正的 https 下加：局域网 http（如 NAS 的 http://192.168.x.x:8787）
+// 下浏览器会直接拒收 Secure Cookie，导致「登录成功却所有接口 401、页面一直加载中」。
+// 反向代理（Caddy/nginx）后看 X-Forwarded-Proto 识别 https。
+function sessionCookie(sid, maxAgeSec, req) {
+  let secure = false;
+  try {
+    const proto = (req.headers.get('x-forwarded-proto') || new URL(req.url).protocol || '').toLowerCase();
+    secure = proto === 'https:' || proto === 'https';
+  } catch { /* 识别不出就按 http 处理，至少保证局域网能用 */ }
+  return `sid=${encodeURIComponent(sid)}; Path=/; HttpOnly; SameSite=Lax;${secure ? ' Secure;' : ''} Max-Age=${maxAgeSec}`;
 }
 
 async function authed(env, req) {
@@ -272,7 +280,7 @@ async function handleApi(req, env, url) {
     if (!password || String(password).length < 8) return json({ error: '密码至少 8 位' }, 400);
     await setSetting(env.DB, 'admin_hash', await hashPassword(String(password)));
     const sid = await createSession(env);
-    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
+    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000, req) });
   }
 
   if (path === '/api/login' && method === 'POST') {
@@ -290,7 +298,7 @@ async function handleApi(req, env, url) {
     }
     await clearLoginFail(env, req);
     const sid = await createSession(env);
-    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
+    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000, req) });
   }
 
   // ---- 外部上报接口（VM 定时任务 / 浏览器扩展用 API Key 认证，不走 session） ----
@@ -906,7 +914,7 @@ async function handleApi(req, env, url) {
   if (path === '/api/logout' && method === 'POST') {
     const sid = parseCookies(req).sid;
     if (sid) await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sid).run();
-    return json({ ok: true }, 200, { 'Set-Cookie': 'sid=; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=0' });
+    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie('', 0, req) });
   }
 
   if (path === '/api/me' && method === 'GET') return json({ logged_in: true });
@@ -1468,7 +1476,7 @@ async function handleApi(req, env, url) {
     // 否则「觉得密码泄露了、于是改密码」这件事根本不起作用 —— 偷到的那份会话还能用 7 天。
     await env.DB.prepare('DELETE FROM sessions').run().catch(() => {});
     const sid = await createSession(env);
-    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000) });
+    return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie(sid, SESSION_TTL_MS / 1000, req) });
   }
 
   // ---- 扩展连接状态（面板展示用）----
