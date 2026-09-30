@@ -10,6 +10,8 @@
   <a href="CONTRIBUTING.md"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-ffb020"></a>
 </p>
 
+> 💬 遇到签到问题 / 想提建议？先来这里：[NodeSeek 使用反馈收集帖](https://www.nodeseek.com/post-956355-1#1)（反馈集中收集，留言前先看看有没有人遇到过）
+
 ---
 
 ## 部署到 Cloudflare（纯网页，不用装任何东西）
