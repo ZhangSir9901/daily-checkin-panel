@@ -2,7 +2,7 @@
 # 每日签到面板 — 一键安装 / 更新（家用 NAS / Linux 主机）
 #
 # 用法（SSH 连上 NAS 后粘贴这一行）：
-#   curl -fsSL https://raw.githubusercontent.com/guoxpeng/daily-checkin-panel/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/guoxpeng/daily-checkin-panel/master/install.sh | bash
 #
 # 做了什么：
 #   1. 检查 docker、docker compose 是否可用
