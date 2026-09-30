@@ -1200,10 +1200,9 @@ async function handleApi(req, env, url) {
   }
 
   // 账号执行模式切换：PUT /api/accounts/:id/execution
-  // 在 跟随默认 → browser → relay → server → 跟随默认 之间循环
-  // browser：扩展在用户浏览器中执行完整签到脚本（用户网络）
-  // relay：Worker 保留站点逻辑，HTTP 经扩展用用户本地网络执行（中继代理）
-  // server：Worker 直接请求（云端 IP）
+  // 在 跟随默认 → browser → server → 跟随默认 之间循环
+  // browser：扩展在用户浏览器中执行完整签到脚本 / 经扩展中继 HTTP（真浏览器环境）
+  // server：面板本机直接请求（CF 版是机房 IP，Docker 版是 NAS 的家庭 IP）
   const mExec = path.match(/^\/api\/accounts\/(\d+)\/execution$/);
   if (mExec && method === 'PUT') {
     const id = Number(mExec[1]);
@@ -1212,21 +1211,21 @@ async function handleApi(req, env, url) {
     let meta = {};
     try { meta = JSON.parse(acc.meta || '{}'); } catch { /* 忽略 */ }
     const cur = meta.execution || '';
-    // 「本地网络」只有浏览器扩展在线时才可用（扩展才是真正的本地网络中继）。
+    // 「本地网络 / 浏览器中继」只有浏览器扩展在线时才可用（扩展才是真正的浏览器环境）。
     const { isRelayAvailable } = await import('./lib/relay.js');
     const relayOk = await isRelayAvailable(env.DB);
     let next;
     const { target: want = '' } = await readBody(req);
     if (want === 'local') {
-      if (!relayOk) return json({ error: '浏览器扩展当前离线，现在不能切换到「本地网络」。请先安装并打开扩展（顶部会显示在线状态），再试。' }, 400);
+      if (!relayOk) return json({ error: '浏览器扩展当前离线，现在不能切换到「' + (env.RUNTIME === 'docker' ? '浏览器中继' : '本地网络') + '」。请先安装并打开扩展（顶部会显示在线状态），再试。' }, 400);
       next = 'browser';
     } else if (want === 'cf') {
       next = 'server';
     } else if (want === 'default') {
       next = '';
     } else {
-      // 无参时循环切换：''（跟随默认） → 本地网络 → CF 网络 → ''
-      // 扩展离线时跳过「本地网络」这一档，避免切到一个根本跑不了的模式里出不来
+      // 无参时循环切换：''（跟随默认） → 浏览器中继/本地网络 → 本机直连/CF 网络 → ''
+      // 扩展离线时跳过「浏览器中继」这一档，避免切到一个根本跑不了的模式里出不来
       next = cur === '' ? 'browser' : cur === 'browser' ? 'server' : '';
       if (next === 'browser' && !relayOk) next = 'server';
     }
