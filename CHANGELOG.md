@@ -14,6 +14,17 @@
 ### 修复
 - 
 
+## [2.18.0] - 2026-09-30
+
+### 新增
+- Docker 运行方式：一套代码两种跑法，`docker compose up -d` 即可在本地/NAS/服务器上跑面板。`docker/server.mjs` 把 Worker 的 fetch/scheduled 原样跑在 Node 24 上，`docker/adapter.mjs` 用 Node 内置 `node:sqlite` 实现 D1 兼容层（prepare/bind/run/all/first/batch，batch 事务性），静态资源走 `public/` 目录并沿用 `public/_headers` 头规则与 SPA 回退。数据全在 `./data/checkin.sqlite` 一个文件里，备份拷走就行。ENCRYPT_KEY 可选（不填面板自动生成存库，`openssl rand -base64 32` 生成）。CI（`.github/workflows/docker.yml`）在每次 push 后自动构建多架构镜像（amd64+arm64）推送到 Docker Hub（`nameguoguo/daily-checkin-panel`），不需要人工 `docker push`；服务器上 `docker compose pull && docker compose up -d` 更新，或加 `--profile auto-update` 让 watchtower 全自动更新。说明见 `docker/README.md`。
+- Telegram 签到（**Docker 版专属**）：用 MTProto（gramjs）以「你的 Telegram 账号」身份，给指定的 TG 机器人/群发签到指令（如 `/checkin`），读 bot 回执判定成功/已签到。Cloudflare Workers 没有 TCP socket 跑不了这个，所以新站 `src/sites/telegram.js` 声明了 `requiresNode`，runner 在 Workers 上会直接给明确提示（"需要 Docker 版"）而不空转重试。首次用 `docker exec -it <容器> node docker/telegram-login.mjs` 交互登录一次拿 Session（api_id/api_hash 去 my.telegram.org 申请），粘到面板账号里即可。Dockerfile 构建时 `npm install` 装 `telegram` 依赖（CI 自检不需要装，模块里是动态 import）。步骤见 `docker/README.md「Telegram 签到」`。
+- Docker 默认改用 host 网络模式：容器直接用主机的网络栈，拿到 IPv6 出口。之前默认的 bridge 是纯 IPv4，而 NodeSeek 会把无 IPv6 的请求踢到 IPv6 提示页，导致 Docker 直连签到也失败（和 CF 机房一样）。Mac/Windows 的 Docker Desktop 不支持 host 模式，请用 Linux 主机；改回 bridge 的方法写在 `docker-compose.yml` 注释和 `docker/README.md「网络模式」` 里。
+- README 文档表新增 [NodeSeek 使用反馈收集帖](https://www.nodeseek.com/post-956355-1#1)。
+
+### 修复
+- 
+
 ## [2.17.1] - 2026-09-30
 
 ### 新增

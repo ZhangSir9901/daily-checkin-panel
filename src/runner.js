@@ -50,6 +50,27 @@ export { applyCookieRefresh };
 // 执行路线的对外名字（面板「网站反馈」里会带上，排障时一眼能看出这次请求从哪个网络出去）
 export const ROUTE_NAME = { server: 'CF 直连', relay: '本地网络' };
 
+// 是否跑在 Node.js 上（Docker 版 / 本地 node）。
+// Cloudflare Workers 里没有 process.versions.node（且 navigator.userAgent 带 Cloudflare-Workers），
+// 需要 TCP 长连接的站点（如 Telegram 的 MTProto）只能在这里返回 true 的环境跑。
+export function isNodeRuntime() {
+  try {
+    if (typeof navigator !== 'undefined' && /cloudflare-workers/i.test(navigator.userAgent || '')) return false;
+    return typeof process !== 'undefined' && !!(process.versions && process.versions.node);
+  } catch {
+    return false;
+  }
+}
+
+// 纯函数：要不要因为「需要 Node.js」拦截这个站点。onNode 由调用方传 isNodeRuntime()，
+// 抽出来是为了单测能确定性地覆盖 Workers/Node 两种分支。
+export function needNodeSkip(site, onNode) {
+  if (site && site.requiresNode && !onNode) {
+    return `${site.name}：需要 Docker 版才能跑（要 TCP 长连接，Cloudflare Workers 没有）。请用 docker compose 部署后再启用此账号，步骤见 docker/README.md「Telegram 签到」。`;
+  }
+  return null;
+}
+
 // 把一条路线的失败压成几个字，给面板上那一行用。
 //
 // 为什么要压：面板「网站反馈」列一行只有两百多像素宽，把 `HTTP 403 Forbidden
@@ -199,6 +220,23 @@ export async function runAccount(env, account) {
   try {
     const site = getSite(account.site, customSites);
     if (!site) throw new Error('未知站点：' + account.site);
+    // 需要 Node.js 的站点（如 Telegram 签到用的 MTProto 要 TCP 长连接）：
+    // Cloudflare Workers 没有 TCP，进路线解析没有意义 —— 直接记一条说清楚的失败，
+    // 不重试（retryable: false），免得每 15 分钟空转一次还写一堆看不懂的日志。
+    const needNodeMsg = needNodeSkip(site, isNodeRuntime());
+    if (needNodeMsg) {
+      const now = Date.now();
+      const duration = now - t0;
+      await db
+        .prepare('INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)')
+        .bind(account.id, account.site, account.name, 'fail', needNodeMsg, '', duration, now)
+        .run();
+      await db
+        .prepare('UPDATE accounts SET last_status=?, last_msg=?, last_run_at=?, meta=?, updated_at=? WHERE id=?')
+        .bind('fail', needNodeMsg, now, JSON.stringify(meta), now, account.id)
+        .run();
+      return { status: 'fail', message: needNodeMsg, duration_ms: duration, retryable: false };
+    }
     // 先把凭据解出来：路线默认值可能是**按站点地址**决定的（见下面的 executionFor），
     // 同一个站点模块可能管着多个域名，默认路线不一定相同。
     const creds = await decryptJSON(env, db, account.creds);

@@ -157,6 +157,7 @@ node deploy.mjs
 | [docs/详细手册.md](docs/详细手册.md) | 手动部署、执行模式、内置站点、社区适配、FAQ、备份与结构 |
 | [SECURITY.md](SECURITY.md) / [CONTRIBUTING.md](CONTRIBUTING.md) | 安全说明 / 怎么贡献一个站点适配 |
 | [CHANGELOG.md](CHANGELOG.md) | 每一版改了什么 |
+| [NodeSeek 使用反馈收集帖](https://www.nodeseek.com/post-956355-1#1) | 用户反馈集中收集（遇到签到问题先来这里看看/留言） |
 
 ```bash
 node tools/verify.mjs        # 自检：语法 + HTML 配对 + DOM 引用 + 全部单测（CI 跑的是它）
@@ -165,7 +166,7 @@ node tools/release.mjs minor # 发版：自检 → 升版本号 → 写 CHANGELO
 ```
 
 `.github/workflows/` 里：`ci.yml` 每次推送/PR 自检；`release.yml` 推 `v*` tag 自动发 Release；
-`deploy.yml` 是可选手动部署（默认只 dry-run）。零第三方依赖，所以 CI 不需要 `npm install`。
+`deploy.yml` 是可选手动部署（默认只 dry-run）。自检不需要 `npm install`（`telegram` 依赖只在站点模块里动态 import，只有 Docker 镜像构建时才装）。
 
 ```
 wrangler.toml  部署配置（数据库 id、定时触发器）      deploy.mjs  一键部署脚本
