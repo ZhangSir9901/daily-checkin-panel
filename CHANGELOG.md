@@ -14,6 +14,14 @@
 ### 修复
 - 
 
+## [2.19.1] - 2026-09-30
+
+### 新增
+- 
+
+### 修复
+- Cloudflare 构建失败：Telegram 签到（Docker 专属）的 gramjs 动态 import 被 esbuild 静态分析到，试图把 net/fs 等 Node 内置模块打进 Workers 包，导致 v2.18.0 起所有 CF 构建失败、线上一直停在 v2.17.1。现改用变量拼模块名让打包器跳过（Workers 上该路径本就被 requiresNode 拦截、永远不会执行；Docker/Node 运行时 import 验证通过）。
+
 ## [2.19.0] - 2026-09-30
 
 ### 新增

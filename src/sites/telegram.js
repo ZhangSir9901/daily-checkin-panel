@@ -46,14 +46,21 @@ export function judgeTelegramReply(text, creds) {
   throw err;
 }
 
+// gramjs（telegram 包）内部 require 了 net/fs 等 Node 内置模块，Workers 里根本没有。
+// esbuild 会静态分析 import() 的字符串字面量并试图打包 —— 必须让它分析不出来，
+// 否则整个 CF 构建都会挂（2026-09-30 实测：v2.18.0 起所有构建因此失败，线上停在 v2.17.1）。
+// 所以这里用变量拼模块名：esbuild 遇到非常量 specifier 会原样保留为运行时 import。
+// 安全性：Workers 上这个函数永远不会被调用（runner 的 requiresNode 提前拦截，
+// 见 needNodeSkip），只有 Docker/Node 运行时才会真正执行到这里，而那里 telegram 包是装好了的。
+const TG_PKG = 'tele' + 'gram';
 // 默认客户端工厂：真连 Telegram（gramjs）。动态 import ——
 // 顶层静态 import 'telegram' 会让 Cloudflare Workers 在加载站点注册表时就炸，
 // 而这个模块在 Workers 上只是「被注册、从不被执行」。
 async function defaultTgFactory({ apiId, apiHash, session }) {
   const [{ TelegramClient }, { StringSession }, { NewMessage }] = await Promise.all([
-    import('telegram'),
-    import('telegram/sessions/index.js'),
-    import('telegram/events/index.js'),
+    import(TG_PKG),
+    import(TG_PKG + '/sessions/index.js'),
+    import(TG_PKG + '/events/index.js'),
   ]);
   const client = new TelegramClient(new StringSession(session), apiId, apiHash, {
     connectionRetries: 3,

@@ -1,6 +1,6 @@
 {
   "name": "daily-checkin-panel",
-  "version": "2.19.0",
+  "version": "2.19.1",
   "private": true,
   "description": "跑在 Cloudflare Workers 上的自动签到面板：网页后台管账号 + D1 存储 + 定时签到 + 推送通知",
   "type": "module",
