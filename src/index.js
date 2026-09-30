@@ -262,7 +262,8 @@ async function handleApi(req, env, url) {
   // ---- 公开接口 ----
   if (path === '/api/status' && method === 'GET') {
     const hash = await getSetting(env.DB, 'admin_hash');
-    return json({ setup_needed: !hash, logged_in: await authed(env, req) });
+    const runtime = env.RUNTIME === 'docker' ? 'docker' : 'workers';
+    return json({ setup_needed: !hash, logged_in: await authed(env, req), runtime });
   }
 
   if (path === '/api/setup' && method === 'POST') {

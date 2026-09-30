@@ -992,7 +992,7 @@
            常年占着账号页最底下一大块（还要读它的在线状态），不如集中到设置里。 -->
 
       <div class="foot">
-        <b>签到面板</b> · 跑在 Cloudflare Workers 上（免费额度就够）
+        <b>签到面板</b> · <span id="foot-runtime">跑在 Cloudflare Workers 上（免费额度就够）</span>
         <span class="dot">·</span>
         <a href="https://github.com/guoxpeng/daily-checkin-panel" target="_blank" rel="noreferrer">github.com/guoxpeng/daily-checkin-panel</a>
         <br>
@@ -1358,6 +1358,7 @@ function show(view) {
 
 async function boot() {
   const s = await api('/api/status');
+  if (s.runtime === 'docker') $('foot-runtime').textContent = '跑在 Docker 上';
   if (s.setup_needed) show('view-setup');
   else if (!s.logged_in) show('view-login');
   else { show('view-main'); await initMain(); }

@@ -34,11 +34,12 @@ if (process.env.ENCRYPT_KEY) {
 }
 mkdirSync(dirname(DB_PATH), { recursive: true });
 
-// 和 Cloudflare 上的 env 对齐：只有这四个绑定/变量。
+// 和 Cloudflare 上的 env 对齐：DB/ASSETS/密钥 保持一致，另加 RUNTIME 标识运行环境。
 const env = {
   DB: createD1(DB_PATH),
   ASSETS: createAssets(PUBLIC_DIR),
   ENCRYPT_KEY: process.env.ENCRYPT_KEY,
+  RUNTIME: 'docker',
 };
 if (process.env.EXTERNAL_API_KEY) env.EXTERNAL_API_KEY = process.env.EXTERNAL_API_KEY;
 
