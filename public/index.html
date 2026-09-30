@@ -2636,8 +2636,13 @@ async function checkCookieHash() {
 async function applyRecordDraft(d) {
   const r = (d && d.record) || {};
   if (!r.url) return toast('录制内容缺少请求地址，请重新录制');
-  $('f-site').value = 'http';
   await openModal();
+  // 注意顺序：必须先 openModal 再选站点 —— openModal 里 renderModalSites() 会重建
+  // 站点下拉框，在它之前设 f-site 会被吞掉（下拉框那时可能还是空的），表单就会错
+  // 渲染成别的站点（比如夸克网盘），录制的 url / method / headers 全填不进去还静默丢失。
+  $('f-site').value = 'http';
+  renderFields('http', {});
+  liveFormCheck();
   const host = hostOf(r.url || d.pageUrl || '');
   if (!$('f-name').value) $('f-name').value = (host || '录制') + '签到';
   setField('url', r.url || '');

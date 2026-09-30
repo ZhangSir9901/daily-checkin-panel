@@ -459,4 +459,20 @@ t('鼠标悬浮站点名 → 弹出凭据到期时间', () => {
   assert.match(html, /\.site-head b\.site-name \{ cursor:help; border-bottom:1px dotted/, '点线底线是可悬浮的唯一暗示');
 });
 
+t('扩展「录制签到」回填：必须先 openModal 再选「自定义 HTTP」站点', () => {
+  // 【线上真 bug，2026-09-30】applyRecordDraft 以前是反的：先 $('f-site').value='http'，
+  // 再 await openModal()。但 openModal 里 renderModalSites() 会重建站点下拉框，
+  // 在它之前设的值会被吞掉（下拉框那时可能还是空的）→ 表单错渲染成第一个站点
+  // （夸克网盘），录制的 url / method / headers 全填不进去还静默丢失，
+  // 用户只看到一个备注名对、站点错的表单：「站点没有自动选择适配」。
+  const m = html.match(/async function applyRecordDraft\(d\) \{([\s\S]*?)\n\}/);
+  assert.ok(m, '要找得到 applyRecordDraft');
+  const body = m[1];
+  const openIdx = body.indexOf('await openModal()');
+  const siteIdx = body.indexOf("$('f-site').value = 'http'");
+  assert.ok(openIdx !== -1 && siteIdx !== -1, '两行都要在');
+  assert.ok(openIdx < siteIdx, '必须先 openModal()，再设 f-site 为 http（反了会被 renderModalSites 吞掉）');
+  assert.match(body, /renderFields\('http', \{\}\)/, '设完站点要重渲染字段，不然还是旧站点的表单');
+});
+
 console.log(`\n${n} 通过`);
