@@ -95,7 +95,7 @@ docker exec -it daily-checkin-panel node docker/telegram-login.mjs
 
 扩展里的「面板地址」填 `http://你的IP:8787`（或域名）。注意两点：
 
-1. 扩展要求面板地址是 **https**，回环地址（localhost/127.0.0.1）除外。局域网用 `http://192.168.x.x:8787` 时扩展会拒绝保存，这是扩展的安全规则。解法：反向代理加 https（下面有 Caddy 示例），或在跑容器的本机用 `http://localhost:8787`。
+1. 公网地址必须用 **https**；**局域网地址可以用 http**（如 `http://192.168.x.x:8787`，流量不出内网）。想要公网 https 就配反向代理（下面有 Caddy 示例）。
 2. 「📥 下载扩展」按钮注入的是你当前访问的地址，用什么地址打开面板，扩展里就带出什么地址。
 
 ## 反向代理（可选，Caddy 示例）
