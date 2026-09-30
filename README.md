@@ -58,12 +58,22 @@ node deploy.mjs
 
 什么时候选它：想用 **Telegram 签到**（只有 Docker 版能跑），或想走**家里宽带的 IPv6**（NodeSeek 这类站点在 Cloudflare 机房网络下不稳定）。
 
+**一键安装**（SSH 连上 NAS，粘贴这一行）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/guoxpeng/daily-checkin-panel/master/install.sh | bash
+```
+
+脚本会：检查 docker → 建 `~/daily-checkin-panel` 目录 → 下载最新配置 → 生成 `.env` → 拉镜像启动。装完浏览器打开 `http://你的NAS_IP:8787`，首次设置管理密码，之后用法和 Cloudflare 版完全一样。数据全在 `./data/checkin.sqlite` 一个文件里，备份拷走就行。**重复跑一遍就是更新**（数据不受影响）。
+
+<details>
+<summary>手动安装（不想用脚本的话）</summary>
+
 ```bash
 cp .env.example .env   # 可选：填 ENCRYPT_KEY（openssl rand -base64 32 生成；不填面板自动生成）
 docker compose up -d
 ```
-
-打开 `http://你的IP:8787`，首次设置管理密码，之后用法和 Cloudflare 版完全一样。数据全在 `./data/checkin.sqlite` 一个文件里，备份拷走就行。
+</details>
 
 - 镜像：`nameguoguo/daily-checkin-panel`（amd64+arm64，NAS/树莓派能用），每次 push 代码后 CI 自动构建推送；
 - 更新：`docker compose pull && docker compose up -d`；

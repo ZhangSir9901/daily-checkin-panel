@@ -21,6 +21,8 @@ services:
     environment:
       # 不填也行（面板会自动生成存库）；填了就用你的（openssl rand -base64 32）
       ENCRYPT_KEY: ${ENCRYPT_KEY:-}
+      # host 网络模式下容器直接监听主机的这个端口
+      PORT: ${PORT:-8787}
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       # 数据（SQLite + WAL）全在这个目录里，备份拷走就行
@@ -29,7 +31,7 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     restart: unless-stopped
 
-  # 全自动更新（可选）：每 5 分钟检查 GHCR，有新镜像就拉取并重启 panel。
+  # 全自动更新（可选）：每 5 分钟检查 Docker Hub，有新镜像就拉取并重启 panel。
   # watchtower 只会更新打了 enable 标签的容器，不会动你机器上别的容器。
   # 启用：docker compose --profile auto-update up -d
   watchtower:

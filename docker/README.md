@@ -11,13 +11,23 @@
 
 ## 快速开始
 
+**一键安装**（SSH 连上 NAS/主机，粘贴这一行；重复跑一遍就是更新，数据不受影响）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/guoxpeng/daily-checkin-panel/master/install.sh | bash
+```
+
+装完打开 `http://你的IP:8787`，首次会让你设置管理密码，之后和 Cloudflare 版用法完全一样。
+
+<details>
+<summary>手动安装（不想用脚本的话）</summary>
+
 ```bash
 cp .env.example .env
 # 可选：填 ENCRYPT_KEY（openssl rand -base64 32 生成；不填面板会自动生成存库）
 docker compose up -d
 ```
-
-打开 `http://你的IP:8787`，首次会让你设置管理密码，之后和 Cloudflare 版用法完全一样。
+</details>
 
 ## 配置说明（.env）
 
