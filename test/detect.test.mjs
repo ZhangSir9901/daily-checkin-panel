@@ -115,4 +115,14 @@ await t('DETECT_SITE_NAMES：识别结果里的站点都有中文名', () => {
   }
 });
 
+await t('自动识别→打标签：认出糊涂鳄后，站点声明的 dayTz=UTC 能直接打出「UTC 日界」胶囊', async () => {
+  // 面板按站点 id 查 dayTz 渲染胶囊（public/index.html 的 dayTzChip），这里验证
+  // 识别结果里的 site id 确实对应到声明了 dayTz 的站点模块 —— 链条不断。
+  const { getSite } = await import('../src/sites/index.js');
+  const r = detectSite(null, ['wordpress_logged_in_xyz'], [], 'hutue.cn');
+  assert.equal(r.site, 'hutue');
+  assert.equal(r.confidence, 'high');
+  assert.equal(getSite(r.site).dayTz, 'UTC');
+});
+
 console.log(`\n${n} 组通过`);

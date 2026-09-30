@@ -1544,7 +1544,7 @@ if (chrome.windows && chrome.windows.onRemoved && typeof chrome.windows.onRemove
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM_NAME) runJobs();
   if (alarm.name === RELAY_ALARM) startRelayBurst();
-  if (alarm.name === REC_ALARM) recStop();
+  if (alarm.name === REC_ALARM) recTimeout();
 });
 
 // 扩展安装/启动时设置定时器
@@ -1635,7 +1635,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (!d || d.tabId < 0) return;
     recGet().then((rec) => {
       if (!rec || d.tabId !== rec.tabId) return;
-      if (Date.now() > rec.deadline) { recStop(); return; }
+      if (Date.now() > rec.deadline) { recTimeout(); return; }
       // 只要同站点的 XHR/fetch：录制开始前页面加载的杂请求大多已发完，
       // 开始后第一个同站 XHR 极大概率就是用户亲手点的那次签到。
       if (d.type !== 'xmlhttprequest') return;
@@ -1651,6 +1651,56 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders']
 );
 
+// 录制小日志：成功 / 超时 / 交接失败都往面板发一条，面板「日志」里能看到
+// 本次录制抓到了什么、错在哪，方便调试陌生站点。
+// 只记请求头「名字」（值里可能有 Cookie 等凭据，不进日志）；请求体只留前 300 字。
+function buildRecordLogText(o) {
+  const lines = ['[扩展录制] ' + new Date().toLocaleString('zh-CN', { hour12: false })];
+  if (o.pageUrl) lines.push('页面：' + o.pageUrl);
+  if (o.captured) {
+    lines.push('抓到：' + (o.method || 'GET') + ' ' + (o.url || ''));
+    const names = Object.keys(o.headers || {});
+    lines.push('请求头(' + names.length + ')：' + (names.slice(0, 20).join(', ') || '无'));
+    const b = String(o.body || '');
+    lines.push('请求体(' + b.length + 'B)：' + (b ? b.slice(0, 300) : '空'));
+  }
+  if (o.error) lines.push('错误：' + o.error);
+  if (o.note) lines.push(o.note);
+  return lines.join('\n');
+}
+
+async function sendRecordLog(rec, info) {
+  try {
+    await fetch(rec.panelUrl + '/api/external/record-log', {
+      credentials: 'omit',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Api-Key': rec.apiKey },
+      body: JSON.stringify({
+        ok: !!info.ok,
+        summary: String(info.summary || '').slice(0, 200),
+        detail: String(info.detail || '').slice(0, 8192),
+      }),
+    });
+  } catch { /* 记日志失败不影响主流程：面板不可达时本来也记不进去 */ }
+}
+
+// 录制超时：90 秒内没抓到请求。以前这里是静默的（用户只看到录制自己停了），
+// 现在往面板记一条失败日志，写清可能原因，方便排查。
+async function recTimeout() {
+  const rec = await recGet();
+  await recStop();
+  if (!rec) return; // 已经结束或被手动取消，不重复记
+  sendRecordLog(rec, {
+    ok: false,
+    summary: '录制超时：90 秒内没有抓到签到请求',
+    detail: buildRecordLogText({
+      pageUrl: rec.pageUrl,
+      error: '90 秒内没有抓到同站点的 XHR 请求',
+      note: '可能原因：没有点签到按钮 / 签到请求不是 XHR（如整页跳转）/ 请求发到了别的域名。',
+    }),
+  });
+}
+
 async function finishRecording(rec, d, pend) {
   await recStop();
   const headers = {};
@@ -1659,6 +1709,9 @@ async function finishRecording(rec, d, pend) {
     if (!k || /^(content-length|host)$/i.test(k)) continue; // fetch 会自己算，不让用户配
     headers[k] = String((h && h.value) || '');
   }
+  const method = pend.method || d.method || 'GET';
+  const url = d.url;
+  const bodyText = pend.body || '';
   const payload = {
     kind: 'record',
     pageUrl: rec.pageUrl,
@@ -1666,14 +1719,14 @@ async function finishRecording(rec, d, pend) {
     cookies: rec.cookies || '',
     userAgent: rec.userAgent || '',
     record: {
-      method: pend.method || d.method || 'GET',
-      url: d.url,
+      method,
+      url,
       headers,
-      body: pend.body || '',
+      body: bodyText,
     },
   };
   // 和「一键发送」走同一条一次性交接码通道：凭据不进地址栏，短码 5 分钟有效、取一次作废。
-  let code = '';
+  let code = '', err = '';
   try {
     const resp = await fetch(rec.panelUrl + '/api/external/handoff', {
       credentials: 'omit',
@@ -1681,8 +1734,30 @@ async function finishRecording(rec, d, pend) {
       headers: { 'Content-Type': 'application/json', 'X-Api-Key': rec.apiKey },
       body: JSON.stringify(payload),
     });
-    if (resp.ok) { const j = await resp.json().catch(() => null); code = (j && j.code) || ''; }
-  } catch { /* 面板不可达：本次录制作废，用户重新录一次 */ }
+    if (resp.ok) {
+      const j = await resp.json().catch(() => null);
+      code = (j && j.code) || '';
+      if (!code) err = '面板没有返回交接码';
+    } else {
+      err = '面板返回 HTTP ' + resp.status;
+    }
+  } catch (e) { err = '面板不可达（' + ((e && e.message) || '网络错误') + '）：本次录制作废，请重录一次'; }
+  // 录制小日志发面板：抓到请求记一条（交接失败也记，写清错在哪）
+  let host = '';
+  try { host = new URL(url).hostname; } catch { /* 忽略 */ }
+  const headerCount = Object.keys(headers).length;
+  sendRecordLog(rec, {
+    ok: !!code,
+    summary: code
+      ? `录到 ${method} ${host}（${headerCount} 个请求头，请求体 ${bodyText.length}B）`
+      : '录制抓到请求，但发面板失败：' + err,
+    detail: buildRecordLogText({
+      pageUrl: rec.pageUrl,
+      captured: true, method, url, headers, body: bodyText,
+      error: err,
+      note: code ? '交接码已生成（5 分钟有效）：面板会自动打开并预填自定义 HTTP 表单。' : '',
+    }),
+  });
   if (code) { try { chrome.tabs.create({ url: rec.panelUrl + '#handoff=' + code }); } catch { /* 忽略 */ } }
 }
 

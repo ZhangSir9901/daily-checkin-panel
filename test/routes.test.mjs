@@ -240,6 +240,7 @@ await t('外部接口（扩展用）没有 API Key 时一律 401 —— 一条�
   const routes = [
     ['POST', '/api/external/report', { account_id: 1, status: 'ok', message: 'x' }],
     ['POST', '/api/external/handoff', { domain: 'a.com' }],
+    ['POST', '/api/external/record-log', { ok: true, summary: 'x' }],
     ['POST', '/api/external/hello', {}],
     ['GET', '/api/external/commands', undefined],
     ['GET', '/api/external/relay-pending?wait=0', undefined],

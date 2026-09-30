@@ -607,6 +607,29 @@ async function handleApi(req, env, url) {
     return json({ ok: true, code, expires_in: 300 });
   }
 
+  // ---- 扩展录制小日志（扩展 → 面板日志）----
+  // 录制结束时（抓到请求 / 90 秒超时无抓获 / 交接失败）扩展 POST 一条小日志，
+  // 写进 runs（site='record'，account_id 为空），面板「日志」页直接能看到
+  // 本次录制抓到了什么、错在哪 —— 调试陌生站点时不用再猜。
+  // 日志只留最近 100 条，D1 不会被撑大。
+  if (path === '/api/external/record-log' && method === 'POST') {
+    const deny = await extGuard();
+    if (deny) return deny;
+    const body = await readBody(req);
+    const summary = String(body.summary || '').slice(0, 200).trim();
+    const detail = String(body.detail || '').slice(0, 8192);
+    if (!summary && !detail) return json({ error: '日志内容为空' }, 400);
+    const ok = body.ok === true;
+    const now = Date.now();
+    await env.DB.prepare(
+      'INSERT INTO runs(account_id, site, name, status, message, detail, duration_ms, created_at) VALUES(?,?,?,?,?,?,?,?)'
+    ).bind(null, 'record', '🎬 扩展录制', ok ? 'ok' : 'fail', summary || '（无摘要）', detail, 0, now).run();
+    await env.DB.prepare(
+      "DELETE FROM runs WHERE site = 'record' AND id NOT IN (SELECT id FROM runs WHERE site = 'record' ORDER BY id DESC LIMIT 100)"
+    ).run().catch(() => {});
+    return json({ ok: true });
+  }
+
   // 面板页面凭短码取回交接内容：一次性 + 5 分钟过期 + 取完即作废
   if (path.startsWith('/api/handoff/') && method === 'GET') {
     // 同样要先容错再校验：`/api/handoff/%` 以前会让 decodeURIComponent 抛错 → 500

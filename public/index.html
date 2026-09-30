@@ -444,6 +444,8 @@
                cursor:help; white-space:nowrap;
                background:rgba(91,140,255,.1); border:1px solid rgba(91,140,255,.32); color:var(--accent2); }
   .hint-chip:hover { background:rgba(91,140,255,.2); border-color:var(--accent); }
+  /* 状态格：状态徽章在上、日界胶囊在下，竖着排（横着拼太挤，窄屏下会换行错位） */
+  .status-stack { display:inline-flex; flex-direction:column; align-items:center; gap:5px; }
   /* 上次运行：固定两行（日期 / 时刻），每行都不折行，列宽稳定、不要横向滚动条 */
   /* 站点名字号略收，让「站点」列不再因长名（如“吾爱破解”）推挤后面的列 */
   .site-head b { font-size:13px; }
@@ -2663,6 +2665,7 @@ async function initMain() {
 
 // ---------- 账号 ----------
 function siteName(id) {
+  if (id === 'record') return '扩展录制'; // 录制小日志（site='record'）不是账号，不在站点列表里
   const s = SITES.find((x) => x.id === id);
   return s ? s.name : id;
 }
@@ -2972,7 +2975,7 @@ async function loadAccounts() {
     <tr>
       <td class="site-cell" data-label="站点" data-exec-cell="${a.id}">${execCell}</td>
       <td class="c" data-label="全局签到"><div class="sched-cell"><div data-tp-acc="${a.id}" title="点一下给这个账号单独设时间；不点就一直跟全局（当前全局签到 ${GLOBAL_HOUR}）"></div></div></td>
-      <td class="c" data-label="状态">${statusBadge}${dayTzChip}</td>
+      <td class="c" data-label="状态"><span class="status-stack">${statusBadge}${dayTzChip}</span></td>
       <td class="msg" data-label="网站反馈"><div class="msg-main"${rawTip}>${msgShow ? esc(msgShow) : '-'}${bySite ? '<span class="msg-by">网站原话</span>' : ''}</div>${rawShow ? `<div class="msg-raw" data-tip="网站原始返回：${esc(rawText.slice(0, 600))}">${esc(rawShow)}</div>` : ''}${routeShow ? `<div class="msg-route" data-tip="${esc(routeShow)}">${esc(routeShow)}</div>` : ''}${hintText ? `<div class="msg-foot"><span class="hint-chip" data-tip="${esc(hintText)}">💡 建议</span></div>` : ''}</td>
       <td class="muted c mono" data-label="上次运行">${fmtTime(a.last_run_at)}</td>
 

@@ -77,11 +77,13 @@ function parseWant(timeHHMM) {
   return { wantHour: String(t).padStart(2, '0'), wantMin: '00' };
 }
 
-// "YYYY-MM-DD HH:MM" → 当天的「第几分钟」，便于算间隔（不涉及时区换算，两端同一时区）。
-function clockMinutes(s) {
-  const m = String(s || '').match(/\d{4}-\d{2}-\d{2}\s+(\d{2}):(\d{2})/);
+// "YYYY-MM-DD HH:MM" → 从纪元起的分钟数。两端是同一时区下的钟面时间，
+// 直接相减得到真实间隔（即使跨过 0 点也对）；以前只取「当天第几分钟」，
+// 上次尝试在昨天 23:xx、现在是今天 00:0x 时会算出负数，导致该补跑的不补跑。
+function epochMinutes(s) {
+  const m = String(s || '').match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
   if (!m) return null;
-  return Number(m[1]) * 60 + Number(m[2]);
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) / 60000;
 }
 
 // 上次执行记录 → { base: 设定时刻 key, at: 上次尝试时刻（同一 key 当天）, ok: 是否成功 }
@@ -114,8 +116,8 @@ export function shouldRun(now, timeHHMM, tz, lastKey, opts = {}) {
   if (last.base === key) {
     if (last.ok) return { run: false, key, nowKey }; // 今天这个时刻已经成功签过
     // 上一次尝试过但没成功（失败/结果未知）：隔 retryGap 再补一次
-    const atMin = clockMinutes(last.at);
-    if (atMin != null && nowMin - atMin < retryGap) return { run: false, key, nowKey };
+    const atT = epochMinutes(last.at);
+    if (atT != null && epochMinutes(nowKey) - atT < retryGap) return { run: false, key, nowKey };
   }
 
   // 还没到设定时刻 → 等

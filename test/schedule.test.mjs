@@ -65,6 +65,16 @@ t('失败/结果未知 → 隔 RETRY_GAP_MIN 分钟自动补一次（不会一�
   assert.equal(nextLastKey('2026-09-27 08:05', '2026-09-27 08:05', 'ok'), '2026-09-27 08:05');
 });
 
+t('重试间隔跨过 0 点也算得对（上次尝试在昨天 23:xx）', () => {
+  // 回归：以前只比「当天第几分钟」，23:45 失败、00:05 检查会算出负数，
+  // 误判成「刚重试过」→ 该补跑的不补跑（cron.test.mjs 在 00:00–00:19 跑必挂）。
+  const lastKey = '2026-09-30 00:04@2026-09-29 23:45';
+  // 00:05：隔了 20 分钟 → 补跑
+  assert.equal(shouldRun(new Date('2026-09-30T00:05:00Z'), '00:04', 'UTC', lastKey).run, true);
+  // 00:03：只隔 5 分钟（上次尝试在昨天 23:58）→ 不跑
+  assert.equal(shouldRun(new Date('2026-09-30T00:03:00Z'), '00:04', 'UTC', '2026-09-30 00:04@2026-09-29 23:58').run, false);
+});
+
 t('未到设定时间 → 跳过', () => {
   assert.equal(shouldRun(D0830, '09:00', 'Asia/Shanghai', null).run, false);
   assert.equal(shouldRun(D0830, '08:31', 'Asia/Shanghai', null).run, false);
