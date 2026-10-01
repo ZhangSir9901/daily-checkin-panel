@@ -44,6 +44,9 @@ function withAccountLock(fn) {
 export function accountLockIdle() {
   return ACCOUNT_LOCK;
 }
+// 凭据续期（src/lib/renew.js）与签到共用同一把账号锁：同一账号的签到和续期
+// 不能同时跑（都会读写它的凭据）。
+export { withAccountLock };
 // 仅供测试：Set-Cookie 静默回写（生产代码走 runAccount 内部调用）
 export { applyCookieRefresh };
 

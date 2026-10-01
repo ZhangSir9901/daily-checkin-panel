@@ -1688,6 +1688,21 @@ export default {
           }
           if (changed) await setSetting(env.DB, 'sched_last_map', JSON.stringify(lastMap)).catch(() => {});
 
+          // ---- 后台凭据续期（独立于签到）----
+          // 每小时最多跑一轮：把「站点声明了 renew() 的账号」里快过期的凭据提前换新。
+          // 故意放在签到主循环之后、且不计入上面的 ranCount/日报 —— 这是保养，
+          // 不是签到；续期自己的成败写在账号 meta 里（renew_ok_at / renew_fail_*），
+          // 前端「凭据到期时间」悬浮提示会展示，失败且快过期时会推送提醒。
+          try {
+            const { renewCredentials } = await import('./lib/renew.js');
+            const renewRes = await renewCredentials(env, env.DB, await loadCustomSites(env).catch(() => []));
+            if (renewRes && renewRes.ran && renewRes.details && renewRes.details.length) {
+              console.log('[cron] 凭据续期：' + renewRes.details.join('；'));
+            }
+          } catch (e) {
+            console.error('[cron] 凭据续期失败', e);
+          }
+
           // 心跳：记下「这次自动检查是什么时候跑的、跑了几个」。
           // 没到点的大多数分钟（ranCount=0）不必写库，所以最多半小时写一次 ——
           // 这样面板既能显示「自动执行还活着」，也几乎不增加 D1 写入。

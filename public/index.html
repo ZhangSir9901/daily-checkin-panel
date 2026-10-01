@@ -2751,7 +2751,7 @@ const SITE_MODE_HINT_DOCKER = {
 // 两种都报出来，用户就不用猜「我这份 Cookie 还能撑几天」。
 // 其它站点（Discuz、机场面板…）的会话有效期只在服务器那边知道 —— 这里**如实说「凭据里没写」**，
 // 不编一个时间出来：他看这句话是为了决定「要不要现在去重新登录」，猜错比不说更坏。
-function credExpTip(exp) {
+function credExpTip(exp, metaStr) {
   const fmt = (ms) => new Date(ms).toLocaleString('zh-CN',
     { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
   const left = (ms) => {
@@ -2775,6 +2775,18 @@ function credExpTip(exp) {
   if (lines.length === 1) {
     lines.push('这份 Cookie / 凭据里没有写到期时间 —— 只有网站自己知道它还算不算登录。');
     lines.push('真失效了面板会报「需要重新登录」，也能用「Cookie 解析器」当场体检。');
+  }
+  // ---- 自动续期状态（后台每小时检查，到期前自动换新；Akile 这类短命 token 就靠它续命）----
+  let rm = {};
+  try { rm = JSON.parse(metaStr || '{}'); } catch { /* 忽略 */ }
+  if (rm.renew_ok_at) {
+    lines.push('自动续期：上次成功 ' + fmt(rm.renew_ok_at) + '（面板自己换的新凭据，你不用管）');
+  }
+  if (rm.renew_fail_at && (!rm.renew_ok_at || rm.renew_fail_at > rm.renew_ok_at)) {
+    const reasonMap = { network: '网络没通', rejected: '站点拒绝（旧凭据已失效）', invalid: '凭据格式不对', error: '续期过程出错' };
+    lines.push('自动续期失败（' + fmt(rm.renew_fail_at) + '）：' + (reasonMap[rm.renew_fail_reason] || rm.renew_fail_reason || '未知原因'));
+    if (rm.renew_fail_detail) lines.push('失败详情：' + rm.renew_fail_detail);
+    lines.push('面板会每小时重试一次；如果一直失败，请手动重新获取凭据。');
   }
   return lines.join('\n');
 }
@@ -2833,7 +2845,7 @@ function execCellHTML(a, execOverride) {
   return {
     isLocalExec,
     siteHint: hint,
-    html: `<div class="site-wrap"><div class="site-head"><b class="site-name" data-tip="${esc(credExpTip(a.cred_exp))}">${esc(a.name)}</b>${comBadge}`
+    html: `<div class="site-wrap"><div class="site-head"><b class="site-name" data-tip="${esc(credExpTip(a.cred_exp, a.meta))}">${esc(a.name)}</b>${comBadge}`
       + `<button class="ghost sm exec-switch" data-exec="${a.id}" title="${esc(execTitle)}">切换</button>`
       + `</div><div class="site-line">${execBadge}</div>${bsign}${pills}</div>`,
   };
